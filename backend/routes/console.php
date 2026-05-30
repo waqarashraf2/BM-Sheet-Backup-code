@@ -26,22 +26,22 @@ Schedule::job(new RefreshDashboardCache())
     ->description('Pre-compute dashboard statistics for fast retrieval');
 
 // Auto-reassign orders from inactive workers (every 5 minutes)
-Schedule::job(new AutoReassignOrders(30)) // 30 minutes inactivity threshold
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->description('Reassign orders from inactive/absent workers');
+// Schedule::job(new AutoReassignOrders(30)) // 30 minutes inactivity threshold
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->description('Reassign orders from inactive/absent workers');
 
 // Push-based auto-assignment: assign queued orders to available workers (every minute)
-Schedule::job(new AutoAssignOrders())
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->description('Auto-assign queued orders to available idle workers');
+// Schedule::job(new AutoAssignOrders())
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->description('Auto-assign queued orders to available idle workers');
 
 // Smart Assignment: compute worker stats & scores (every 10 minutes)
-Schedule::job(new ComputeWorkerStats())
-    ->everyTenMinutes()
-    ->withoutOverlapping()
-    ->description('Compute avg_completion_minutes, rejection_rate, assignment_score per worker');
+// Schedule::job(new ComputeWorkerStats())
+//     ->everyTenMinutes()
+//     ->withoutOverlapping()
+//     ->description('Compute avg_completion_minutes, rejection_rate, assignment_score per worker');
 
 // Reset daily counters at midnight
 Schedule::job(new ResetDailyCounters())
@@ -51,15 +51,84 @@ Schedule::job(new ResetDailyCounters())
     ->description('Reset today_completed counters for all users');
 
 // Per CEO Requirements: Flag inactive users (daily at midnight)
+// Users remove absent mark by logging in
 Schedule::job(new UpdateInactiveUsers())
-    ->daily()
-    ->at('00:05')
+    ->everyFiveMinutes()
     ->withoutOverlapping()
-    ->description('Flag users inactive for 15+ days');
+    ->description('Mark all active users as absent once daily after noon - remove upon login');
+
 
 // Legacy command support
 Schedule::command('users:flag-inactive --days=15')
     ->daily()
     ->at('00:05')
     ->description('Legacy: Flag inactive users and reassign their orders');
+
+Schedule::command('app:romio-import')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+    
+    Schedule::command('app:metro-import')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+    
+    // LOW LOAD SYSTEM (IMPORTANT)
+Schedule::command('app:safp-import')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+
+Schedule::command('app:saphoto-import')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+    
+    Schedule::command('scrape:focalpb2')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+    
+    
+Schedule::command('scrape:focalxactimate')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// FocalCRM - Project 1 (PropertyVision FloorPlan)
+Schedule::command('focalcrm:import')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('scrape:focalpbphoto')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+    
+    
+// FocalCRM - Project 22 (Photo Jobs - PH_2_LAYER)
+// Schedule::command('focalcrm:import-photo')
+//     ->everyTenMinutes()
+//     ->withoutOverlapping()
+//     ->runInBackground();
+    
+    
+    
+// FocalCRM - Project 25 (Prestige Photography)
+// Schedule::command('focalcrm:import-prestige')
+//     ->everyTenMinutes()
+//     ->withoutOverlapping()
+//     ->runInBackground();
+    
+    
+    
+// Focal RTV - Project 26 (Photography)
+// Schedule::command('focalrtv:import')
+//     ->everyTenMinutes()
+//     ->withoutOverlapping()
+//     ->runInBackground();
+
 

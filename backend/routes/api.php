@@ -4,12 +4,15 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProjectController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\AssignmentController;
 use App\Http\Controllers\Api\WorkflowController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\MonthLockController;
 use App\Http\Controllers\Api\OrderImportController;
 use App\Http\Controllers\Api\ChecklistController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\Import\ProjectNinePublicImportController;
+use App\Http\Controllers\Api\Import\BrPhotoPublicImportController;
 use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\LiveQAController;
@@ -19,6 +22,15 @@ use Illuminate\Support\Facades\Route;
 // ── Health Check (no auth required) ──
 Route::get('/health', [HealthController::class, 'check']);
 Route::get('/ping', [HealthController::class, 'ping']);
+Route::get('/public-import/project-7/orders/template', [ProjectNinePublicImportController::class, 'template'])
+    ->middleware('throttle:30,1');
+Route::post('/public-import/project-7/orders', [ProjectNinePublicImportController::class, 'store'])
+    ->middleware('throttle:30,1');
+Route::get('/public-import/brphoto/orders/template', [BrPhotoPublicImportController::class, 'template'])
+    ->middleware('throttle:30,1');
+Route::post('/public-import/brphoto/orders', [BrPhotoPublicImportController::class, 'store'])
+    ->middleware('throttle:30,1');
+
 
 // ── Public: Auth ──
 Route::post('/auth/login', [AuthController::class, 'login'])
@@ -53,8 +65,14 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
         // Current assigned order
         Route::get('/my-current', [WorkflowController::class, 'myCurrent']);
 
+        // Separate link APIs by job_order_id (standalone, no my-current dependency)
+        Route::get('/orders/links/{jobOrderId}', [WorkflowController::class, 'orderAssetLinks']);
+
+        // Backward-compatible alias
+        Route::get('/orders/images/{jobOrderId}', [WorkflowController::class, 'orderImageLinks']);
+
         // My stats
-        Route::get('/my-stats', [WorkflowController::class, 'myStats']);
+     Route::get('/my-stats', [WorkflowController::class, 'myStats']);
         
         // My queue (drawer order list)
         Route::get('/my-queue', [WorkflowController::class, 'myQueue']);
@@ -73,6 +91,8 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
 
         // Reject (checker/QA only)
         Route::post('/orders/{id}/reject', [WorkflowController::class, 'rejectOrder']);
+                Route::post('/orders/{id}/cancel', [WorkflowController::class, 'cancelOrder']);
+
 
         // Hold/Resume
         Route::post('/orders/{id}/hold', [WorkflowController::class, 'holdOrder']);
@@ -105,7 +125,9 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
         Route::get('/qa-team-members', [WorkflowController::class, 'qaTeamMembers']);
     });
 
-    // Order checklists (accessible to production + management)
+
+        // Order checklists (accessible to production + management)
+    Route::put('/orders/{id}/instruction', [WorkflowController::class, 'updateInstruction']);
     Route::get('/orders/{orderId}/checklist', [ChecklistController::class, 'orderChecklist']);
     Route::put('/orders/{orderId}/checklist/{templateId}', [ChecklistController::class, 'updateOrderChecklist']);
     Route::put('/orders/{orderId}/checklist', [ChecklistController::class, 'bulkUpdateOrderChecklist']);
@@ -115,15 +137,48 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
     Route::middleware('role:ceo,director,accounts_manager')->group(function () {
         Route::get('/dashboard/master', [DashboardController::class, 'master']);
     });
-    Route::middleware('role:ceo,director,operations_manager')->group(function () {
+    
+        Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/dashboard/batch-status', [DashboardController::class, 'batchStatusReport']);
+    Route::get('/dashboard/batch-statusv2', [DashboardController::class, 'batchStatusReportv2']);
+   Route::get('/test-date-debug', [DashboardController::class, 'testDateDebug']);
+   Route::get('/test-vet-date', [DashboardController::class, 'testVetDate']);
+});
+
+
+    
+    Route::middleware('role:ceo,director,operations_manager,project_manager,drawer,checker,qa,live_qa')->group(function () {
         Route::middleware('throttle:10,1')->get('/dashboard/daily-operations', [DashboardController::class, 'dailyOperations']);
+        
+        
+                // ── Assignment Routes ──
+Route::prefix('assignments')->group(function () {
+
+    // ✅ Fetch assignments data
+    Route::get('/', [AssignmentController::class, 'getAssignments']);
+
+    // ✅ Create assignment
+    Route::post('/', [AssignmentController::class, 'createAssignment']);
+
+    // ✅ Update assignment
+    Route::put('/{projectId}/{id}', [AssignmentController::class, 'updateAssignment']);
+
+    // ✅ Columns (IMPORTANT - match frontend)
+    Route::get('/columns', [AssignmentController::class, 'getAllColumns']);
+    Route::post('/columns/save', [AssignmentController::class, 'saveAllColumns']);
+});
     });
+    
+    
+    
+    
     Route::middleware('role:ceo,director,operations_manager,project_manager')->get('/dashboard/project/{id}', [DashboardController::class, 'project']);
+        Route::middleware('role:ceo,director,operations_manager')->get('/dashboard/project-stats', [DashboardController::class, 'projectStats']);
     Route::middleware('role:ceo,director,operations_manager')->get('/dashboard/operations', [DashboardController::class, 'operations']);
     Route::middleware('role:project_manager')->get('/dashboard/project-manager', [DashboardController::class, 'projectManager']);
     Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa')->get('/dashboard/queues', [DashboardController::class, 'queues']);
     Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa')->get('/dashboard/assignment/{queueName}', [DashboardController::class, 'assignmentDashboard'])->where('queueName', '.*');
-    Route::middleware('role:drawer,checker,qa,designer')->get('/dashboard/worker', [DashboardController::class, 'worker']);
+    Route::middleware('role:drawer,checker,filler,qa,designer')->get('/dashboard/worker', [DashboardController::class, 'worker']);
     Route::middleware('role:ceo,director,operations_manager,project_manager')->get('/dashboard/absentees', [DashboardController::class, 'absentees']);
 
     // ═══════════════════════════════════════════
@@ -183,6 +238,18 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
         Route::post('/import-sources/{sourceId}/sync', [OrderImportController::class, 'syncFromApi']);
         Route::get('/projects/{projectId}/import-history', [OrderImportController::class, 'importHistory']);
         Route::get('/import-logs/{importLogId}', [OrderImportController::class, 'importDetails']);
+        Route::post('/projects/{project}/import-csv-text', [OrderImportController::class, 'importCsvText']);
+        Route::get('/projects/{projectId}/imported-orders', [OrderImportController::class, 'importedOrders']);
+        Route::put('/projects/{projectId}/imported-orders/{orderId}', [OrderImportController::class, 'updateImportedOrder']);
+        Route::delete('/projects/{projectId}/imported-orders/{orderId}', [OrderImportController::class, 'deleteImportedOrder']);
+        Route::get('/projects/{projectId}/csv-headers', [OrderImportController::class, 'getProjectCsvHeaders']);
+        Route::post('/projects/{projectId}/csv-headers', [OrderImportController::class, 'saveProjectCsvHeaders']);
+        Route::put('/projects/{projectId}/csv-headers', [OrderImportController::class, 'saveProjectCsvHeaders']);
+        Route::delete('/projects/{projectId}/csv-headers', [OrderImportController::class, 'deleteProjectCsvHeaders']);
+
+        
+        
+        
 
         // Checklist templates
         Route::get('/projects/{projectId}/checklists', [ChecklistController::class, 'templates']);
@@ -368,19 +435,41 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
         });
     });
 
-    // ═══════════════════════════════════════════
+   // ═══════════════════════════════════════════
     // FINANCE ROUTES (CEO/Director + Accounts Manager read, CEO/Director write)
     // ═══════════════════════════════════════════
-    Route::middleware('role:ceo,director,accounts_manager')->group(function () {
+    Route::middleware('role:ceo,director,accounts_manager,operations_manager')->group(function () {
         Route::get('/invoices', [InvoiceController::class, 'index']);
         Route::get('/invoices/{id}', [InvoiceController::class, 'show']);
-    });
-    Route::middleware('role:ceo,director')->group(function () {
         Route::post('/invoices', [InvoiceController::class, 'store']);
-        Route::post('/invoices/{id}/transition', [InvoiceController::class, 'transition']);
+        Route::put('/invoices/{id}', [InvoiceController::class, 'update']);
         Route::delete('/invoices/{id}', [InvoiceController::class, 'destroy']);
+
+        // ── Monthly Quantity (read + compute + manual entry) ──
+        // List all months for a project/year
+        Route::get('/invoices/monthly-quantity/{projectId}/{year}', [InvoiceController::class, 'listMonthlyQuantities']);
+        // Get (or auto-create) a single month record
+        Route::get('/invoices/monthly-quantity/{projectId}/{year}/{month}', [InvoiceController::class, 'getMonthlyQuantity']);
+        // Re-compute system quantities from orders
+        Route::post('/invoices/monthly-quantity/{projectId}/{year}/{month}/compute', [InvoiceController::class, 'computeMonthlyQuantity']);
+        // Create or overwrite manual quantities (upsert by project/month/year)
+        Route::post('/invoices/monthly-quantity', [InvoiceController::class, 'storeManualQuantity']);
+        // Patch an existing record's manual fields
+        Route::put('/invoices/monthly-quantity/{id}', [InvoiceController::class, 'updateManualQuantity']);
+    });
+
+    
+    Route::middleware('role:ceo,director')->group(function () {
+        Route::post('/invoices/{id}/transition', [InvoiceController::class, 'transition']);
+
+        // ── Monthly Quantity lock/unlock (CEO/Director only) ──
+        Route::post('/invoices/monthly-quantity/{id}/lock',   [InvoiceController::class, 'lockMonthlyQuantity']);
+        Route::post('/invoices/monthly-quantity/{id}/unlock', [InvoiceController::class, 'unlockMonthlyQuantity']);
     });
 });
+
+
+
 
 // ─── Live QA Routes ────────────────────────────────────────────────
 Route::middleware('auth:sanctum')->prefix('live-qa')->group(function () {
@@ -405,7 +494,18 @@ Route::middleware('auth:sanctum')->prefix('live-qa')->group(function () {
 
     // Stats
     Route::get('/stats/{projectId}', [LiveQAController::class, 'stats']);
+
+    // ── Internal QA (checks delivered orders, any date, all-projects report) ──
+    Route::get('/internal-qa/orders/{projectId}', [LiveQAController::class, 'getInternalQaOrders']);
+    Route::get('/internal-qa/review/{projectId}/{orderNumber}', [LiveQAController::class, 'getInternalQaReview']);
+    Route::post('/internal-qa/review/{projectId}/{orderNumber}', [LiveQAController::class, 'submitInternalQaReview']);
+    Route::get('/internal-qa/mistake-summary/{projectId}', [LiveQAController::class, 'getInternalQaMistakeSummary']);
+    Route::get('/internal-qa/all-projects-report', [LiveQAController::class, 'getInternalQaAllProjectsReport']);
 });
+
+
+
+
 
 // ─── Sync Routes (Old Metro System → New System) ───────────────────
 // These routes use X-Sync-Token header for authentication (no user auth).

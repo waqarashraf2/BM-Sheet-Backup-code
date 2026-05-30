@@ -66,6 +66,8 @@ class AuthController extends Controller
         $user->update([
             'current_session_token' => $tokenHash,
             'last_activity' => now(),
+            'inactive_days' => 0,
+            'is_absent' => false,
         ]);
 
         // Create session record

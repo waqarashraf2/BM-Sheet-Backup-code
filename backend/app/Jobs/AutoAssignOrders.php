@@ -125,21 +125,14 @@ class AutoAssignOrders implements ShouldQueue
 
                 for ($i = 0; $i < $needed; $i++) {
                     // Find next unassigned order in this queue
-                    $orderQuery = Order::forProject($project->id)
+                    $order = Order::forProject($project->id)
                         ->where('workflow_state', $queueState)
-                        ->whereNull('assigned_to');
-
-                    // Team constraint: checker/QA only pick orders from their own team
-                    if ($worker->team_id && in_array($role, ['checker', 'qa'])) {
-                        $orderQuery->where('team_id', $worker->team_id);
-                    }
-
-                    $order = $orderQuery
+                        ->whereNull('assigned_to')
                         ->orderByRaw("CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'low' THEN 4 ELSE 5 END")
                         ->orderBy('received_at', 'asc')
                         ->first();
 
-                    if (!$order) break; // No more queued orders for this team
+                    if (!$order) break; // No more queued orders
 
                     try {
                         $this->assignOrderToWorker($order, $worker, $queueState);

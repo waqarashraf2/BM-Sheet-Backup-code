@@ -11,6 +11,8 @@ class Project extends Model
 {
     use HasFactory, SoftDeletes;
 
+    private const CHECKER_COMPLETION_PROJECT_IDS = [1, 2, 3, 16];
+
     protected $fillable = [
         'code', 'name', 'queue_name', 'country', 'department', 'client_name', 'status',
         'total_orders', 'completed_orders', 'pending_orders',
@@ -115,5 +117,17 @@ class Project extends Model
     public function scopeDepartment($query, $department)
     {
         return $query->where('department', $department);
+    }
+
+    /**
+     * Projects where checker submission is the final delivery step.
+     */
+    public static function checkerCompletesOrder(?int $projectId): bool
+    {
+        if (!$projectId) {
+            return false;
+        }
+
+        return in_array((int) $projectId, self::CHECKER_COMPLETION_PROJECT_IDS, true);
     }
 }

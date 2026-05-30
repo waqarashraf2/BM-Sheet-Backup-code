@@ -9,6 +9,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -25,11 +26,31 @@ class UpdateInactiveUsers implements ShouldQueue
 
     public function handle(): void
     {
+        $todayNoon = now()->copy()->setTime(12, 0, 0);
+        $markAbsentCacheKey = 'users_absent_marked_' . now()->toDateString();
+
+        if (now()->lt($todayNoon)) {
+            Log::info('UpdateInactiveUsers: Skipped absent marking because noon has not been reached yet.');
+            return;
+        }
+
+        if (!Cache::add($markAbsentCacheKey, true, now()->endOfDay())) {
+            Log::info('UpdateInactiveUsers: Users already marked absent for today.');
+            return;
+        }
+
         Log::info('UpdateInactiveUsers: Starting daily inactive user check');
 
         $inactiveThresholdDays = 15;
         $flagged = 0;
-        $unflagged = 0;
+        $offlineThreshold = now()->subMinutes(5);
+        $markedAbsent = User::where('is_active', true)
+            ->where('is_absent', false)
+            ->where(function ($query) use ($offlineThreshold) {
+                $query->whereNull('last_activity')
+                    ->orWhere('last_activity', '<=', $offlineThreshold);
+            })
+            ->update(['is_absent' => true]);
 
         // Update inactive_days for all active users
         User::where('is_active', true)
@@ -81,7 +102,7 @@ class UpdateInactiveUsers implements ShouldQueue
                 }
             });
 
-        Log::info("UpdateInactiveUsers: Completed. Flagged {$flagged} users as inactive.");
+        Log::info("UpdateInactiveUsers: Completed. Marked {$markedAbsent} users absent and flagged {$flagged} users as inactive.");
     }
 
     public function failed(\Throwable $exception): void

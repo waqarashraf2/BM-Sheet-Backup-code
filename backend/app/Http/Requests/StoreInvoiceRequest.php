@@ -24,8 +24,8 @@ class StoreInvoiceRequest extends FormRequest
         return [
             'invoice_number' => 'required|string|unique:invoices,invoice_number',
             'project_id' => 'required|exists:projects,id',
-            'month' => 'required|string',
-            'year' => 'required|string',
+            'month' => 'required|integer|min:1|max:12',
+            'year' => 'required|integer|min:2020|max:2100',
             'service_counts' => 'required|array',
             'total_amount' => 'nullable|numeric|min:0',
             'status' => 'sometimes|in:draft,pending_approval,approved,sent',

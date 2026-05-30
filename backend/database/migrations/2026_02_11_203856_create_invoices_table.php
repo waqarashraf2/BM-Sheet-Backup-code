@@ -15,8 +15,8 @@ return new class extends Migration
             $table->id();
             $table->string('invoice_number')->unique();
             $table->foreignId('project_id')->constrained()->cascadeOnDelete();
-            $table->string('month');
-            $table->string('year');
+            $table->unsignedTinyInteger('month');
+            $table->unsignedSmallInteger('year');
             $table->json('service_counts');
             $table->decimal('total_amount', 12, 2)->nullable();
             $table->enum('status', ['draft', 'pending_approval', 'approved', 'sent'])->default('draft');

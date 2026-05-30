@@ -1,0 +1,1 @@
+<?php chdir(dirname(__DIR__)); exec("php artisan cache:clear 2>&1", $o1); exec("php artisan config:clear 2>&1", $o2); echo json_encode(["cache"=>$o1,"config"=>$o2]);

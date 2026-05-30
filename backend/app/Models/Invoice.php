@@ -11,6 +11,12 @@ class Invoice extends Model
 
     protected $fillable = [
         'invoice_number',
+        'date',
+        'attn',
+        'client_name',
+        'client_phone_email',
+        'billing_period',
+        'invoice_items',
         'project_id',
         'month',
         'year',
@@ -28,17 +34,27 @@ class Invoice extends Model
 
     protected $casts = [
         'service_counts' => 'array',
-        'total_amount' => 'decimal:2',
-        'month' => 'integer',
-        'year' => 'integer',
-        'approved_at' => 'datetime',
-        'issued_at' => 'datetime',
-        'sent_at' => 'datetime',
+        'invoice_items'  => 'array',
+        'total_amount'   => 'decimal:2',
+        'date'           => 'date:Y-m-d',
+        'month'          => 'integer',
+        'year'           => 'integer',
+        'approved_at'    => 'datetime',
+        'issued_at'      => 'datetime',
+        'sent_at'        => 'datetime',
     ];
 
     public function issuedBy()
     {
         return $this->belongsTo(User::class, 'issued_by');
+    }
+
+    /**
+     * Get the monthly quantity record linked to this invoice.
+     */
+    public function monthlyQuantity()
+    {
+        return $this->hasOne(InvoiceMonthlyQuantity::class);
     }
 
     /**

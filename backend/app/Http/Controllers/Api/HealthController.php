@@ -25,7 +25,7 @@ class HealthController extends Controller
             // Database check
             DB::connection()->getPdo();
             $checks['services']['database'] = 'ok';
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $checks['status'] = 'unhealthy';
             $checks['services']['database'] = 'failed: ' . $e->getMessage();
         }
@@ -34,7 +34,7 @@ class HealthController extends Controller
             // Redis check
             Redis::ping();
             $checks['services']['redis'] = 'ok';
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $checks['status'] = 'unhealthy';
             $checks['services']['redis'] = 'failed: ' . $e->getMessage();
         }
@@ -44,7 +44,7 @@ class HealthController extends Controller
             Cache::put('health_check', true, 10);
             $value = Cache::get('health_check');
             $checks['services']['cache'] = $value ? 'ok' : 'failed';
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $checks['status'] = 'unhealthy';
             $checks['services']['cache'] = 'failed: ' . $e->getMessage();
         }

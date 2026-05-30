@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Order;
+use App\Models\Project;
 use App\Models\WorkItem;
 use InvalidArgumentException;
 
@@ -13,6 +14,7 @@ class StateMachine
     const FP_STATES = [
         'RECEIVED', 'PENDING_QA_REVIEW', 'QUEUED_DRAW', 'IN_DRAW', 'SUBMITTED_DRAW',
         'QUEUED_CHECK', 'IN_CHECK', 'REJECTED_BY_CHECK', 'SUBMITTED_CHECK',
+        'QUEUED_FILLER', 'IN_FILLER', 'SUBMITTED_FILLER',
         'QUEUED_QA', 'IN_QA', 'REJECTED_BY_QA', 'APPROVED_QA',
         'DELIVERED', 'ON_HOLD', 'CANCELLED',
     ];
@@ -35,12 +37,15 @@ class StateMachine
         'QUEUED_CHECK'       => ['IN_CHECK', 'ON_HOLD', 'CANCELLED'],
         'IN_CHECK'           => ['SUBMITTED_CHECK', 'REJECTED_BY_CHECK', 'ON_HOLD', 'CANCELLED'],
         'REJECTED_BY_CHECK'  => ['QUEUED_DRAW'],
-        'SUBMITTED_CHECK'    => ['QUEUED_QA'],
+        'SUBMITTED_CHECK'    => ['QUEUED_QA', 'QUEUED_FILLER'],
+        'QUEUED_FILLER'      => ['IN_FILLER', 'ON_HOLD', 'CANCELLED'],
+        'IN_FILLER'          => ['SUBMITTED_FILLER', 'ON_HOLD', 'CANCELLED'],
+        'SUBMITTED_FILLER'   => ['QUEUED_QA'],
         'QUEUED_QA'          => ['IN_QA', 'ON_HOLD', 'CANCELLED'],
         'IN_QA'              => ['APPROVED_QA', 'REJECTED_BY_QA', 'ON_HOLD', 'CANCELLED'],
         'REJECTED_BY_QA'     => ['QUEUED_CHECK', 'QUEUED_DRAW'],
         'APPROVED_QA'        => ['DELIVERED'],
-        'ON_HOLD'            => ['QUEUED_DRAW', 'QUEUED_CHECK', 'QUEUED_QA'],
+        'ON_HOLD'            => ['QUEUED_DRAW', 'QUEUED_CHECK', 'QUEUED_FILLER', 'QUEUED_QA'],
         'DELIVERED'          => [],
         'CANCELLED'          => [],
     ];
@@ -63,6 +68,7 @@ class StateMachine
     const STATE_TO_STAGE = [
         'QUEUED_DRAW'   => 'DRAW',   'IN_DRAW'    => 'DRAW',   'SUBMITTED_DRAW'   => 'DRAW',
         'QUEUED_CHECK'  => 'CHECK',  'IN_CHECK'   => 'CHECK',  'SUBMITTED_CHECK'  => 'CHECK',
+        'QUEUED_FILLER' => 'FILL',   'IN_FILLER'  => 'FILL',   'SUBMITTED_FILLER' => 'FILL',
         'QUEUED_DESIGN' => 'DESIGN', 'IN_DESIGN'  => 'DESIGN', 'SUBMITTED_DESIGN' => 'DESIGN',
         'QUEUED_QA'     => 'QA',     'IN_QA'      => 'QA',
     ];
@@ -71,6 +77,7 @@ class StateMachine
     const STAGE_TO_ROLE = [
         'DRAW'   => 'drawer',
         'CHECK'  => 'checker',
+        'FILL'   => 'filler',
         'DESIGN' => 'designer',
         'QA'     => 'qa',
     ];
@@ -83,6 +90,15 @@ class StateMachine
      */
     public static function canTransition(Order $order, string $toState): bool
     {
+        if (
+            $order->workflow_type !== 'PH_2_LAYER'
+            && $order->workflow_state === 'SUBMITTED_CHECK'
+            && $toState === 'DELIVERED'
+            && Project::checkerCompletesOrder((int) $order->project_id)
+        ) {
+            return true;
+        }
+
         $transitions = $order->workflow_type === 'PH_2_LAYER'
             ? self::PH_TRANSITIONS
             : self::FP_TRANSITIONS;
@@ -156,37 +172,6 @@ class StateMachine
 
         $order->update($updates);
 
-        // ── Always keep CRM overlay's workflow_state in sync ──
-        // This catches ALL state transitions (startTimer, hold, resume, etc.)
-        // regardless of whether the caller also invokes syncToProjectTable.
-        try {
-            $crmRow = \Illuminate\Support\Facades\DB::table('crm_order_assignments')
-                ->where('project_id', $order->project_id)
-                ->where('order_number', $order->order_number)
-                ->first();
-            if ($crmRow) {
-                $crmUpdates = [
-                    'workflow_state' => $toState,
-                    'updated_at'    => now(),
-                ];
-                if (array_key_exists('assigned_to', $updates)) {
-                    $crmUpdates['assigned_to'] = $updates['assigned_to'];
-                }
-                if (isset($updates['is_on_hold'])) {
-                    $crmUpdates['is_on_hold'] = $updates['is_on_hold'];
-                }
-                \Illuminate\Support\Facades\DB::table('crm_order_assignments')
-                    ->where('id', $crmRow->id)
-                    ->update($crmUpdates);
-            }
-        } catch (\Throwable $e) {
-            \Log::warning('StateMachine CRM sync failed', [
-                'order_id' => $order->id,
-                'to_state' => $toState,
-                'error'    => $e->getMessage(),
-            ]);
-        }
-
         // Audit log
         AuditService::log(
             $actorUserId,
@@ -214,11 +199,18 @@ class StateMachine
     /**
      * Get the next queue state after submission.
      */
-    public static function getNextQueueState(string $currentState, string $workflowType): ?string
+    public static function getNextQueueState(string $currentState, string $workflowType, ?int $projectId = null): ?string
     {
         $map = $workflowType === 'PH_2_LAYER'
             ? ['SUBMITTED_DESIGN' => 'QUEUED_QA', 'APPROVED_QA' => 'DELIVERED']
-            : ['SUBMITTED_DRAW' => 'QUEUED_CHECK', 'SUBMITTED_CHECK' => 'QUEUED_QA', 'APPROVED_QA' => 'DELIVERED'];
+            : [
+                'SUBMITTED_DRAW' => 'QUEUED_CHECK',
+                'SUBMITTED_CHECK' => $projectId === 12
+                    ? 'QUEUED_FILLER'
+                    : (Project::checkerCompletesOrder($projectId) ? 'DELIVERED' : 'QUEUED_QA'),
+                'SUBMITTED_FILLER' => 'QUEUED_QA',
+                'APPROVED_QA' => 'DELIVERED',
+            ];
 
         return $map[$currentState] ?? null;
     }
@@ -239,7 +231,7 @@ class StateMachine
     {
         return $workflowType === 'PH_2_LAYER'
             ? ['QUEUED_DESIGN', 'QUEUED_QA']
-            : ['QUEUED_DRAW', 'QUEUED_CHECK', 'QUEUED_QA'];
+            : ['QUEUED_DRAW', 'QUEUED_CHECK', 'QUEUED_FILLER', 'QUEUED_QA'];
     }
 
     /**
@@ -250,6 +242,7 @@ class StateMachine
         $map = [
             'QUEUED_DRAW'   => 'IN_DRAW',
             'QUEUED_CHECK'  => 'IN_CHECK',
+            'QUEUED_FILLER' => 'IN_FILLER',
             'QUEUED_DESIGN' => 'IN_DESIGN',
             'QUEUED_QA'     => 'IN_QA',
         ];
@@ -264,6 +257,7 @@ class StateMachine
         $map = [
             'IN_DRAW'   => 'SUBMITTED_DRAW',
             'IN_CHECK'  => 'SUBMITTED_CHECK',
+            'IN_FILLER' => 'SUBMITTED_FILLER',
             'IN_DESIGN' => 'SUBMITTED_DESIGN',
             'IN_QA'     => 'APPROVED_QA',
         ];

@@ -22,14 +22,15 @@ class AssignmentEngine
         if (!$project) return null;
 
         $role = $user->role;
-        $queueState = self::getQueueStateForRole($role, $project->workflow_type);
+        $workflowType = self::resolveWorkflowTypeForUser($user, $project);
+        $queueState = self::getQueueStateForRole($role, $workflowType);
         if (!$queueState) return null;
 
         // Check per-user WIP limit (using weighted complexity load)
         $wipLimit = $user->wip_limit ?: 5;
         $currentWip = Order::forProject($project->id)
             ->where('assigned_to', $user->id)
-            ->whereIn('workflow_state', self::getInProgressStatesForRole($role, $project->workflow_type))
+            ->whereIn('workflow_state', self::getInProgressStatesForRole($role, $workflowType))
             ->count();
 
         if ($currentWip >= $wipLimit) {
@@ -42,7 +43,7 @@ class AssignmentEngine
             ->where('workflow_state', $queueState)
             ->whereNull('assigned_to');
 
-        if ($user->team_id && in_array($role, ['checker', 'qa'])) {
+        if ($user->team_id && in_array($role, ['checker', 'filler', 'qa'])) {
             $query->where('team_id', $user->team_id);
         }
 
@@ -71,10 +72,19 @@ class AssignmentEngine
                 $assignData['drawer_id']   = $user->id;
                 $assignData['drawer_name'] = $user->name;
                 $assignData['dassign_time'] = now();
+                if ($role === 'designer') {
+                    $assignData['current_layer'] = 'designer';
+                    $assignData['workflow_type'] = 'PH_2_LAYER';
+                }
             } elseif ($role === 'checker') {
                 $assignData['checker_id']   = $user->id;
                 $assignData['checker_name'] = $user->name;
                 $assignData['cassign_time'] = now();
+            } elseif ($role === 'filler') {
+                $assignData['file_uploader_id'] = $user->id;
+                $assignData['file_uploader_name'] = $user->name;
+                $assignData['fassign_time'] = now();
+                $assignData['current_layer'] = 'filler';
             } elseif ($role === 'qa') {
                 $assignData['qa_id']   = $user->id;
                 $assignData['qa_name'] = $user->name;
@@ -120,7 +130,8 @@ class AssignmentEngine
         return DB::transaction(function () use ($order, $user, $submittedState, $comments) {
             // Complete the work item (try with stage first, fallback to any matching in-progress)
             $stage = StateMachine::STATE_TO_STAGE[$order->workflow_state] ?? null;
-            $workItem = WorkItem::where('order_id', $order->id)
+            $workItem = WorkItem::where('project_id', $order->project_id)
+                ->where('order_id', $order->id)
                 ->where('stage', $stage)
                 ->where('assigned_user_id', $user->id)
                 ->where('status', 'in_progress')
@@ -129,7 +140,8 @@ class AssignmentEngine
 
             // Fallback: find by order + user without stage filter (auto-created items)
             if (!$workItem) {
-                $workItem = WorkItem::where('order_id', $order->id)
+                $workItem = WorkItem::where('project_id', $order->project_id)
+                    ->where('order_id', $order->id)
                     ->where('assigned_user_id', $user->id)
                     ->where('status', 'in_progress')
                     ->latest()
@@ -142,13 +154,27 @@ class AssignmentEngine
                     'completed_at' => now(),
                     'comments'     => $comments,
                 ]);
+            } else {
+                WorkItem::create([
+                    'order_id'         => $order->id,
+                    'project_id'       => $order->project_id,
+                    'stage'            => $stage,
+                    'assigned_user_id' => $user->id,
+                    'team_id'          => $user->team_id,
+                    'status'           => 'completed',
+                    'assigned_at'      => now(),
+                    'started_at'       => now(),
+                    'completed_at'     => now(),
+                    'comments'         => $comments,
+                    'attempt_number'   => self::getAttemptNumber($order, $stage),
+                ]);
             }
 
             // Transition to submitted state
             StateMachine::transition($order, $submittedState, $user->id);
 
             // Auto-advance to next queue
-            $nextQueue = StateMachine::getNextQueueState($submittedState, $order->workflow_type);
+            $nextQueue = StateMachine::getNextQueueState($submittedState, $order->workflow_type, (int) $order->project_id);
             if ($nextQueue) {
                 StateMachine::transition($order, $nextQueue, $user->id);
             }
@@ -190,7 +216,8 @@ class AssignmentEngine
         return DB::transaction(function () use ($order, $actor, $reason, $rejectionCode, $targetState, $routeTo) {
             // Complete current work item as rejected
             $stage = StateMachine::STATE_TO_STAGE[$order->workflow_state] ?? null;
-            $workItem = WorkItem::where('order_id', $order->id)
+            $workItem = WorkItem::where('project_id', $order->project_id)
+                ->where('order_id', $order->id)
                 ->where('stage', $stage)
                 ->where('assigned_user_id', $actor->id)
                 ->where('status', 'in_progress')
@@ -215,43 +242,21 @@ class AssignmentEngine
                 'recheck_count'    => $order->recheck_count + 1,
             ]);
 
-            // Transition to rejected state — stays here until manager re-queues
-            // from the Rejected Orders page
+            // Transition to rejected state
             StateMachine::transition($order, $targetState, $actor->id, [
                 'rejection_reason' => $reason,
                 'rejection_code'   => $rejectionCode,
-                'route_to'         => $routeTo,
             ]);
 
-            // Clear assignment so order appears unassigned on the Rejected page
-            $order->update([
-                'assigned_to' => null,
-            ]);
-
-            // ── Sync rejection to crm_order_assignments ──
-            // The dashboard uses COALESCE(coa.workflow_state, qo.workflow_state)
-            // so CRM overlay must also reflect the REJECTED state.
-            $existingCrm = DB::table('crm_order_assignments')
-                ->where('project_id', $order->project_id)
-                ->where('order_number', $order->order_number)
-                ->first();
-
-            $crmData = [
-                'workflow_state' => $targetState,
-                'assigned_to'    => null,
-                'updated_at'     => now(),
-            ];
-
-            if ($existingCrm) {
-                DB::table('crm_order_assignments')
-                    ->where('id', $existingCrm->id)
-                    ->update($crmData);
-            } else {
-                DB::table('crm_order_assignments')->insert(array_merge($crmData, [
-                    'project_id'   => $order->project_id,
-                    'order_number' => $order->order_number,
-                    'created_at'   => now(),
-                ]));
+            // Route to the appropriate queue
+            if ($targetState === 'REJECTED_BY_CHECK') {
+                StateMachine::transition($order, 'QUEUED_DRAW', $actor->id);
+            } elseif ($targetState === 'REJECTED_BY_QA') {
+                $target = ($routeTo === 'draw') ? 'QUEUED_DRAW' : 'QUEUED_CHECK';
+                if ($order->workflow_type === 'PH_2_LAYER') {
+                    $target = 'QUEUED_DESIGN';
+                }
+                StateMachine::transition($order, $target, $actor->id);
             }
 
             // Update actor stats (safely prevent negative values)
@@ -263,6 +268,116 @@ class AssignmentEngine
             return $order->fresh();
         });
     }
+
+
+
+
+    /**
+     * Cancel an order from any valid cancellable state.
+     */
+    public static function cancelOrder(
+        Order $order,
+        User $actor,
+        string $reason
+    ): Order {
+        $currentState = $order->workflow_state;
+
+        if (!StateMachine::canTransition($order, 'CANCELLED')) {
+            throw new \InvalidArgumentException("Cannot cancel from state: {$currentState}");
+        }
+
+        return DB::transaction(function () use ($order, $actor, $reason) {
+            $stage = StateMachine::STATE_TO_STAGE[$order->workflow_state] ?? null;
+            $assignedUserId = $order->assigned_to;
+
+            if (!$assignedUserId && $stage) {
+                $roleIdMap = [
+                    'DRAW' => 'drawer_id',
+                    'CHECK' => 'checker_id',
+                    'DESIGN' => 'drawer_id',
+                    'QA' => 'qa_id',
+                ];
+
+                $roleIdColumn = $roleIdMap[$stage] ?? null;
+                if ($roleIdColumn && !empty($order->{$roleIdColumn})) {
+                    $assignedUserId = (int) $order->{$roleIdColumn};
+                }
+            }
+
+            $workItemQuery = WorkItem::where('project_id', $order->project_id)
+                ->where('order_id', $order->id)
+                ->where('status', 'in_progress');
+
+            if ($stage) {
+                $workItemQuery->where('stage', $stage);
+            }
+
+            if ($assignedUserId) {
+                $workItemQuery->where('assigned_user_id', $assignedUserId);
+            }
+
+            $workItem = $workItemQuery->latest()->first();
+
+            if ($workItem) {
+                $workItem->update([
+                    'status' => 'completed',
+                    'completed_at' => now(),
+                    'rework_reason' => $reason,
+                ]);
+
+                $assignedUserId = $assignedUserId ?: $workItem->assigned_user_id;
+            }
+
+            $order->update([
+                'rejected_by' => $actor->id,
+                'rejected_at' => now(),
+                'rejection_reason' => $reason,
+                'rejection_type' => 'cancelled',
+            ]);
+
+            StateMachine::transition($order, 'CANCELLED', $actor->id, [
+                'cancel_reason' => $reason,
+            ]);
+
+            $order->update([
+                'assigned_to' => null,
+            ]);
+
+            $existingCrm = DB::table('crm_order_assignments')
+                ->where('project_id', $order->project_id)
+                ->where('order_number', $order->order_number)
+                ->first();
+
+            $crmData = [
+                'workflow_state' => 'CANCELLED',
+                'assigned_to' => null,
+                'updated_at' => now(),
+            ];
+
+            if ($existingCrm) {
+                DB::table('crm_order_assignments')
+                    ->where('id', $existingCrm->id)
+                    ->update($crmData);
+            } else {
+                DB::table('crm_order_assignments')->insert(array_merge($crmData, [
+                    'project_id' => $order->project_id,
+                    'order_number' => $order->order_number,
+                    'created_at' => now(),
+                ]));
+            }
+
+            if ($assignedUserId) {
+                User::where('id', $assignedUserId)
+                    ->where('wip_count', '>', 0)
+                    ->decrement('wip_count');
+            }
+
+            return $order->fresh();
+        });
+    }
+
+
+
 
     /**
      * Reassign work from an inactive/terminated user.
@@ -287,7 +402,8 @@ class AssignmentEngine
 
                 // Revert work item
                 $stage = StateMachine::STATE_TO_STAGE[$currentState] ?? null;
-                WorkItem::where('order_id', $order->id)
+                WorkItem::where('project_id', $order->project_id)
+                    ->where('order_id', $order->id)
                     ->where('stage', $stage)
                     ->where('assigned_user_id', $user->id)
                     ->where('status', 'in_progress')
@@ -385,9 +501,19 @@ class AssignmentEngine
         return match ($role) {
             'drawer'  => 'QUEUED_DRAW',
             'checker' => 'QUEUED_CHECK',
+            'filler'  => 'QUEUED_FILLER',
             'qa'      => 'QUEUED_QA',
             default   => null,
         };
+    }
+
+    private static function resolveWorkflowTypeForUser(User $user, ?Project $project): string
+    {
+        if ($user->role === 'designer') {
+            return 'PH_2_LAYER';
+        }
+
+        return $project->workflow_type ?? 'FP_3_LAYER';
     }
 
     private static function getInProgressStatesForRole(string $role, string $workflowType): array
@@ -402,6 +528,7 @@ class AssignmentEngine
         return match ($role) {
             'drawer'  => ['IN_DRAW'],
             'checker' => ['IN_CHECK'],
+            'filler'  => ['IN_FILLER'],
             'qa'      => ['IN_QA'],
             default   => [],
         };
@@ -448,29 +575,58 @@ class AssignmentEngine
                     $updates['drawer_name'] = $user->name;
                     $updates['drawer_id']   = $user->id;
                     $updates['dassign_time'] = now()->toDateTimeString();
+                    if ($role === 'designer') {
+                        $updates['current_layer'] = 'designer';
+                    }
                 } elseif ($role === 'checker') {
                     $updates['checker_name'] = $user->name;
                     $updates['checker_id']   = $user->id;
                     $updates['cassign_time'] = now()->toDateTimeString();
+                } elseif ($role === 'filler') {
+                    $updates['file_uploader_name'] = $user->name;
+                    $updates['file_uploader_id']   = $user->id;
+                    $updates['fassign_time']       = now()->toDateTimeString();
+                    $updates['current_layer']      = 'filler';
                 } elseif ($role === 'qa') {
                     $updates['qa_name'] = $user->name;
                     $updates['qa_id']   = $user->id;
                 }
             } elseif ($action === 'submit') {
                 // Worker completed their stage
-                if (in_array($state, ['SUBMITTED_DRAW', 'QUEUED_CHECK'])) {
+                if ($role === 'drawer' && in_array($state, ['SUBMITTED_DRAW', 'QUEUED_CHECK'], true)) {
                     $updates['drawer_done'] = 'yes';
                     $updates['drawer_date'] = now()->toDateTimeString();
-                } elseif (in_array($state, ['SUBMITTED_CHECK', 'QUEUED_QA'])) {
+                } elseif (
+                    $role === 'checker'
+                    && Project::checkerCompletesOrder((int) $order->project_id)
+                    && in_array($state, ['DELIVERED', 'SUBMITTED_CHECK'], true)
+                ) {
+                    $timestamp = now()->toDateTimeString();
+                    $updates['checker_done'] = 'yes';
+                    $updates['checker_date'] = $timestamp;
+                    $updates['final_upload'] = 'yes';
+                    $updates['ausFinaldate'] = $timestamp;
+                } elseif (
+                    $role === 'checker'
+                    && in_array($state, ['SUBMITTED_CHECK', 'QUEUED_QA', 'QUEUED_FILLER'], true)
+                ) {
                     $updates['checker_done'] = 'yes';
                     $updates['checker_date'] = now()->toDateTimeString();
-                } elseif (in_array($state, ['APPROVED_QA', 'DELIVERED'])) {
-                    $updates['final_upload']  = 'yes';
-                    $updates['ausFinaldate']  = now()->toDateTimeString();
-                } elseif (in_array($state, ['SUBMITTED_DESIGN', 'QUEUED_QA'])) {
+                    if ((int) $order->project_id === 12) {
+                        $updates['current_layer'] = 'filler';
+                    }
+                } elseif ($role === 'designer' && in_array($state, ['SUBMITTED_DESIGN', 'QUEUED_QA'], true)) {
                     // Photos 2-layer: designer done
                     $updates['drawer_done'] = 'yes';
                     $updates['drawer_date'] = now()->toDateTimeString();
+                    $updates['current_layer'] = 'qa';
+                } elseif ($role === 'filler' && in_array($state, ['SUBMITTED_FILLER', 'QUEUED_QA'], true)) {
+                    $updates['file_uploaded']    = 'yes';
+                    $updates['file_upload_date'] = now()->toDateTimeString();
+                    $updates['current_layer']    = 'qa';
+                } elseif ($role === 'qa' && in_array($state, ['APPROVED_QA', 'DELIVERED'], true)) {
+                    $updates['final_upload']  = 'yes';
+                    $updates['ausFinaldate']  = now()->toDateTimeString();
                 }
             }
 
@@ -518,13 +674,16 @@ class AssignmentEngine
             $roleFields = [
                 'drawer_id', 'drawer_name', 'dassign_time',
                 'checker_id', 'checker_name', 'cassign_time',
+                'file_uploader_id', 'file_uploader_name', 'fassign_time',
                 'qa_id', 'qa_name',
                 'drawer_done', 'drawer_date',
                 'checker_done', 'checker_date',
+                'file_uploaded', 'file_upload_date',
                 'final_upload', 'ausFinaldate',
+                'current_layer',
             ];
             foreach ($roleFields as $field) {
-                if (isset($updates[$field])) {
+                if (isset($updates[$field]) && Schema::hasColumn('crm_order_assignments', $field)) {
                     $crmData[$field] = $updates[$field];
                 }
             }
@@ -543,10 +702,19 @@ class AssignmentEngine
                 $crmData['drawer_name']  = $updates['drawer_name'] ?? $order->drawer_name;
                 $crmData['checker_id']   = $updates['checker_id'] ?? $order->checker_id;
                 $crmData['checker_name'] = $updates['checker_name'] ?? $order->checker_name;
+                if (Schema::hasColumn('crm_order_assignments', 'file_uploader_id')) {
+                    $crmData['file_uploader_id'] = $updates['file_uploader_id'] ?? $order->file_uploader_id ?? null;
+                }
+                if (Schema::hasColumn('crm_order_assignments', 'file_uploader_name')) {
+                    $crmData['file_uploader_name'] = $updates['file_uploader_name'] ?? $order->file_uploader_name ?? null;
+                }
                 $crmData['qa_id']        = $updates['qa_id'] ?? $order->qa_id;
                 $crmData['qa_name']      = $updates['qa_name'] ?? $order->qa_name;
                 $crmData['dassign_time'] = $updates['dassign_time'] ?? $order->dassign_time;
                 $crmData['cassign_time'] = $updates['cassign_time'] ?? $order->cassign_time;
+                if (Schema::hasColumn('crm_order_assignments', 'fassign_time')) {
+                    $crmData['fassign_time'] = $updates['fassign_time'] ?? $order->fassign_time ?? null;
+                }
                 DB::table('crm_order_assignments')->insert($crmData);
             }
 

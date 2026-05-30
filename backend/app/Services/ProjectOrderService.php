@@ -265,4 +265,54 @@ class ProjectOrderService
             && Schema::hasTable(static::getMistakeTableName($projectId, 'checker'))
             && Schema::hasTable(static::getMistakeTableName($projectId, 'qa'));
     }
+
+    // ─── Internal QA Mistake Table ─────────────────────────────────────
+
+    /**
+     * Get internal QA mistake table name for a project.
+     * e.g. project_16_internal_qa_mistake
+     */
+    public static function getInternalQaMistakeTableName(int $projectId): string
+    {
+        return "project_{$projectId}_internal_qa_mistake";
+    }
+
+    /**
+     * Create the internal QA mistake table for a project if it does not exist.
+     * Matches the schema of project_16_internal_qa_mistake exactly.
+     */
+    public static function createInternalQaMistakeTable(int $projectId): void
+    {
+        $tableName = static::getInternalQaMistakeTableName($projectId);
+
+        if (Schema::hasTable($tableName)) {
+            return;
+        }
+
+        Schema::create($tableName, function (Blueprint $table) {
+            $table->id();
+            $table->string('order_id', 100)->comment('Order reference (order_number)');
+            $table->unsignedBigInteger('product_checklist_id')->default(0);
+            $table->string('worker', 500)->nullable();
+            $table->integer('worker_type_id')->default(0);
+            $table->boolean('is_checked')->nullable();
+            $table->integer('count_value')->default(0);
+            $table->string('text_value', 255)->nullable();
+            $table->string('created_by', 100)->default('');
+            $table->string('updated_by', 100)->nullable();
+            $table->timestamps();
+
+            $table->index('order_id');
+            $table->index('product_checklist_id');
+            $table->index('worker_type_id');
+        });
+    }
+
+    /**
+     * Check if the internal QA mistake table exists for a project.
+     */
+    public static function internalQaMistakeTableExists(int $projectId): bool
+    {
+        return Schema::hasTable(static::getInternalQaMistakeTableName($projectId));
+    }
 }

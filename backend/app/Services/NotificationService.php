@@ -95,6 +95,24 @@ class NotificationService
             );
         }
     }
+    
+    
+        /**
+     * Order cancelled.
+     */
+    public static function orderCancelled(Order $order, User $actor, string $reason): void
+    {
+        Notification::sendToProjectManagers(
+            $order->project_id,
+            'order_cancelled',
+            'Order Cancelled',
+            "{$actor->name} cancelled order #{$order->order_number}: {$reason}",
+            ['order_id' => $order->id, 'cancelled_by' => $actor->id, 'reason' => $reason],
+            "/work"
+        );
+    }
+
+    
 
     /**
      * New order received into the system.

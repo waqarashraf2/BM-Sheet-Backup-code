@@ -13,6 +13,7 @@ use App\Services\NotificationService;
 use App\Services\ProjectOrderService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 
 class WorkflowController extends Controller
@@ -107,160 +108,397 @@ class WorkflowController extends Controller
 
     /**
      * GET /workflow/start-next
-     * Auto-assign the next order from the user's queue.
-     * No manual picking — this is the ONLY way workers get work.
+
      */
-    public function startNext(Request $request)
-    {
-        $user = $request->user();
+public function startNext(Request $request)
+{
+    $user = $request->user();
 
-        if (!in_array($user->role, ['drawer', 'checker', 'qa', 'designer'])) {
-            return response()->json(['message' => 'Only production roles can start work.'], 403);
-        }
+    if (!in_array($user->role, ['drawer', 'checker', 'filler', 'qa', 'designer'])) {
+        return response()->json(['message' => 'Only production roles can start work.'], 403);
+    }
 
-        if (!$user->project_id) {
-            return response()->json(['message' => 'You are not assigned to a project.'], 422);
-        }
+    if (!$user->project_id) {
+        return response()->json(['message' => 'You are not assigned to a project.'], 422);
+    }
 
-        // Defense-in-depth: reject if requested project doesn't match user's project
-        if ($request->has('project_id') && (int)$request->input('project_id') !== $user->project_id) {
-            return response()->json(['message' => 'You can only work on your assigned project.'], 403);
-        }
+    if ($request->has('project_id') && (int)$request->input('project_id') !== $user->project_id) {
+        return response()->json(['message' => 'You can only work on your assigned project.'], 403);
+    }
 
-        $order = AssignmentEngine::startNext($user);
+    $table = ProjectOrderService::getTableName($user->project_id);
 
-        if (!$order) {
-            return response()->json([
-                'message' => 'No orders available in your queue, or you are at max WIP capacity.',
-                'queue_empty' => true,
-            ]);
-        }
+    // Determine role column
+    [$idCol] = self::getRoleColumns($user->role);
 
-        NotificationService::orderAssigned($order, $user);
+    // 🟢 Keep current orders as is (don't pause)
 
+    // 🟢 Assign next order
+    $order = AssignmentEngine::startNext($user);
+
+    if (!$order) {
         return response()->json([
-            'order' => $order->load(['project', 'team', 'workItems']),
-            'message' => 'Order assigned successfully.',
+            'message' => 'No orders available in your queue, or you are at max WIP capacity.',
+            'queue_empty' => true,
         ]);
     }
+
+    // 🟢 Create WorkItem for timer tracking
+    $currentStage = StateMachine::STATE_TO_STAGE[$order->workflow_state] ?? null;
+    $workItem = WorkItem::where('order_id', $order->id)
+        ->where('project_id', $order->project_id)
+        ->where('assigned_user_id', $user->id)
+        ->when($currentStage, fn ($q) => $q->where('stage', $currentStage))
+        ->where('status', 'in_progress')
+        ->latest('id')
+        ->first();
+
+    if ($workItem) {
+        $workItem->update([
+            'last_timer_start' => now(),
+        ]);
+    } else {
+        WorkItem::create([
+            'order_id' => $order->id,
+            'project_id' => $order->project_id,
+            'stage' => $currentStage,
+            'assigned_user_id' => $user->id,
+            'team_id' => $user->team_id,
+            'status' => 'in_progress',
+            'assigned_at' => now(),
+            'started_at' => now(),
+            'time_spent_seconds' => 0,
+            'last_timer_start' => now(),
+            'attempt_number' => 1,
+        ]);
+    }
+
+    NotificationService::orderAssigned($order, $user);
+
+    return response()->json([
+        'order' => $order->load(['project', 'team', 'workItems']),
+        'message' => 'Order assigned successfully.',
+    ]);
+}
+
+
 
     /**
      * GET /workflow/my-current
      * Get the user's currently assigned in-progress order.
      * Also checks project table by role-specific ID (Metro-synced orders).
      */
-    public function myCurrent(Request $request)
-    {
-        $user = $request->user();
+public function myCurrent(Request $request)
+{
+    $user = $request->user();
 
-        $order = null;
-        if ($user->project_id) {
-            [$idCol, $doneCol, $inState] = self::getRoleColumns($user->role);
+    $currentOrder = null;
+    $pausedOrders = collect();
 
-            // Determine valid in-progress states for this role
-            $legacyStateMap = ['drawer' => 'DRAW', 'checker' => 'CHECK', 'qa' => 'QA', 'designer' => 'DESIGN'];
-            $legacyState = $legacyStateMap[$user->role] ?? null;
-            $inProgressStates = array_filter([$inState, $legacyState]);
-            if ($user->role === 'drawer') {
-                // RECEIVED/PENDING_QA_REVIEW: matched by drawer_id (Metro sync sets this)
-                $inProgressStates = array_merge($inProgressStates, ['RECEIVED', 'PENDING_QA_REVIEW']);
-            }
+    if (!$user->project_id) {
+        return response()->json([
+            'current_order' => null,
+            'paused_orders' => [],
+        ]);
+    }
 
-            // PRIMARY: Check role-specific ID column (authoritative for Metro-synced orders)
-            if ($idCol) {
-                $order = Order::forProject($user->project_id)
-                    ->where($idCol, $user->id)
-                    ->where(function ($q) use ($doneCol) {
-                        $q->whereNull($doneCol)
-                          ->orWhere($doneCol, '')
-                          ->orWhere($doneCol, 'no');
-                    })
-                    ->whereIn('workflow_state', $inProgressStates)
-                    ->with(['project', 'team'])
-                    ->first();
-            }
+    // 🆕 STEP 1: Get current project
+    $project = \App\Models\Project::find($user->project_id);
 
-            // REJECTED orders: only show as current if explicitly (re)assigned via assigned_to
-            if (!$order && $user->role === 'drawer') {
-                $order = Order::forProject($user->project_id)
-                    ->where('assigned_to', $user->id)
-                    ->whereIn('workflow_state', ['REJECTED_BY_CHECK', 'REJECTED_BY_QA'])
-                    ->where(function ($q) use ($doneCol) {
-                        $q->whereNull($doneCol)
-                          ->orWhere($doneCol, '')
-                          ->orWhere($doneCol, 'no');
-                    })
-                    ->with(['project', 'team'])
-                    ->first();
-            }
+    $projectIds = [$user->project_id]; // default (SAFE)
 
-            // FALLBACK: Check assigned_to ONLY if role-specific column didn't match,
-            // AND the order's role column also points to this user (prevent cross-stage leakage)
-            if (!$order) {
-                $query = Order::forProject($user->project_id)
-                    ->where('assigned_to', $user->id)
-                    ->whereIn('workflow_state', ['IN_DRAW', 'IN_CHECK', 'IN_QA', 'IN_DESIGN'])
-                    ->with(['project', 'team']);
+    // ✅ APPLY QUEUE LOGIC ONLY FOR THESE QUEUES
+    $allowedQueues = ['Canada', 'AUS Others FP', 'CAD'];
 
-                // Ensure the role-specific column is either null/empty OR matches this user
-                if ($idCol) {
-                    $query->where(function ($q) use ($idCol, $user) {
-                        $q->whereNull($idCol)
-                          ->orWhere($idCol, '')
-                          ->orWhere($idCol, $user->id);
-                    });
-                }
+    if ($project && in_array($project->queue_name, $allowedQueues)) {
 
-                $order = $query->first();
-            }
+        $projectIds = \App\Models\Project::where('queue_name', $project->queue_name)
+            ->where('status', 'active')
+            ->pluck('id')
+            ->toArray();
+    }
 
-            // ── CRM OVERLAY FALLBACK ──
-            // Sync may have overwritten CRM assignments in the project table.
-            // Re-apply from crm_order_assignments and retry.
-            if (!$order) {
-                $crmAssign = DB::table('crm_order_assignments')
-                    ->where('project_id', $user->project_id)
-                    ->where($idCol ?? 'assigned_to', $user->id)
-                    ->where(function ($q) use ($doneCol) {
-                        if ($doneCol) {
-                            $q->whereNull($doneCol)
-                              ->orWhere($doneCol, '')
-                              ->orWhere($doneCol, 'no');
-                        }
-                    })
-                    ->whereNotNull('workflow_state')
-                    ->where('workflow_state', '!=', '')
-                    ->first();
+    [$idCol] = self::getRoleColumns($user->role);
 
-                if ($crmAssign) {
-                    $table = ProjectOrderService::getTableName($user->project_id);
-                    $overlay = [];
-                    foreach (['assigned_to','drawer_id','drawer_name','checker_id','checker_name','qa_id','qa_name','workflow_state','dassign_time','cassign_time','drawer_done','checker_done','final_upload','drawer_date','checker_date','ausFinaldate'] as $col) {
-                        if (isset($crmAssign->$col) && $crmAssign->$col !== null && $crmAssign->$col !== '') {
-                            $overlay[$col] = $crmAssign->$col;
-                        }
-                    }
-                    if (!empty($overlay)) {
-                        DB::table($table)
-                            ->where('order_number', $crmAssign->order_number)
-                            ->update(array_merge($overlay, ['updated_at' => now()]));
+    // 🟢 STEP 2: Get latest active order across selected projects
+    $latestOrder = null;
 
-                        $order = Order::forProject($user->project_id)
-                            ->where('order_number', $crmAssign->order_number)
-                            ->with(['project', 'team'])
-                            ->first();
-                    }
-                }
-            }
+    foreach ($projectIds as $pid) {
+
+        $table = ProjectOrderService::getTableName($pid);
+
+        $order = DB::table($table)
+            ->where($idCol ?? 'assigned_to', $user->id)
+            ->where('status', 'in-progress')
+            ->orderByDesc('started_at')
+            ->first();
+
+        if (!$order) continue;
+
+        $orderTime = strtotime($order->started_at ?? '1970-01-01');
+
+        if (!$latestOrder || $orderTime > strtotime($latestOrder->started_at ?? '1970-01-01')) {
+            $latestOrder = $order;
+        }
+    }
+
+    $currentOrder = $latestOrder;
+
+    // 🟢 STEP 3: Timer logic (UNCHANGED)
+    if ($currentOrder) {
+        $sourceProjectId = (int) $currentOrder->project_id;
+        $currentOrder->source_project_id = $sourceProjectId;
+
+        // 🔥 IMPORTANT: send QUEUE project_id (for frontend match)
+        if ($project && in_array($project->queue_name, $allowedQueues)) {
+            $currentOrder->project_id = $user->project_id;
         }
 
-        return response()->json(['order' => $order]);
+        $workItem = WorkItem::where('project_id', $sourceProjectId)
+            ->where('order_id', $currentOrder->id)
+            ->where('assigned_user_id', $user->id)
+            ->latest('id')
+            ->first();
+
+        if ($workItem) {
+
+            $runningSeconds = $workItem->last_timer_start
+                ? max(0, now()->diffInSeconds($workItem->last_timer_start))
+                : 0;
+
+            $currentOrder->timer_seconds =
+                $workItem->time_spent_seconds + $runningSeconds;
+
+        } else {
+            $currentOrder->timer_seconds = 0;
+        }
+    }
+
+    // 🟢 STEP 4: Fetch paused orders
+    foreach ($projectIds as $pid) {
+
+        $table = ProjectOrderService::getTableName($pid);
+
+        $orders = DB::table($table)
+            ->where($idCol ?? 'assigned_to', $user->id)
+            ->where('status', 'paused')
+            ->orderByDesc('started_at')
+            ->get();
+
+        $pausedOrders = $pausedOrders->merge($orders);
+    }
+
+    // 🔥 Fix project_id ONLY for allowed queues
+    if ($project && in_array($project->queue_name, $allowedQueues)) {
+        $pausedOrders = $pausedOrders->map(function ($order) use ($user) {
+            $order->project_id = $user->project_id;
+            return $order;
+        });
+    }
+
+    return response()->json([
+        'current_order' => $currentOrder,
+        'paused_orders' => $pausedOrders->values(),
+        'message' => "Fetched current and paused orders for {$user->role}.",
+    ]);
+}
+
+    /**
+     * Backward-compatible endpoint name.
+     * GET /workflow/orders/images/{jobOrderId}
+     */
+    public function orderImageLinks(Request $request, string $jobOrderId)
+    {
+        return $this->orderAssetLinks($request, $jobOrderId);
     }
 
     /**
-     * POST /workflow/orders/{id}/submit
-     * Submit completed work to the next stage.
+     * Standalone links endpoint for frontend.
+     * GET /workflow/orders/links/{jobOrderId}
+     *
+     * Query params:
+     * - project_id (optional)
+     * - include_external (optional: 1|0) -> include live Focal assetdetail links for project 22
      */
+    public function orderAssetLinks(Request $request, string $jobOrderId)
+    {
+        $jobOrderId = trim($jobOrderId);
+        if ($jobOrderId === '') {
+            return response()->json(['message' => 'job_order_id is required.'], 422);
+        }
+
+        $user = $request->user();
+        $allowedProjectIds = $this->resolveProjectIds($user);
+
+        if (empty($allowedProjectIds)) {
+            return response()->json(['message' => 'No accessible projects found for this user.'], 403);
+        }
+
+        $requestedProjectId = (int) $request->query('project_id', 0);
+        if ($requestedProjectId > 0 && !in_array($requestedProjectId, $allowedProjectIds, true)) {
+            return response()->json(['message' => 'Access denied to this project.'], 403);
+        }
+
+        $candidateProjectIds = $requestedProjectId > 0
+            ? [$requestedProjectId]
+            : $allowedProjectIds;
+
+        $tableLinks = collect();
+        $projectsWithData = [];
+
+        foreach ($candidateProjectIds as $pid) {
+            $rows = $this->fetchProjectTableLinks((int) $pid, $jobOrderId);
+            if ($rows->isNotEmpty()) {
+                $projectsWithData[] = (int) $pid;
+                $tableLinks = $tableLinks->merge($rows);
+            }
+        }
+
+        $includeExternal = (string) $request->query('include_external', '0') === '1';
+        $externalLinks = collect();
+
+        // External assetdetail links are currently available for FocalCRM photo jobs (project 22).
+        if ($includeExternal && in_array(22, $candidateProjectIds, true)) {
+            $externalLinks = $this->fetchFocalAssetDetailLinks($jobOrderId);
+        }
+
+        $allLinks = $tableLinks
+            ->merge($externalLinks)
+            ->unique(fn ($row) => strtolower(trim((string) ($row['url'] ?? ''))))
+            ->filter(fn ($row) => !empty($row['url']))
+            ->values();
+
+        return response()->json([
+            'job_order_id' => $jobOrderId,
+            'requested_project_id' => $requestedProjectId > 0 ? $requestedProjectId : null,
+            'matched_project_ids' => $projectsWithData,
+            'include_external' => $includeExternal,
+            'count' => $allLinks->count(),
+            'links' => $allLinks,
+        ]);
+    }
+
+    private function fetchProjectTableLinks(int $projectId, string $jobOrderId)
+    {
+        $table = "job_detail_{$projectId}_images";
+
+        if (!Schema::hasTable($table)) {
+            return collect();
+        }
+
+        $rows = DB::table($table)
+            ->where('job_order_id', $jobOrderId)
+            ->orderBy('id')
+            ->get(['id', 'images_url', 'file_name', 'job_order_id']);
+
+        return $rows->map(function ($row) use ($projectId, $table) {
+            return [
+                'source' => 'project_table',
+                'source_table' => $table,
+                'project_id' => $projectId,
+                'job_order_id' => $row->job_order_id,
+                'id' => $row->id,
+                'name' => $row->file_name,
+                'url' => $row->images_url,
+                'link_type' => 'asset',
+                'meta' => null,
+            ];
+        });
+    }
+
+    private function fetchFocalAssetDetailLinks(string $jobOrderId)
+    {
+        $apiUrl = (string) env('FOCAL_CRM_PHOTO_API_URL', env('FOCAL_CRM_API_URL', 'https://api.focalagent.com/supplier-enhancement/v3/jobs'));
+        $supplierSecret = (string) env('FOCAL_CRM_PHOTO_SUPPLIER_SECRET', env('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu'));
+        $subscriptionKey = (string) env('FOCAL_CRM_PHOTO_SUBSCRIPTION_KEY', env('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1'));
+
+        try {
+            $url = rtrim($apiUrl, '/') . '/' . $jobOrderId . '/assetdetail';
+
+            $response = Http::timeout(60)
+                ->withHeaders([
+                    'Accept' => '*/*',
+                    'Supplier-Secret' => $supplierSecret,
+                    'Ocp-Apim-Subscription-Key' => $subscriptionKey,
+                ])
+                ->get($url);
+
+            if (!$response->successful()) {
+                return collect();
+            }
+
+            $assetDetail = $response->json() ?? [];
+
+            return $this->extractFocalAssetLinks($assetDetail, $jobOrderId);
+        } catch (\Throwable $e) {
+            return collect();
+        }
+    }
+
+    private function extractFocalAssetLinks(array $assetDetail, string $jobOrderId)
+    {
+        $links = collect();
+
+        foreach ((array) ($assetDetail['RawPhotoAssets'] ?? []) as $row) {
+            $url = $row['Url'] ?? $row['url'] ?? $row['URL'] ?? null;
+            if (!$url) {
+                continue;
+            }
+            $links->push([
+                'source' => 'focal_assetdetail',
+                'source_table' => null,
+                'project_id' => 22,
+                'job_order_id' => $jobOrderId,
+                'id' => null,
+                'name' => $row['FileName'] ?? $row['file_name'] ?? basename($url),
+                'url' => $url,
+                'link_type' => 'raw_photo_asset',
+                'meta' => null,
+            ]);
+        }
+
+        foreach ((array) ($assetDetail['Assets'] ?? []) as $row) {
+            $url = $row['Url'] ?? $row['url'] ?? $row['URL'] ?? null;
+            if (!$url) {
+                continue;
+            }
+            $links->push([
+                'source' => 'focal_assetdetail',
+                'source_table' => null,
+                'project_id' => 22,
+                'job_order_id' => $jobOrderId,
+                'id' => null,
+                'name' => $row['FileName'] ?? $row['file_name'] ?? basename($url),
+                'url' => $url,
+                'link_type' => 'asset',
+                'meta' => null,
+            ]);
+        }
+
+        foreach ((array) ($assetDetail['AdditionalLinks'] ?? []) as $row) {
+            $url = $row['Href'] ?? $row['href'] ?? null;
+            if (!$url) {
+                continue;
+            }
+            $links->push([
+                'source' => 'focal_assetdetail',
+                'source_table' => null,
+                'project_id' => 22,
+                'job_order_id' => $jobOrderId,
+                'id' => null,
+                'name' => $row['Description'] ?? $row['description'] ?? basename($url),
+                'url' => $url,
+                'link_type' => 'additional_link',
+                'meta' => [
+                    'description' => $row['Description'] ?? $row['description'] ?? null,
+                ],
+            ]);
+        }
+
+        return $links;
+    }
+
+
     public function submitWork(Request $request, int $id)
     {
         $user = $request->user();
@@ -272,7 +510,7 @@ class WorkflowController extends Controller
         }
 
         // Verify order is in an IN_ state or legacy workable state
-        $legacyWorkableStates = ['DRAW', 'CHECK', 'QA', 'DESIGN'];
+        $legacyWorkableStates = ['DRAW', 'CHECK', 'FILLER', 'QA', 'DESIGN'];
         // Metro-synced orders may have these states when a drawer is working
         $metroDrawerStates = ['RECEIVED', 'PENDING_QA_REVIEW', 'REJECTED_BY_CHECK', 'REJECTED_BY_QA'];
         // Auto-transition from QUEUED_* to IN_* if still queued
@@ -294,7 +532,7 @@ class WorkflowController extends Controller
         }
 
         // If order is in legacy state, transition it to IN_* first
-        $legacyToNewState = ['DRAW' => 'IN_DRAW', 'CHECK' => 'IN_CHECK', 'QA' => 'IN_QA', 'DESIGN' => 'IN_DESIGN'];
+        $legacyToNewState = ['DRAW' => 'IN_DRAW', 'CHECK' => 'IN_CHECK', 'FILLER' => 'IN_FILLER', 'QA' => 'IN_QA', 'DESIGN' => 'IN_DESIGN'];
         if (isset($legacyToNewState[$order->workflow_state])) {
             $order->update([
                 'workflow_state' => $legacyToNewState[$order->workflow_state],
@@ -303,12 +541,41 @@ class WorkflowController extends Controller
         }
 
         // Check project isolation
-        if ($order->project_id !== $user->project_id) {
+        if (!in_array((int) $order->project_id, self::queueProjectIdsForUser($user), true)) {
             return response()->json(['message' => 'Project isolation violation.'], 403);
         }
 
         $comments = $request->input('comments');
         $order = AssignmentEngine::submitWork($order, $user, $comments);
+
+        // Complete only the active WorkItem for this project/order/user/role-stage.
+        // Important for filler: stage is stored as FILL in work_items.
+        $stageMap = [
+            'drawer' => 'DRAW',
+            'designer' => 'DESIGN',
+            'checker' => 'CHECK',
+            'filler' => 'FILL',
+            'qa' => 'QA',
+        ];
+        $targetStage = $stageMap[$user->role] ?? null;
+
+        $workItemQuery = WorkItem::where('project_id', $order->project_id)
+            ->where('order_id', $order->id)
+            ->where('assigned_user_id', $user->id)
+            ->where('status', 'in_progress');
+
+        if ($targetStage) {
+            $workItemQuery->where('stage', $targetStage);
+        }
+
+        $workItem = $workItemQuery->latest('id')->first();
+        if ($workItem) {
+            $workItem->update([
+                'status' => 'completed',
+                'completed_at' => now(),
+                'last_timer_start' => null,
+            ]);
+        }
 
         NotificationService::workSubmitted($order, $user);
 
@@ -318,91 +585,247 @@ class WorkflowController extends Controller
         ]);
     }
 
-    /**
-     * POST /workflow/orders/{id}/reject
-     * Reject an order (checker/QA only) with mandatory reason.
+
+
+/* Reject an order (checker/QA only) with mandatory reason.
      */
-    public function rejectOrder(Request $request, int $id)
-    {
-        $request->validate([
-            'reason' => 'required|string|min:5',
-            'rejection_code' => 'required|string|in:quality,incomplete,wrong_specs,rework,formatting,missing_info',
-            'route_to' => 'nullable|string|in:draw,check,design',
-        ]);
+public function rejectOrder(Request $request, int $id)
+{
+    $request->validate([
+        'reason' => 'required|string|min:5',
+        'rejection_code' => 'required|string|in:quality,incomplete,wrong_specs,rework,formatting,missing_info',
+        'route_to' => 'nullable|string|in:draw,check,design',
+    ]);
 
-        $user = $request->user();
-        $order = self::findOrderForUser($id, $user);
+    $user = $request->user();
+    $order = self::findOrderForUser($id, $user);
 
-        if (!self::isOrderAssignedToUser($order, $user)) {
-            return response()->json(['message' => 'This order is not assigned to you.'], 403);
-        }
+    if (!self::isOrderAssignedToUser($order, $user)) {
+        return response()->json(['message' => 'This order is not assigned to you.'], 403);
+    }
 
-        if (!in_array($user->role, ['checker', 'qa'])) {
-            return response()->json(['message' => 'Only checkers and QA can reject orders.'], 403);
-        }
+    if (!in_array($user->role, ['checker', 'qa'])) {
+        return response()->json(['message' => 'Only checkers and QA can reject orders.'], 403);
+    }
 
-        if (!in_array($order->workflow_state, ['IN_CHECK', 'IN_QA'])) {
-            return response()->json(['message' => 'Order is not in a rejectable state.'], 422);
-        }
+    if (!in_array($order->workflow_state, ['IN_CHECK', 'IN_QA'])) {
+        return response()->json(['message' => 'Order is not in a rejectable state.'], 422);
+    }
 
-        $order = AssignmentEngine::rejectOrder(
-            $order,
-            $user,
-            $request->input('reason'),
-            $request->input('rejection_code'),
-            $request->input('route_to')
-        );
+    // ✅ ORIGINAL LOGIC (UNCHANGED)
+    $order = AssignmentEngine::rejectOrder(
+        $order,
+        $user,
+        $request->input('reason'),
+        $request->input('rejection_code'),
+        $request->input('route_to')
+    );
 
-        NotificationService::orderRejected($order, $user, $request->input('reason'));
+    // ===============================
+    // ✅ ADD: CRM ORDER ASSIGNMENTS UPDATE
+    // ===============================
+    try {
+        $rejectedState = $user->role === 'qa'
+            ? 'REJECTED_BY_QA'
+            : 'REJECTED_BY_CHECK';
 
-        return response()->json([
-            'order' => $order,
-            'message' => 'Order rejected successfully.',
+        DB::table('crm_order_assignments')
+            ->where('order_number', $order->order_number)
+            ->update([
+                'workflow_state' => $rejectedState,
+
+                // optional safe resets (only if needed)
+                'checker_done' => null,
+                'final_upload' => null,
+
+                'updated_at' => now(),
+            ]);
+    } catch (\Exception $e) {
+        \Log::error('CRM reject update failed', [
+            'order_number' => $order->order_number,
+            'error' => $e->getMessage(),
         ]);
     }
+
+    // ✅ ORIGINAL LOGIC (UNCHANGED)
+    NotificationService::orderRejected($order, $user, $request->input('reason'));
+
+    return response()->json([
+        'order' => $order,
+        'message' => 'Order rejected successfully.',
+    ]);
+}
+
+
+public function cancelOrder(Request $request, int $id)
+{
+    $request->validate([
+        'reason' => 'required|string|min:5',
+    ]);
+
+    $user = $request->user();
+    $order = self::findOrderForUser($id, $user);
+
+    if (!in_array($user->role, ['operations_manager', 'project_manager', 'qa'])) {
+        return response()->json(['message' => 'Only operations managers, project managers, and QA can cancel orders.'], 403);
+    }
+
+    if (!StateMachine::canTransition($order, 'CANCELLED')) {
+        return response()->json(['message' => 'Order is not in a cancellable state.'], 422);
+    }
+
+    $order = AssignmentEngine::cancelOrder(
+        $order,
+        $user,
+        $request->input('reason')
+    );
+
+    try {
+        DB::table('crm_order_assignments')
+            ->where('order_number', $order->order_number)
+            ->update([
+                'workflow_state' => 'CANCELLED',
+                'checker_done' => null,
+                'final_upload' => null,
+                'updated_at' => now(),
+            ]);
+    } catch (\Exception $e) {
+        \Log::error('CRM cancel update failed', [
+            'order_number' => $order->order_number,
+            'error' => $e->getMessage(),
+        ]);
+    }
+
+    NotificationService::orderCancelled($order, $user, $request->input('reason'));
+
+    return response()->json([
+        'order' => $order,
+        'message' => 'Order cancelled successfully.',
+    ]);
+}
+
 
     /**
      * POST /workflow/orders/{id}/hold
      * Place an order on hold (checker/QA/ops only).
      */
-    public function holdOrder(Request $request, int $id)
-    {
-        $request->validate([
-            'hold_reason' => 'required|string|min:3',
-        ]);
+   public function holdOrder(Request $request, int $id)
+{
+    $request->validate([
+        'hold_reason' => 'required|string|min:3',
+    ]);
 
-        $user = $request->user();
-        $order = self::findOrderForUser($id, $user);
+    $user = $request->user();
+    $order = self::findOrderForUser($id, $user);
 
-        if (!in_array($user->role, StateMachine::HOLD_ALLOWED_ROLES)) {
-            return response()->json(['message' => 'You are not allowed to place orders on hold.'], 403);
+    if (!$order) {
+        return response()->json([
+            'message' => 'Order not found.'
+        ], 404);
+    }
+
+    // =========================================
+    // ✅ DRAWER → PENDING
+    // =========================================
+    if ($user->role === 'drawer') {
+
+        if (!self::isOrderAssignedToUser($order, $user)) {
+            return response()->json([
+                'message' => 'This order is not assigned to you.'
+            ], 403);
         }
 
-        if (!StateMachine::canTransition($order, 'ON_HOLD')) {
-            return response()->json(['message' => 'Cannot put this order on hold from its current state.'], 422);
+        if (!in_array($order->workflow_state, ['IN_DRAW'])) {
+            return response()->json([
+                'message' => 'Order is not in drawing state.'
+            ], 422);
         }
 
         DB::transaction(function () use ($order, $user, $request) {
-            // Save the current state so we can resume to it later
-            $order->update(['pre_hold_state' => $order->workflow_state]);
 
-            // If user had this assigned, release it (safely prevent negative values)
-            if ($order->assigned_to === $user->id && $user->wip_count > 0) {
+            DB::table($order->getTable())
+                ->where('id', $order->id)
+                ->update([
+                    'status' => 'pending',
+                    'workflow_state' => 'PENDING_BY_DRAWER',
+                    'rejection_reason' => $request->hold_reason,
+                    'rejection_type' => 'pending',
+                    'assigned_to' => null,
+                    'updated_at' => now(),
+                ]);
+
+            if ($user->wip_count > 0) {
                 $user->decrement('wip_count');
             }
 
-            StateMachine::transition($order, 'ON_HOLD', $user->id, [
-                'hold_reason' => $request->input('hold_reason'),
-            ]);
+            // CRM update
+            DB::table('crm_order_assignments')
+                ->where('order_number', $order->order_number)
+                ->update([
+                    'workflow_state' => 'PENDING_BY_DRAWER',
+                    'updated_at' => now(),
+                ]);
         });
 
-        NotificationService::orderOnHold($order, $user, $request->input('hold_reason'));
+        NotificationService::orderOnHold(
+            $order,
+            $user,
+            'Pending: ' . $request->hold_reason
+        );
 
         return response()->json([
-            'order' => $order->fresh(),
-            'message' => 'Order placed on hold.',
+            'order' => self::findOrderForUser($id, $user),
+            'message' => 'Order moved to pending by drawer.',
         ]);
     }
+
+    // =========================================
+    // ✅ OTHER ROLES → ORIGINAL HOLD LOGIC
+    // =========================================
+
+    if (!in_array($user->role, StateMachine::HOLD_ALLOWED_ROLES)) {
+        return response()->json([
+            'message' => 'You are not allowed to place orders on hold.'
+        ], 403);
+    }
+
+    if (!StateMachine::canTransition($order, 'ON_HOLD')) {
+        return response()->json([
+            'message' => 'Cannot put this order on hold from its current state.'
+        ], 422);
+    }
+
+    DB::transaction(function () use ($order, $user, $request) {
+
+        $order->update([
+            'pre_hold_state' => $order->workflow_state
+        ]);
+
+        if ($order->assigned_to === $user->id && $user->wip_count > 0) {
+            $user->decrement('wip_count');
+        }
+
+        StateMachine::transition(
+            $order,
+            'ON_HOLD',
+            $user->id,
+            [
+                'hold_reason' => $request->input('hold_reason'),
+            ]
+        );
+    });
+
+    NotificationService::orderOnHold(
+        $order,
+        $user,
+        $request->input('hold_reason')
+    );
+
+    return response()->json([
+        'order' => $order->fresh(),
+        'message' => 'Order placed on hold.',
+    ]);
+}
 
     /**
      * POST /workflow/orders/{id}/resume
@@ -449,7 +872,7 @@ class WorkflowController extends Controller
             $queueState = $preHoldState;
         } else {
             // Fallback: determine from workflow type
-            $queueState = $order->workflow_type === 'PH_2_LAYER' ? 'QUEUED_DESIGN' : 'QUEUED_DRAW';
+        $queueState = $order->workflow_type === 'PH_2_LAYER' ? 'QUEUED_DESIGN' : 'QUEUED_DRAW';
         }
 
         DB::transaction(function () use ($order, $queueState, $user) {
@@ -469,23 +892,42 @@ class WorkflowController extends Controller
      * GET /workflow/my-stats
      * Worker's today stats: completed, target, time.
      */
-    public function myStats(Request $request)
-    {
-        $user = $request->user();
+public function myStats(Request $request)
+{
+    $user = $request->user();
 
-        // Try WorkItem first
-        $todayCompleted = WorkItem::where('assigned_user_id', $user->id)
-            ->where('status', 'completed')
-            ->whereDate('completed_at', today())
-            ->count();
+    // ✅ NEW: queue-safe project resolution
+    $project = $user->project;
 
-        // Fallback: count from project table (Metro orders)
-        if ($todayCompleted === 0 && $user->project_id) {
-            $table = ProjectOrderService::getTableName($user->project_id);
+    $projectIds = [$user->project_id];
+
+    if ($project && in_array($project->queue_name, ['Canada', 'Australia', 'AUS Others FP'])) {
+        $projectIds = \App\Models\Project::where('queue_name', $project->queue_name)
+            ->where('status', 'active')
+            ->pluck('id')
+            ->toArray();
+    }
+
+    // 🟢 Try WorkItem first
+    $todayCompleted = WorkItem::where('assigned_user_id', $user->id)
+        ->where('status', 'completed')
+        ->whereDate('completed_at', today())
+        ->count();
+
+    // 🟡 Fallback: Metro tables (QUEUE SAFE)
+    if ($todayCompleted === 0) {
+
+        foreach ($projectIds as $pid) {
+
+            $table = ProjectOrderService::getTableName($pid);
+
             if (Schema::hasTable($table)) {
+
                 [$idCol, $doneCol, , $dateCol] = self::getRoleColumns($user->role);
+
                 if ($idCol && $doneCol) {
-                    $todayCompleted = DB::table($table)
+
+                    $todayCompleted += DB::table($table)
                         ->where($idCol, $user->id)
                         ->where($doneCol, 'yes')
                         ->whereDate($dateCol, today())
@@ -493,35 +935,69 @@ class WorkflowController extends Controller
                 }
             }
         }
+    }
 
-        $queueCount = 0;
-        if ($user->project_id && in_array($user->role, ['drawer', 'checker', 'qa', 'designer'])) {
-            $project = $user->project;
-            $queueStates = StateMachine::getQueuedStates($project->workflow_type ?? 'FP_3_LAYER');
-            $roleQueueState = collect($queueStates)->first(function ($state) use ($user) {
-                $role = StateMachine::getRoleForState($state);
-                return $role === $user->role;
-            });
-            if ($roleQueueState) {
-                $queueCount = Order::forProject($user->project_id)
+    $queueCount = 0;
+
+    if ($user->project_id && in_array($user->role, ['drawer', 'checker', 'filler', 'qa', 'designer'])) {
+
+        $project = $user->project;
+
+        $queueStates = StateMachine::getQueuedStates(self::resolveWorkflowTypeForUser($user, $project));
+
+        $roleQueueState = collect($queueStates)->first(function ($state) use ($user) {
+            $role = StateMachine::getRoleForState($state);
+            return $role === $user->role;
+        });
+
+        // 🟢 QUEUE PROJECT LOOP (IMPORTANT FIX)
+        if ($roleQueueState) {
+
+            foreach ($projectIds as $pid) {
+
+                $queueCount += Order::forProject($pid)
                     ->where('workflow_state', $roleQueueState)
                     ->count();
             }
+        }
 
-            // Also count legacy states (DRAW, CHECK, QA) assigned to this user
-            $legacyStateMap = ['drawer' => 'DRAW', 'checker' => 'CHECK', 'qa' => 'QA', 'designer' => 'DESIGN'];
-            $idColMap = ['drawer' => 'drawer_id', 'checker' => 'checker_id', 'qa' => 'qa_id', 'designer' => 'drawer_id'];
-            $doneColMap = ['drawer' => 'drawer_done', 'checker' => 'checker_done', 'qa' => 'final_upload', 'designer' => 'drawer_done'];
-            $legacyState = $legacyStateMap[$user->role] ?? null;
-            $idCol = $idColMap[$user->role] ?? null;
-            $doneCol = $doneColMap[$user->role] ?? null;
-            if ($legacyState && $idCol) {
-                // Include the legacy state + for drawers RECEIVED/PENDING_QA_REVIEW (Metro pre-transition)
-                $countStates = [$legacyState];
-                if ($user->role === 'drawer') {
-                    $countStates = array_merge($countStates, ['RECEIVED', 'PENDING_QA_REVIEW']);
-                }
-                $queueCount += Order::forProject($user->project_id)
+        // 🟡 Legacy states (QUEUE SAFE)
+        $legacyStateMap = [
+            'drawer' => 'DRAW',
+            'checker' => 'CHECK',
+            'qa' => 'QA',
+            'designer' => 'DESIGN'
+        ];
+
+        $idColMap = [
+            'drawer' => 'drawer_id',
+            'checker' => 'checker_id',
+            'qa' => 'qa_id',
+            'designer' => 'drawer_id'
+        ];
+
+        $doneColMap = [
+            'drawer' => 'drawer_done',
+            'checker' => 'checker_done',
+            'qa' => 'final_upload',
+            'designer' => 'drawer_done'
+        ];
+
+        $legacyState = $legacyStateMap[$user->role] ?? null;
+        $idCol = $idColMap[$user->role] ?? null;
+        $doneCol = $doneColMap[$user->role] ?? null;
+
+        if ($legacyState && $idCol) {
+
+            $countStates = [$legacyState];
+
+            if ($user->role === 'drawer') {
+                $countStates = array_merge($countStates, ['RECEIVED', 'PENDING_QA_REVIEW']);
+            }
+
+            foreach ($projectIds as $pid) {
+
+                $queueCount += Order::forProject($pid)
                     ->whereIn('workflow_state', $countStates)
                     ->where($idCol, $user->id)
                     ->where(function ($q) use ($doneCol) {
@@ -530,10 +1006,14 @@ class WorkflowController extends Controller
                           ->orWhere($doneCol, 'no');
                     })
                     ->count();
+            }
 
-                // REJECTED orders: only count if explicitly (re)assigned via assigned_to
-                if ($user->role === 'drawer') {
-                    $queueCount += Order::forProject($user->project_id)
+            // 🔴 REJECTED (drawer only) — QUEUE SAFE
+            if ($user->role === 'drawer') {
+
+                foreach ($projectIds as $pid) {
+
+                    $queueCount += Order::forProject($pid)
                         ->whereIn('workflow_state', ['REJECTED_BY_CHECK', 'REJECTED_BY_QA'])
                         ->where('assigned_to', $user->id)
                         ->where(function ($q) use ($doneCol) {
@@ -545,63 +1025,77 @@ class WorkflowController extends Controller
                 }
             }
         }
-
-        return response()->json([
-            'today_completed' => $todayCompleted,
-            'daily_target' => $user->daily_target ?? 0,
-            'wip_count' => $user->wip_count,
-            'queue_count' => $queueCount,
-            'is_absent' => $user->is_absent,
-        ]);
     }
+
+    return response()->json([
+        'today_completed' => $todayCompleted,
+        'daily_target' => $user->daily_target ?? 0,
+        'wip_count' => $user->wip_count,
+        'queue_count' => $queueCount,
+        'is_absent' => $user->is_absent,
+    ]);
+}
 
     /**
      * GET /workflow/my-queue
      * Worker's orders in queue (assigned or waiting for their role).
      */
-    public function myQueue(Request $request)
-    {
-        $user = $request->user();
+public function myQueue(Request $request)
+{
+    $user = $request->user();
 
-        if (!in_array($user->role, ['drawer', 'checker', 'qa', 'designer'])) {
-            return response()->json(['message' => 'Only production roles have a queue.'], 403);
-        }
+    if (!in_array($user->role, ['drawer', 'checker', 'filler', 'qa', 'designer'])) {
+        return response()->json(['message' => 'Only production roles have a queue.'], 403);
+    }
 
-        if (!$user->project_id) {
-            return response()->json(['orders' => []]);
-        }
+    if (!$user->project_id) {
+        return response()->json(['orders' => []]);
+    }
 
-        $project = $user->project;
-        $queueStates = StateMachine::getQueuedStates($project->workflow_type ?? 'FP_3_LAYER');
-        
-        // Find the queue state for this user's role
-        $roleQueueState = collect($queueStates)->first(function ($state) use ($user) {
-            $role = StateMachine::getRoleForState($state);
-            return $role === $user->role;
-        });
-        
-        // Also include orders currently assigned to this user
-        $inProgressStates = ['IN_DRAW', 'IN_CHECK', 'IN_QA', 'IN_DESIGN'];
-        $roleInProgressState = collect($inProgressStates)->first(function ($state) use ($user) {
-            $role = StateMachine::getRoleForState($state);
-            return $role === $user->role;
-        });
+    $project = $user->project;
 
-        // Legacy state mapping for Metro-synced data
-        $legacyStateMap = ['drawer' => 'DRAW', 'checker' => 'CHECK', 'qa' => 'QA', 'designer' => 'DESIGN'];
-        $legacyState = $legacyStateMap[$user->role] ?? null;
-        [$idCol] = self::getRoleColumns($user->role);
+    // ✅ NEW: resolve project IDs (QUEUE SAFE - SAME AS myCurrent)
+    $projectIds = [$user->project_id];
 
-        // For drawers, also include RECEIVED/PENDING_QA_REVIEW (Metro-synced pre-transition states)
-        // REJECTED_BY_CHECK/REJECTED_BY_QA only show if explicitly (re)assigned via assigned_to
-        $preTransitionStates = [];
-        if ($user->role === 'drawer') {
-            $preTransitionStates = ['RECEIVED', 'PENDING_QA_REVIEW'];
-        }
+    if ($project && in_array($project->queue_name, ['Canada', 'Australia', 'AUS Others FP'])) {
+        $projectIds = \App\Models\Project::where('queue_name', $project->queue_name)
+            ->where('status', 'active')
+            ->pluck('id')
+            ->toArray();
+    }
 
-        $orders = Order::forProject($user->project_id)
+    $queueStates = StateMachine::getQueuedStates(self::resolveWorkflowTypeForUser($user, $project));
+    
+    $roleQueueState = collect($queueStates)->first(function ($state) use ($user) {
+        $role = StateMachine::getRoleForState($state);
+        return $role === $user->role;
+    });
+    
+    $inProgressStates = ['IN_DRAW', 'IN_CHECK', 'IN_FILLER', 'IN_QA', 'IN_DESIGN'];
+
+    $roleInProgressState = collect($inProgressStates)->first(function ($state) use ($user) {
+        $role = StateMachine::getRoleForState($state);
+        return $role === $user->role;
+    });
+
+    $legacyStateMap = ['drawer' => 'DRAW', 'checker' => 'CHECK', 'filler' => 'FILLER', 'qa' => 'QA', 'designer' => 'DESIGN'];
+    $legacyState = $legacyStateMap[$user->role] ?? null;
+
+    [$idCol] = self::getRoleColumns($user->role);
+
+    $preTransitionStates = [];
+    if ($user->role === 'drawer') {
+        $preTransitionStates = ['RECEIVED', 'PENDING_QA_REVIEW'];
+    }
+
+    // ✅ NEW: collect orders from multiple projects
+    $orders = collect();
+
+    foreach ($projectIds as $pid) {
+
+        $projectOrders = Order::forProject($pid)
             ->where(function ($query) use ($roleQueueState, $roleInProgressState, $legacyState, $idCol, $user, $preTransitionStates) {
-                // New system: QUEUED_* state assigned to this user (by assigned_to or role column)
+
                 $query->where(function ($q) use ($roleQueueState, $idCol, $user) {
                         $q->where('workflow_state', $roleQueueState)
                           ->where(function ($sq) use ($user, $idCol) {
@@ -611,26 +1105,25 @@ class WorkflowController extends Controller
                               }
                           });
                     })
-                    // New system: IN_* state assigned to this user
                     ->orWhere(function ($q) use ($roleInProgressState, $user) {
                         $q->where('workflow_state', $roleInProgressState)
                           ->where('assigned_to', $user->id);
                     });
-                // Legacy: orders in DRAW/CHECK/QA state assigned to this user by role column
+
                 if ($legacyState && $idCol) {
                     $query->orWhere(function ($q) use ($legacyState, $idCol, $user) {
                         $q->where('workflow_state', $legacyState)
                           ->where($idCol, $user->id);
                     });
                 }
-                // Pre-transition: RECEIVED/PENDING_QA_REVIEW matched by drawer_id (Metro sync sets this)
+
                 if (!empty($preTransitionStates) && $idCol) {
                     $query->orWhere(function ($q) use ($preTransitionStates, $idCol, $user) {
                         $q->whereIn('workflow_state', $preTransitionStates)
                           ->where($idCol, $user->id);
                     });
                 }
-                // REJECTED orders: only if explicitly (re)assigned through CRM (assigned_to is set)
+
                 $query->orWhere(function ($q) use ($user) {
                     $q->whereIn('workflow_state', ['REJECTED_BY_CHECK', 'REJECTED_BY_QA'])
                       ->where('assigned_to', $user->id);
@@ -641,92 +1134,164 @@ class WorkflowController extends Controller
             ->orderBy('due_date', 'asc')
             ->get();
 
-        // ── CRM OVERLAY FALLBACK ──
-        // If queue is empty, check crm_order_assignments for CRM-assigned orders
-        // that sync may have wiped from the project table. Re-apply overlay and include them.
-        if ($orders->isEmpty()) {
-            [$crmIdCol, $crmDoneCol] = self::getRoleColumns($user->role);
-            $crmCol = $crmIdCol ?? 'assigned_to';
+        // ✅ IMPORTANT: force queue project_id for frontend compatibility
+        $projectOrders = $projectOrders->map(function ($order) use ($user) {
+            $order->project_id = $user->project_id;
+            return $order;
+        });
 
-            $crmAssignments = DB::table('crm_order_assignments')
-                ->where('project_id', $user->project_id)
-                ->where($crmCol, $user->id)
-                ->where(function ($q) use ($crmDoneCol) {
-                    if ($crmDoneCol) {
-                        $q->whereNull($crmDoneCol)
-                          ->orWhere($crmDoneCol, '')
-                          ->orWhere($crmDoneCol, 'no');
-                    }
-                })
-                ->whereNotNull('workflow_state')
-                ->where('workflow_state', '!=', '')
-                ->get();
+        $orders = $orders->merge($projectOrders);
+    }
 
-            if ($crmAssignments->isNotEmpty()) {
-                $table = ProjectOrderService::getTableName($user->project_id);
+    // ── CRM OVERLAY FALLBACK (UNCHANGED — JUST LOOP SAFE) ──
+    if ($orders->isEmpty()) {
+
+        [$crmIdCol, $crmDoneCol] = self::getRoleColumns($user->role);
+        $crmCol = $crmIdCol ?? 'assigned_to';
+
+        $crmAssignments = DB::table('crm_order_assignments')
+            ->whereIn('project_id', $projectIds) // ✅ UPDATED for queue
+            ->where($crmCol, $user->id)
+            ->where(function ($q) use ($crmDoneCol) {
+                if ($crmDoneCol) {
+                    $q->whereNull($crmDoneCol)
+                      ->orWhere($crmDoneCol, '')
+                      ->orWhere($crmDoneCol, 'no');
+                }
+            })
+            ->whereNotNull('workflow_state')
+            ->where('workflow_state', '!=', '')
+            ->get();
+
+        if ($crmAssignments->isNotEmpty()) {
+
+            foreach ($projectIds as $pid) {
+
+                $table = ProjectOrderService::getTableName($pid);
+
                 foreach ($crmAssignments as $crmAssign) {
+
                     $overlay = [];
-                    foreach (['assigned_to','drawer_id','drawer_name','checker_id','checker_name','qa_id','qa_name','workflow_state','dassign_time','cassign_time','drawer_done','checker_done','final_upload','drawer_date','checker_date','ausFinaldate'] as $col) {
+
+                    foreach ([
+                        'assigned_to','drawer_id','drawer_name','checker_id','checker_name',
+                        'qa_id','qa_name','workflow_state','dassign_time','cassign_time',
+                        'drawer_done','checker_done','final_upload','drawer_date',
+                        'checker_date','ausFinaldate'
+                    ] as $col) {
                         if (isset($crmAssign->$col) && $crmAssign->$col !== null && $crmAssign->$col !== '') {
                             $overlay[$col] = $crmAssign->$col;
                         }
                     }
+
                     if (!empty($overlay)) {
                         DB::table($table)
                             ->where('order_number', $crmAssign->order_number)
                             ->update(array_merge($overlay, ['updated_at' => now()]));
                     }
                 }
+            }
 
-                // Re-query orders now that overlay is re-applied
-                $orders = Order::forProject($user->project_id)
+            // Re-fetch
+            foreach ($projectIds as $pid) {
+
+                $projectOrders = Order::forProject($pid)
                     ->whereIn('order_number', $crmAssignments->pluck('order_number'))
                     ->with(['project', 'team'])
                     ->orderBy('priority', 'asc')
                     ->orderBy('due_date', 'asc')
                     ->get();
+
+                $projectOrders = $projectOrders->map(function ($order) use ($user) {
+                    $order->project_id = $user->project_id;
+                    return $order;
+                });
+
+                $orders = $orders->merge($projectOrders);
             }
         }
-
-        return response()->json(['orders' => $orders]);
     }
+
+    // Keep pending-by-drawer orders out of worker queue panels without
+    // changing any underlying workflow or assignment behavior.
+    $orders = $orders->reject(function ($order) {
+        return data_get($order, 'workflow_state') === 'PENDING_BY_DRAWER';
+    });
+
+    return response()->json(['orders' => $orders->values()]);
+}
+
+
 
     /**
      * GET /workflow/my-completed
      * Worker's completed orders today.
      * Falls back to project table for Metro-synced orders.
      */
-    public function myCompleted(Request $request)
-    {
-        $user = $request->user();
+public function myCompleted(Request $request)
+{
+    $user = $request->user();
 
-        if (!in_array($user->role, ['drawer', 'checker', 'qa', 'designer'])) {
+        if (!in_array($user->role, ['drawer', 'checker', 'filler', 'qa', 'designer'])) {
             return response()->json(['message' => 'Only production roles have completed orders.'], 403);
         }
 
-        // Try WorkItem first (new system)
-        $completedOrderIds = WorkItem::where('assigned_user_id', $user->id)
-            ->where('status', 'completed')
-            ->whereDate('completed_at', today())
-            ->pluck('order_id')
-            ->unique();
+    // ✅ NEW: resolve project IDs (QUEUE SAFE)
+    $project = \App\Models\Project::find($user->project_id);
 
-        $orders = collect();
-        if ($user->project_id && $completedOrderIds->isNotEmpty()) {
-            $orders = Order::forProject($user->project_id)
+    $projectIds = [$user->project_id];
+
+    if ($project && in_array($project->queue_name, ['Canada', 'Australia', 'AUS Others FP'])) {
+        $projectIds = \App\Models\Project::where('queue_name', $project->queue_name)
+            ->where('status', 'active')
+            ->pluck('id')
+            ->toArray();
+    }
+
+    // 🟢 Try WorkItem first (new system)
+    $completedOrderIds = WorkItem::where('assigned_user_id', $user->id)
+        ->where('status', 'completed')
+        ->whereDate('completed_at', today())
+        ->pluck('order_id')
+        ->unique();
+
+    $orders = collect();
+
+    if ($user->project_id && $completedOrderIds->isNotEmpty()) {
+
+        // ✅ LOOP PROJECTS (QUEUE SUPPORT)
+        foreach ($projectIds as $pid) {
+
+            $projectOrders = Order::forProject($pid)
                 ->whereIn('id', $completedOrderIds)
                 ->with(['project', 'team'])
                 ->orderBy('updated_at', 'desc')
                 ->get();
-        }
 
-        // Fallback: query project table directly by role-specific columns (Metro orders)
-        if ($orders->isEmpty() && $user->project_id) {
-            $table = ProjectOrderService::getTableName($user->project_id);
+            // ✅ FORCE QUEUE project_id (frontend fix)
+            $projectOrders = $projectOrders->map(function ($order) use ($user) {
+                $order->project_id = $user->project_id;
+                return $order;
+            });
+
+            $orders = $orders->merge($projectOrders);
+        }
+    }
+
+    // 🟡 Fallback: project tables (Metro orders)
+    if ($orders->isEmpty() && $user->project_id) {
+
+        foreach ($projectIds as $pid) {
+
+            $table = ProjectOrderService::getTableName($pid);
+
             if (Schema::hasTable($table)) {
+
                 [$idCol, $doneCol, , $dateCol] = self::getRoleColumns($user->role);
+
                 if ($idCol && $doneCol) {
-                    $orders = collect(
+
+                    $projectOrders = collect(
                         DB::table($table)
                             ->where($idCol, $user->id)
                             ->where($doneCol, 'yes')
@@ -735,59 +1300,123 @@ class WorkflowController extends Controller
                             ->limit(50)
                             ->get()
                     );
+
+                    // ✅ FORCE QUEUE project_id
+                    $projectOrders = $projectOrders->map(function ($order) use ($user) {
+                        $order->project_id = $user->project_id;
+                        return $order;
+                    });
+
+                    $orders = $orders->merge($projectOrders);
                 }
             }
         }
-
-        return response()->json(['orders' => $orders]);
     }
+
+    return response()->json(['orders' => $orders->values()]);
+}
 
     /**
      * GET /workflow/my-history
      * Worker's order history (all time, paginated).
      * Falls back to project table for Metro-synced orders.
      */
-    public function myHistory(Request $request)
-    {
-        $user = $request->user();
+public function myHistory(Request $request)
+{
+    $user = $request->user();
 
-        if (!in_array($user->role, ['drawer', 'checker', 'qa', 'designer'])) {
-            return response()->json(['message' => 'Only production roles have history.'], 403);
-        }
+    if (!in_array($user->role, ['drawer', 'checker', 'filler', 'qa', 'designer'])) {
+        return response()->json(['message' => 'Only production roles have history.'], 403);
+    }
 
-        // Try WorkItem first (new system)
-        $completedOrderIds = WorkItem::where('assigned_user_id', $user->id)
-            ->where('status', 'completed')
-            ->pluck('order_id')
-            ->unique();
+    // ✅ NEW: resolve project IDs (QUEUE SAFE)
+    $project = \App\Models\Project::find($user->project_id);
 
-        if ($user->project_id && $completedOrderIds->isNotEmpty()) {
-            $orders = Order::forProject($user->project_id)
+    $projectIds = [$user->project_id];
+
+    if ($project && in_array($project->queue_name, ['Canada', 'Australia', 'AUS Others FP'])) {
+        $projectIds = \App\Models\Project::where('queue_name', $project->queue_name)
+            ->where('status', 'active')
+            ->pluck('id')
+            ->toArray();
+    }
+
+    // 🟢 Try WorkItem first (new system)
+    $completedOrderIds = WorkItem::where('assigned_user_id', $user->id)
+        ->where('status', 'completed')
+        ->pluck('order_id')
+        ->unique();
+
+    if ($user->project_id && $completedOrderIds->isNotEmpty()) {
+
+        $orders = collect();
+
+        // ✅ LOOP PROJECTS (QUEUE SUPPORT)
+        foreach ($projectIds as $pid) {
+
+            $projectOrders = Order::forProject($pid)
                 ->whereIn('id', $completedOrderIds)
                 ->with(['project', 'team'])
                 ->orderBy('updated_at', 'desc')
-                ->paginate(20);
-            return response()->json($orders);
+                ->get();
+
+            // ✅ FORCE QUEUE project_id (frontend fix)
+            $projectOrders = $projectOrders->map(function ($order) use ($user) {
+                $order->project_id = $user->project_id;
+                return $order;
+            });
+
+            $orders = $orders->merge($projectOrders);
         }
 
-        // Fallback: query project table directly (Metro orders)
-        if ($user->project_id) {
-            $table = ProjectOrderService::getTableName($user->project_id);
+        // ✅ MANUAL PAGINATION (since multi-project)
+        $page = request()->get('page', 1);
+        $perPage = 20;
+
+        $paginated = new \Illuminate\Pagination\LengthAwarePaginator(
+            $orders->forPage($page, $perPage)->values(),
+            $orders->count(),
+            $perPage,
+            $page,
+            ['path' => request()->url()]
+        );
+
+        return response()->json($paginated);
+    }
+
+    // 🟡 Fallback: project tables (Metro orders)
+    if ($user->project_id) {
+
+        foreach ($projectIds as $pid) {
+
+            $table = ProjectOrderService::getTableName($pid);
+
             if (Schema::hasTable($table)) {
+
                 [$idCol, $doneCol] = self::getRoleColumns($user->role);
+
                 if ($idCol && $doneCol) {
+
                     $paginated = DB::table($table)
                         ->where($idCol, $user->id)
                         ->where($doneCol, 'yes')
                         ->orderByDesc('updated_at')
                         ->paginate(20);
+
+                    // ✅ FORCE QUEUE project_id
+                    $paginated->getCollection()->transform(function ($order) use ($user) {
+                        $order->project_id = $user->project_id;
+                        return $order;
+                    });
+
                     return response()->json($paginated);
                 }
             }
         }
-
-        return response()->json(['data' => [], 'meta' => []]);
     }
+
+    return response()->json(['data' => [], 'meta' => []]);
+}
 
     /**
      * GET /workflow/my-performance
@@ -797,7 +1426,7 @@ class WorkflowController extends Controller
     {
         $user = $request->user();
 
-        if (!in_array($user->role, ['drawer', 'checker', 'qa', 'designer'])) {
+        if (!in_array($user->role, ['drawer', 'checker', 'filler', 'qa', 'designer'])) {
             return response()->json(['message' => 'Only production roles have performance stats.'], 403);
         }
 
@@ -914,6 +1543,7 @@ class WorkflowController extends Controller
         $queueState = match($currentState) {
             'IN_DRAW' => 'QUEUED_DRAW',
             'IN_CHECK' => 'QUEUED_CHECK',
+            'IN_FILLER' => 'QUEUED_FILLER',
             'IN_QA' => 'QUEUED_QA',
             'IN_DESIGN' => 'QUEUED_DESIGN',
             default => null,
@@ -1016,54 +1646,237 @@ class WorkflowController extends Controller
         ]);
     }
 
+
     /**
      * POST /workflow/orders/{id}/timer/start
      * Start work timer for an order.
      */
-    public function startTimer(Request $request, int $id)
-    {
-        $user = $request->user();
-        $order = self::findOrderForUser($id, $user);
+public function startTimer(Request $request, int $id)
+{
+    $user = $request->user();
+    $role = $user->role;
 
-        if (!self::isOrderAssignedToUser($order, $user)) {
-            return response()->json(['message' => 'This order is not assigned to you.'], 403);
-        }
+    [$idCol, $doneCol, $inState] = self::getRoleColumns($role);
 
-        // If order is in QUEUED_ state, auto-transition to IN_ when timer starts
-        $inProgressState = \App\Services\StateMachine::getInProgressState($order->workflow_state);
-        if ($inProgressState) {
-            \App\Services\StateMachine::transition($order, $inProgressState, $user->id);
-            $order = $order->fresh();
-        }
+    // ✅ NEW: queue-safe project resolution
+    $project = $user->project;
 
-        // Find or create work item (auto-create for legacy/Metro-synced orders)
-        $workItem = WorkItem::where('order_id', $order->id)
-            ->where('assigned_user_id', $user->id)
+    $projectIds = [$user->project_id];
+
+    if ($project && in_array($project->queue_name, ['Canada', 'Australia', 'AUS Others FP'])) {
+        $projectIds = \App\Models\Project::where('queue_name', $project->queue_name)
+            ->where('status', 'active')
+            ->pluck('id')
+            ->toArray();
+    }
+
+    $workflowMap = [
+        'drawer'   => 'IN_DRAW',
+        'designer' => 'IN_DESIGN',
+        'checker'  => 'IN_CHECK',
+        'filler'   => 'IN_FILLER',
+        'qa'       => 'IN_QA',
+    ];
+
+    $workflowState = $workflowMap[$role] ?? 'IN_' . strtoupper($role);
+
+    $stageMap = [
+        'drawer'   => 'DRAW',
+        'designer' => 'DESIGN',
+        'checker'  => 'CHECK',
+        'filler'   => 'FILL',
+        'qa'       => 'QA',
+    ];
+
+    $stage = $stageMap[$role] ?? strtoupper($role);
+
+    DB::transaction(function () use (
+        $user,
+        $role,
+        $idCol,
+        $doneCol,
+        $projectIds,
+        $id,
+        $workflowState,
+        $stage
+    ) {
+
+        // 🟡 Pause current running WorkItem
+        $currentWorkItem = WorkItem::where('assigned_user_id', $user->id)
             ->where('status', 'in_progress')
+            ->latest('id')
+            ->first();
+
+            // 🟢 update ALL possible queue tables safely
+        // 🟢 FIND ORDER IN ANY QUEUE PROJECT TABLE
+        $order = null;
+        $tableUsed = null;
+
+        foreach ($projectIds as $pid) {
+
+            $table = ProjectOrderService::getTableName($pid);
+
+            $found = DB::table($table)->where('id', $id)->first();
+
+            if ($found) {
+                $order = $found;
+                $tableUsed = $table;
+                break;
+            }
+        }
+
+        if (!$order) {
+            throw new \RuntimeException("Order #{$id} not found in any queue project table.");
+        }
+
+        // 🟢 Auto-assign role if empty
+        if (
+            $currentWorkItem
+            && (
+                (int) $currentWorkItem->order_id !== (int) $id
+                || (int) $currentWorkItem->project_id !== (int) $order->project_id
+            )
+        ) {
+            $elapsed = $currentWorkItem->last_timer_start
+                ? now()->diffInSeconds($currentWorkItem->last_timer_start)
+                : 0;
+
+            $currentWorkItem->update([
+                'time_spent_seconds' => $currentWorkItem->time_spent_seconds + $elapsed,
+                'last_timer_start' => null,
+                'status' => 'paused',
+            ]);
+
+            DB::table(ProjectOrderService::getTableName((int) $currentWorkItem->project_id))
+                ->where('id', $currentWorkItem->order_id)
+                ->update(['status' => 'pending']);
+        }
+
+        $updates = [];
+
+        if ($idCol && (!$order->{$idCol} || $order->{$idCol} == 0)) {
+            $updates[$idCol] = $user->id;
+            $updates[
+                $role === 'filler'
+                    ? 'file_uploader_name'
+                    : ($role === 'designer' ? 'drawer_name' : "{$role}_name")
+            ] = $user->name;
+        }
+
+        $updates['assigned_to'] = $user->id;
+        $updates['workflow_state'] = $workflowState;
+        $updates['status'] = 'in-progress';
+        $updates['started_at'] = now();
+        if ($role === 'filler') $updates['current_layer'] = 'filler';
+        if ($role === 'designer') $updates['current_layer'] = 'designer';
+
+        if ($role === 'drawer' || $role === 'designer') $updates['dassign_time'] = now();
+        if ($role === 'checker') $updates['cassign_time'] = now();
+        if ($role === 'filler') $updates['fassign_time'] = now();
+
+        DB::table($tableUsed)->where('id', $id)->update($updates);
+
+        // 🟢 CRM update (unchanged logic)
+        $crmAssignData = [
+            'project_id' => $order->project_id,
+            'order_number' => $order->order_number,
+            $idCol => $user->id,
+            (
+                $role === 'filler'
+                    ? 'file_uploader_name'
+                    : ($role === 'designer' ? 'drawer_name' : "{$role}_name")
+            ) => $user->name,
+            'assigned_to' => $user->id,
+            'workflow_state' => $workflowState,
+            'updated_at' => now(),
+        ];
+        if ($role === 'filler' && Schema::hasColumn('crm_order_assignments', 'current_layer')) $crmAssignData['current_layer'] = 'filler';
+        if ($role === 'designer' && Schema::hasColumn('crm_order_assignments', 'current_layer')) $crmAssignData['current_layer'] = 'designer';
+
+        if ($role === 'drawer' || $role === 'designer') $crmAssignData['dassign_time'] = now();
+        if ($role === 'checker') $crmAssignData['cassign_time'] = now();
+        if ($role === 'filler' && Schema::hasColumn('crm_order_assignments', 'fassign_time')) $crmAssignData['fassign_time'] = now();
+
+        DB::table('crm_order_assignments')
+            ->updateOrInsert(
+                [
+                    'project_id' => $order->project_id,
+                    'order_number' => $order->order_number
+                ],
+                $crmAssignData
+            );
+
+        // 🟢 WorkItem stage mapping (UNCHANGED)
+        $stageMap = [
+            'drawer'   => 'DRAW',
+            'designer' => 'DESIGN',
+            'checker'  => 'CHECK',
+            'filler'   => 'FILL',
+            'qa'       => 'QA',
+        ];
+
+        $stage = $stageMap[$role] ?? strtoupper($role);
+
+        $workItem = WorkItem::where('project_id', $order->project_id)
+            ->where('order_id', $order->id)
+            ->where('assigned_user_id', $user->id)
+            ->where('stage', $stage)
+            ->whereIn('status', ['in_progress', 'paused'])
+            ->latest('id')
             ->first();
 
         if (!$workItem) {
-            // Auto-create WorkItem for orders assigned outside AssignmentEngine
-            // (e.g. Metro-synced, QA supervisor assigned, or assignRole)
-            $stage = StateMachine::STATE_TO_STAGE[$order->workflow_state] ?? strtoupper($user->role);
             $workItem = WorkItem::create([
                 'order_id' => $order->id,
-                'assigned_user_id' => $user->id,
                 'project_id' => $order->project_id,
-                'role' => $user->role,
                 'stage' => $stage,
+                'assigned_user_id' => $user->id,
+                'team_id' => $user->team_id,
                 'status' => 'in_progress',
+                'assigned_at' => now(),
                 'started_at' => now(),
+                'time_spent_seconds' => 0,
             ]);
         }
 
-        $workItem->update(['last_timer_start' => now()]);
-
-        return response()->json([
-            'work_item' => $workItem,
-            'message' => 'Timer started.',
+        $workItem->update([
+            'last_timer_start' => now(),
+            'status' => 'in_progress',
+            'stage' => $stage,
         ]);
+    });
+
+    // Reload order safely from correct table
+    $finalOrder = null;
+    foreach ($projectIds as $pid) {
+
+        $table = ProjectOrderService::getTableName($pid);
+
+        $found = DB::table($table)->where('id', $id)->first();
+
+        if ($found) {
+            $finalOrder = $found;
+            break;
+        }
     }
+
+    $workItem = WorkItem::where('project_id', $finalOrder->project_id ?? $user->project_id)
+        ->where('order_id', $id)
+        ->where('assigned_user_id', $user->id)
+        ->where('stage', $stage)
+        ->where('status', 'in_progress')
+        ->latest('id')
+        ->first();
+
+    return response()->json([
+        'order' => $finalOrder,
+        'work_item' => $workItem,
+        'message' => 'Timer started safely across queue projects.',
+    ]);
+}
+
+
+
 
     /**
      * POST /workflow/orders/{id}/timer/stop
@@ -1078,9 +1891,14 @@ class WorkflowController extends Controller
             return response()->json(['message' => 'This order is not assigned to you.'], 403);
         }
 
-        $workItem = WorkItem::where('order_id', $order->id)
+        $stage = StateMachine::STATE_TO_STAGE[$order->workflow_state] ?? null;
+
+        $workItem = WorkItem::where('project_id', $order->project_id)
+            ->where('order_id', $order->id)
             ->where('assigned_user_id', $user->id)
             ->where('status', 'in_progress')
+            ->when($stage, fn ($query) => $query->where('stage', $stage))
+            ->latest('id')
             ->first();
 
         if (!$workItem || !$workItem->last_timer_start) {
@@ -1100,6 +1918,8 @@ class WorkflowController extends Controller
             'message' => 'Timer stopped.',
         ]);
     }
+    
+    
 
     /**
      * GET /workflow/orders/{id}/details
@@ -1109,7 +1929,13 @@ class WorkflowController extends Controller
     {
         $user = $request->user();
         $order = self::findOrderForUser($id, $user);
-        $order->load(['project', 'team', 'workItems.assignedUser']);
+        $order->load([
+            'project',
+            'team',
+            'workItems' => fn ($query) => $query
+                ->where('project_id', $order->project_id)
+                ->with('assignedUser'),
+        ]);
 
         // Get help requests for this order
         $helpRequests = \App\Models\HelpRequest::where('order_id', $order->id)
@@ -1123,6 +1949,7 @@ class WorkflowController extends Controller
 
         // Current work item time tracking
         $currentWorkItem = WorkItem::where('order_id', $order->id)
+            ->where('project_id', $order->project_id)
             ->where('assigned_user_id', $user->id)
             ->where('status', 'in_progress')
             ->first();
@@ -1267,7 +2094,8 @@ class WorkflowController extends Controller
                 DB::transaction(function () use ($order, $oldAssignee, $queueState, $actor, $request, $isInProgress) {
                     if ($isInProgress) {
                         // Abandon current work item
-                        WorkItem::where('order_id', $order->id)
+                        WorkItem::where('project_id', $order->project_id)
+                            ->where('order_id', $order->id)
                             ->where('assigned_user_id', $oldAssignee)
                             ->where('status', 'in_progress')
                             ->update(['status' => 'abandoned', 'completed_at' => now()]);
@@ -1446,7 +2274,7 @@ class WorkflowController extends Controller
         $order->load(['project', 'team', 'assignedUser', 'workItems.assignedUser']);
 
         // Project isolation check for production users
-        if (in_array($user->role, ['drawer', 'checker', 'qa', 'designer'])) {
+        if (in_array($user->role, ['drawer', 'checker', 'filler', 'qa', 'designer'])) {
             if ($order->project_id !== $user->project_id) {
                 return response()->json(['message' => 'Access denied.'], 403);
             }
@@ -1512,6 +2340,291 @@ class WorkflowController extends Controller
 
         return response()->json(['work_items' => $items]);
     }
+    
+    /**
+     * PUT /workflow/orders/{id}/instruction
+     * Add or update instruction text for an order in the dynamic project table.
+     */
+    public function updateInstruction(Request $request, int $id)
+    {
+        $request->validate([
+            'instruction' => 'nullable',
+            'plan_type' => 'nullable|string|max:255',
+            'code' => 'nullable|string|max:255',
+            'it_datetime' => 'nullable|date',
+            'received_at' => 'nullable|date',
+            'total_raw_files' => 'nullable|integer|min:0',
+            'hdr_images_count' => 'nullable|integer|min:0',
+            'single_images_count' => 'nullable|integer|min:0',
+            'final_images_count' => 'nullable|integer|min:0',
+            'edited_images_count' => 'nullable|integer|min:0',
+            'project_id' => 'nullable|integer|exists:projects,id',
+        ]);
+
+        $actor = $request->user();
+
+        if (!in_array($actor->role, [
+            'ceo',
+            'director',
+            'operations_manager',
+            'project_manager',
+            'qa',
+            'live_qa',
+            'drawer',
+            'checker',
+            'designer',
+        ])) {
+            return response()->json(['message' => 'You are not allowed to update order instructions.'], 403);
+        }
+
+        $projectId = $request->input('project_id');
+        $order = $projectId
+            ? (Order::findInProject($projectId, $id) ?? Order::findOrFailGlobal($id))
+            : self::findOrderForUser($id, $actor);
+
+        $managementRoles = ['ceo', 'director', 'operations_manager', 'project_manager'];
+
+        if (
+            $actor->project_id &&
+            !in_array($actor->role, $managementRoles) &&
+            (int) $order->project_id !== (int) $actor->project_id
+        ) {
+            return response()->json(['message' => 'Project isolation violation.'], 403);
+        }
+
+        $instruction = trim((string) ($request->input('instruction') ?? ''));
+        $instruction = $instruction === '' ? null : $instruction;
+
+        $planType = trim((string) ($request->input('plan_type') ?? ''));
+        $planType = $planType === '' ? null : $planType;
+
+        $code = trim((string) ($request->input('code') ?? ''));
+        $code = $code === '' ? null : $code;
+
+        $itDatetime = $request->input('it_datetime');
+        if (is_string($itDatetime)) {
+            $itDatetime = trim($itDatetime);
+            $itDatetime = $itDatetime === '' ? null : $itDatetime;
+        }
+
+        $receivedAt = $request->input('received_at');
+        if (is_string($receivedAt)) {
+            $receivedAt = trim($receivedAt);
+            $receivedAt = $receivedAt === '' ? null : $receivedAt;
+        }
+
+        $totalRawFiles = $request->input('total_raw_files');
+        if ($totalRawFiles !== null) {
+            $totalRawFiles = (int) $totalRawFiles;
+        }
+
+        $hdrImagesCount = $request->input('hdr_images_count');
+        if ($hdrImagesCount !== null) {
+            $hdrImagesCount = (int) $hdrImagesCount;
+        }
+
+        $singleImagesCount = $request->input('single_images_count');
+        if ($singleImagesCount !== null) {
+            $singleImagesCount = (int) $singleImagesCount;
+        }
+
+        $finalImagesCount = $request->input('final_images_count');
+        if ($finalImagesCount !== null) {
+            $finalImagesCount = (int) $finalImagesCount;
+        }
+
+        $editedImagesCount = $request->input('edited_images_count');
+        if ($editedImagesCount !== null) {
+            $editedImagesCount = (int) $editedImagesCount;
+        }
+
+        $hasInstructionInput = $request->exists('instruction');
+        $hasPlanTypeInput = $request->exists('plan_type');
+        $hasCodeInput = $request->exists('code');
+        $hasItDatetimeInput = $request->exists('it_datetime');
+        $hasReceivedAtInput = $request->exists('received_at');
+        $hasTotalRawFilesInput = $request->exists('total_raw_files');
+        $hasHdrImagesCountInput = $request->exists('hdr_images_count');
+        $hasSingleImagesCountInput = $request->exists('single_images_count');
+        $hasFinalImagesCountInput = $request->exists('final_images_count');
+        $hasEditedImagesCountInput = $request->exists('edited_images_count');
+
+        if (!$hasInstructionInput && !$hasPlanTypeInput && !$hasCodeInput && !$hasItDatetimeInput && !$hasReceivedAtInput && !$hasTotalRawFilesInput && !$hasHdrImagesCountInput && !$hasSingleImagesCountInput && !$hasFinalImagesCountInput && !$hasEditedImagesCountInput) {
+            return response()->json([
+                'message' => 'Nothing to update.',
+            ], 422);
+        }
+
+        DB::transaction(function () use ($order, $actor, $instruction, $planType, $code, $itDatetime, $receivedAt, $totalRawFiles, $hdrImagesCount, $singleImagesCount, $finalImagesCount, $editedImagesCount, $hasInstructionInput, $hasPlanTypeInput, $hasCodeInput, $hasItDatetimeInput, $hasReceivedAtInput, $hasTotalRawFilesInput, $hasHdrImagesCountInput, $hasSingleImagesCountInput, $hasFinalImagesCountInput, $hasEditedImagesCountInput) {
+            $before = [];
+            $after = [];
+            $orderUpdates = [];
+
+            if ($hasInstructionInput) {
+                $before['instruction'] = $order->instruction;
+                $after['instruction'] = $instruction;
+                $orderUpdates['instruction'] = $instruction;
+            }
+
+            if ($hasPlanTypeInput) {
+                $before['plan_type'] = $order->plan_type;
+                $after['plan_type'] = $planType;
+                $orderUpdates['plan_type'] = $planType;
+            }
+
+            if ($hasCodeInput) {
+                $before['code'] = $order->code;
+                $after['code'] = $code;
+                $orderUpdates['code'] = $code;
+            }
+
+            if ($hasItDatetimeInput) {
+                $before['it_datetime'] = $order->it_datetime;
+                $after['it_datetime'] = $itDatetime;
+                $orderUpdates['it_datetime'] = $itDatetime;
+            }
+
+            if ($hasReceivedAtInput) {
+                $before['received_at'] = $order->received_at;
+                $after['received_at'] = $receivedAt;
+                $orderUpdates['received_at'] = $receivedAt;
+            }
+
+            if ($hasTotalRawFilesInput) {
+                $before['total_raw_files'] = $order->total_raw_files;
+                $after['total_raw_files'] = $totalRawFiles;
+                $orderUpdates['total_raw_files'] = $totalRawFiles;
+            }
+
+            if ($hasHdrImagesCountInput) {
+                $before['hdr_images_count'] = $order->hdr_images_count;
+                $after['hdr_images_count'] = $hdrImagesCount;
+                $orderUpdates['hdr_images_count'] = $hdrImagesCount;
+            }
+
+            if ($hasSingleImagesCountInput) {
+                $before['single_images_count'] = $order->single_images_count;
+                $after['single_images_count'] = $singleImagesCount;
+                $orderUpdates['single_images_count'] = $singleImagesCount;
+            }
+
+            if ($hasFinalImagesCountInput) {
+                $before['final_images_count'] = $order->final_images_count;
+                $after['final_images_count'] = $finalImagesCount;
+                $orderUpdates['final_images_count'] = $finalImagesCount;
+            }
+
+            if ($hasEditedImagesCountInput) {
+                $before['edited_images_count'] = $order->edited_images_count;
+                $after['edited_images_count'] = $editedImagesCount;
+                $orderUpdates['edited_images_count'] = $editedImagesCount;
+            }
+
+            if (!empty($orderUpdates)) {
+                $order->update($orderUpdates);
+            }
+
+            if (Schema::hasTable('crm_order_assignments')) {
+                $existingCrm = DB::table('crm_order_assignments')
+                    ->where('project_id', $order->project_id)
+                    ->where('order_number', $order->order_number)
+                    ->first();
+
+                $crmData = ['updated_at' => now()];
+
+                if ($hasInstructionInput && Schema::hasColumn('crm_order_assignments', 'instruction')) {
+                    $crmData['instruction'] = $instruction;
+                }
+
+                if ($hasPlanTypeInput && Schema::hasColumn('crm_order_assignments', 'plan_type')) {
+                    $crmData['plan_type'] = $planType;
+                }
+
+                if ($hasCodeInput && Schema::hasColumn('crm_order_assignments', 'code')) {
+                    $crmData['code'] = $code;
+                }
+
+                if ($hasItDatetimeInput && Schema::hasColumn('crm_order_assignments', 'it_datetime')) {
+                    $crmData['it_datetime'] = $itDatetime;
+                }
+
+                if ($hasReceivedAtInput && Schema::hasColumn('crm_order_assignments', 'received_at')) {
+                    $crmData['received_at'] = $receivedAt;
+                }
+
+                if ($hasTotalRawFilesInput && Schema::hasColumn('crm_order_assignments', 'total_raw_files')) {
+                    $crmData['total_raw_files'] = $totalRawFiles;
+                }
+
+                if ($hasHdrImagesCountInput && Schema::hasColumn('crm_order_assignments', 'hdr_images_count')) {
+                    $crmData['hdr_images_count'] = $hdrImagesCount;
+                }
+
+                if ($hasSingleImagesCountInput && Schema::hasColumn('crm_order_assignments', 'single_images_count')) {
+                    $crmData['single_images_count'] = $singleImagesCount;
+                }
+
+                if ($hasFinalImagesCountInput && Schema::hasColumn('crm_order_assignments', 'final_images_count')) {
+                    $crmData['final_images_count'] = $finalImagesCount;
+                }
+
+                if ($hasEditedImagesCountInput && Schema::hasColumn('crm_order_assignments', 'edited_images_count')) {
+                    $crmData['edited_images_count'] = $editedImagesCount;
+                }
+
+                if ($existingCrm) {
+                    DB::table('crm_order_assignments')
+                        ->where('id', $existingCrm->id)
+                        ->update($crmData);
+                } elseif (count($crmData) > 1) {
+                    DB::table('crm_order_assignments')->insert(array_merge($crmData, [
+                        'project_id' => $order->project_id,
+                        'order_number' => $order->order_number,
+                        'created_at' => now(),
+                    ]));
+                }
+            }
+
+            AuditService::log(
+                $actor->id,
+                ($hasInstructionInput || $hasPlanTypeInput || $hasCodeInput || $hasReceivedAtInput || $hasTotalRawFilesInput || $hasHdrImagesCountInput || $hasSingleImagesCountInput || $hasFinalImagesCountInput || $hasEditedImagesCountInput)
+                    && (
+                        ($hasInstructionInput ? 1 : 0)
+                        + ($hasPlanTypeInput ? 1 : 0)
+                        + ($hasCodeInput ? 1 : 0)
+                        + ($hasItDatetimeInput ? 1 : 0)
+                        + ($hasReceivedAtInput ? 1 : 0)
+                        + ($hasTotalRawFilesInput ? 1 : 0)
+                        + ($hasHdrImagesCountInput ? 1 : 0)
+                        + ($hasSingleImagesCountInput ? 1 : 0)
+                        + ($hasFinalImagesCountInput ? 1 : 0)
+                        + ($hasEditedImagesCountInput ? 1 : 0)
+                    ) > 1
+                    ? 'update_order_details'
+                    : ($hasCodeInput
+                        ? 'update_code'
+                        : ($hasPlanTypeInput ? 'update_plan_type' : ($hasItDatetimeInput ? 'update_it_datetime' : ($hasReceivedAtInput ? 'update_received_at' : ($hasTotalRawFilesInput ? 'update_total_raw_files' : ($hasHdrImagesCountInput ? 'update_hdr_images_count' : ($hasSingleImagesCountInput ? 'update_single_images_count' : ($hasFinalImagesCountInput ? 'update_final_images_count' : ($hasEditedImagesCountInput ? 'update_edited_images_count' : 'update_instruction'))))))))),
+                'Order',
+                (int) $order->id,
+                (int) $order->project_id,
+                $before,
+                $after
+            );
+        });
+
+        return response()->json([
+            'order' => $order->fresh(),
+            'message' => (
+                (($hasInstructionInput ? 1 : 0) + ($hasPlanTypeInput ? 1 : 0) + ($hasCodeInput ? 1 : 0) + ($hasItDatetimeInput ? 1 : 0) + ($hasReceivedAtInput ? 1 : 0) + ($hasTotalRawFilesInput ? 1 : 0) + ($hasHdrImagesCountInput ? 1 : 0) + ($hasSingleImagesCountInput ? 1 : 0) + ($hasFinalImagesCountInput ? 1 : 0) + ($hasEditedImagesCountInput ? 1 : 0)) > 1
+            )
+                ? 'Order details updated successfully.'
+                : ($hasCodeInput
+                    ? 'Code updated successfully.'
+                    : ($hasPlanTypeInput ? 'Plan type updated successfully.' : ($hasItDatetimeInput ? 'IT datetime updated successfully.' : ($hasReceivedAtInput ? 'Received at updated successfully.' : ($hasTotalRawFilesInput ? 'Total raw files updated successfully.' : ($hasHdrImagesCountInput ? 'HDR images count updated successfully.' : ($hasSingleImagesCountInput ? 'Single images count updated successfully.' : ($hasFinalImagesCountInput ? 'Final images count updated successfully.' : ($hasEditedImagesCountInput ? 'Edited images count updated successfully.' : 'Instruction updated successfully.'))))))))),
+        ]);
+    }
+
+
 
     // ═══════════════════════════════════════════
     // PM → QA → DRAWER ASSIGNMENT WORKFLOW
@@ -1683,7 +2796,7 @@ class WorkflowController extends Controller
         if ($user->project_id) {
             $orders = Order::forProject($user->project_id)
                 ->where('qa_supervisor_id', $user->id)
-                ->whereIn('workflow_state', ['PENDING_QA_REVIEW', 'QUEUED_DRAW', 'IN_DRAW', 'QUEUED_CHECK', 'IN_CHECK', 'QUEUED_QA', 'IN_QA'])
+                ->whereIn('workflow_state', ['PENDING_QA_REVIEW', 'QUEUED_DRAW', 'IN_DRAW', 'QUEUED_CHECK', 'IN_CHECK', 'QUEUED_FILLER', 'IN_FILLER', 'QUEUED_QA', 'IN_QA'])
                 ->with(['project', 'team', 'assignedUser'])
                 ->orderBy('priority', 'desc')
                 ->orderBy('created_at', 'asc')
@@ -1693,7 +2806,7 @@ class WorkflowController extends Controller
         return response()->json([
             'orders' => $orders,
             'pending_assignment' => $orders->where('workflow_state', 'PENDING_QA_REVIEW')->count(),
-            'in_progress' => $orders->whereIn('workflow_state', ['IN_DRAW', 'IN_CHECK', 'IN_QA'])->count(),
+            'in_progress' => $orders->whereIn('workflow_state', ['IN_DRAW', 'IN_CHECK', 'IN_FILLER', 'IN_QA'])->count(),
         ]);
     }
 
@@ -1701,33 +2814,40 @@ class WorkflowController extends Controller
      * GET /workflow/qa-team-members
      * QA supervisor gets their team's drawers and checkers for assignment.
      */
-    public function qaTeamMembers(Request $request)
-    {
-        $user = $request->user();
-        
-        if ($user->role !== 'qa') {
-            return response()->json(['message' => 'Only QA supervisors can access this endpoint.'], 403);
-        }
-
-        // Get team members (drawers and checkers) in the same project
-        $members = \App\Models\User::where('project_id', $user->project_id)
-            ->whereIn('role', ['drawer', 'checker'])
-            ->where('is_active', true)
-            ->select(['id', 'name', 'email', 'role', 'team_id', 'wip_count', 'wip_limit', 'today_completed', 'is_absent'])
-            ->orderBy('role')
-            ->orderBy('name')
-            ->get();
-
-        // Group by role
-        $drawers = $members->where('role', 'drawer')->values();
-        $checkers = $members->where('role', 'checker')->values();
-
-        return response()->json([
-            'drawers' => $drawers,
-            'checkers' => $checkers,
-            'total' => $members->count(),
-        ]);
+public function qaTeamMembers(Request $request)
+{
+    $user = $request->user();
+    
+    if ($user->role !== 'qa') {
+        return response()->json(['message' => 'Only QA supervisors can access this endpoint.'], 403);
     }
+
+    // ✅ Get ONLY same team members (not whole project)
+    $members = \App\Models\User::where('project_id', $user->project_id)
+        ->where('team_id', $user->team_id) // ✅ FIX ADDED
+        ->whereIn('role', $user->project_id == 12 ? ['drawer', 'checker', 'filler'] : ['drawer', 'checker'])
+        ->where('is_active', true)
+        ->select([
+            'id', 'name', 'email', 'role',
+            'team_id', 'wip_count', 'wip_limit',
+            'today_completed', 'is_absent'
+        ])
+        ->orderBy('role')
+        ->orderBy('name')
+        ->get();
+
+    // Group by role
+    $drawers = $members->where('role', 'drawer')->values();
+    $checkers = $members->where('role', 'checker')->values();
+    $fillers = $members->where('role', 'filler')->values();
+
+    return response()->json([
+        'drawers' => $drawers,
+        'checkers' => $checkers,
+        'fillers' => $fillers,
+        'total' => $members->count(),
+    ]);
+}
 
     // ═══════════════════════════════════════════
     // HELPERS
@@ -1798,11 +2918,22 @@ class WorkflowController extends Controller
     private static function getRoleColumns(string $role): array
     {
         return match ($role) {
-            'drawer', 'designer' => ['drawer_id', 'drawer_done', 'IN_DRAW', 'drawer_date'],
+            'drawer' => ['drawer_id', 'drawer_done', 'IN_DRAW', 'drawer_date'],
+            'designer' => ['drawer_id', 'drawer_done', 'IN_DESIGN', 'drawer_date'],
             'checker' => ['checker_id', 'checker_done', 'IN_CHECK', 'checker_date'],
+            'filler' => ['file_uploader_id', 'file_uploaded', 'IN_FILLER', 'file_upload_date'],
             'qa' => ['qa_id', 'final_upload', 'IN_QA', 'ausFinaldate'],
             default => [null, null, null, null],
         };
+    }
+
+    private static function resolveWorkflowTypeForUser($user, $project): string
+    {
+        if (($user->role ?? null) === 'designer') {
+            return 'PH_2_LAYER';
+        }
+
+        return $project->workflow_type ?? 'FP_3_LAYER';
     }
 
     /**
@@ -1812,10 +2943,41 @@ class WorkflowController extends Controller
     private static function findOrderForUser(int $id, $user): Order
     {
         if ($user->project_id) {
-            $order = Order::findInProject($user->project_id, $id);
+            foreach (self::queueProjectIdsForUser($user) as $projectId) {
+                $order = Order::findInProject((int) $projectId, $id);
+                if ($order && self::isOrderAssignedToUser($order, $user)) {
+                    return $order;
+                }
+            }
+
+            $order = Order::findInProject((int) $user->project_id, $id);
             if ($order) return $order;
         }
+
         return Order::findOrFailGlobal($id);
+    }
+
+    private static function queueProjectIdsForUser($user): array
+    {
+        if (!$user->project_id) {
+            return [];
+        }
+
+        $project = Project::find($user->project_id);
+        $allowedQueues = ['Canada', 'Australia', 'AUS Others FP', 'CAD'];
+
+        if (!$project || !in_array($project->queue_name, $allowedQueues, true)) {
+            return [(int) $user->project_id];
+        }
+
+        return Project::where('queue_name', $project->queue_name)
+            ->where('status', 'active')
+            ->pluck('id')
+            ->map(fn ($projectId) => (int) $projectId)
+            ->prepend((int) $user->project_id)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**
@@ -1830,6 +2992,7 @@ class WorkflowController extends Controller
             'drawer'   => 'drawer_id',
             'designer' => 'drawer_id',
             'checker'  => 'checker_id',
+            'filler'   => 'file_uploader_id',
             'qa'       => 'qa_id',
         ];
 
@@ -1868,164 +3031,219 @@ class WorkflowController extends Controller
         return false;
     }
 
+
     /**
      * POST /workflow/orders/{id}/assign-role
-     * PM assigns a specific role (drawer/checker/qa) user to an order.
+     * PM assigns a specific role (drawer/designer/checker/filler/qa) user to an order.
      */
-    public function assignRole(Request $request, int $id)
-    {
-        $request->validate([
-            'role' => 'required|in:drawer,checker,qa',
-            'user_id' => 'required|exists:users,id',
-            'project_id' => 'nullable|integer|exists:projects,id',
-        ]);
+public function assignRole(Request $request, int $id)
+{
+    $request->validate([
+        'role' => 'required|in:drawer,designer,checker,filler,qa',
+        'user_id' => 'required|exists:users,id',
+        'project_id' => 'nullable|integer|exists:projects,id',
+    ]);
 
-        $actor = $request->user();
-        $projectId = $request->input('project_id');
-        $order = $projectId
-            ? (Order::findInProject($projectId, $id) ?? Order::findOrFailGlobal($id))
-            : Order::findOrFailGlobal($id);
-        $user = \App\Models\User::findOrFail($request->input('user_id'));
-        $role = $request->input('role');
+    $actor = $request->user();
+    $projectId = $request->input('project_id');
 
-        // QA cannot assign themselves as QA — they can only assign drawer/checker
-        if ($actor->role === 'qa' && $role === 'qa') {
-            return response()->json(['message' => 'QA supervisors cannot change their own QA assignment. Contact a PM or manager.'], 403);
-        }
+    $order = $projectId
+        ? (Order::findInProject($projectId, $id) ?: Order::findOrFailGlobal($id))
+        : Order::findOrFailGlobal($id);
 
-        // ── DONE-LOCK: Prevent reassignment once a role has completed its work ──
-        $doneLockMap = [
-            'drawer'  => 'drawer_done',
-            'checker' => 'checker_done',
-            'qa'      => 'final_upload',
-        ];
-        $doneCol = $doneLockMap[$role] ?? null;
-        if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
-            return response()->json([
-                'message' => ucfirst($role) . ' has already completed this order. Cannot reassign after work is done.',
-            ], 422);
-        }
+    $user = \App\Models\User::findOrFail($request->input('user_id'));
+    $role = $request->input('role');
 
-        // Map role to DB columns
-        $colMap = [
-            'drawer'  => ['id_col' => 'drawer_id',  'name_col' => 'drawer_name',  'time_col' => 'dassign_time'],
-            'checker' => ['id_col' => 'checker_id', 'name_col' => 'checker_name', 'time_col' => 'cassign_time'],
-            'qa'      => ['id_col' => 'qa_id',      'name_col' => 'qa_name',      'time_col' => null],
-        ];
-
-        $cols = $colMap[$role];
-
-        // Map role to the IN_* workflow_state
-        $roleToInState = [
-            'drawer'  => 'IN_DRAW',
-            'checker' => 'IN_CHECK',
-            'qa'      => 'IN_QA',
-        ];
-        $targetState = $roleToInState[$role];
-
-        DB::transaction(function () use ($order, $user, $cols, $actor, $role, $targetState) {
-            // Track previous assignee for WIP management
-            $oldRoleUserId = $order->{$cols['id_col']};
-            $oldAssignedTo = $order->assigned_to;
-
-            $updates = [
-                $cols['id_col']   => $user->id,
-                $cols['name_col'] => $user->name,
-            ];
-            if ($cols['time_col']) {
-                $updates[$cols['time_col']] = now();
-            }
-
-            // Transition workflow_state to IN_* so the worker can see the order
-            // Accept from: RECEIVED, DRAW, CHECK, QA (legacy Metro states),
-            //              QUEUED_DRAW, QUEUED_CHECK, QUEUED_QA (new states),
-            //              REJECTED_BY_CHECK, REJECTED_BY_QA, PENDING_QA_REVIEW
-            $currentState = $order->workflow_state;
-            $assignableStates = [
-                'drawer'  => ['RECEIVED', 'DRAW', 'QUEUED_DRAW', 'REJECTED_BY_CHECK', 'REJECTED_BY_QA', 'PENDING_QA_REVIEW'],
-                'checker' => ['CHECK', 'QUEUED_CHECK', 'SUBMITTED_DRAW'],
-                'qa'      => ['QA', 'QUEUED_QA', 'SUBMITTED_CHECK'],
-            ];
-
-            $stateTransitioned = false;
-            if (in_array($currentState, $assignableStates[$role] ?? [], true)) {
-                $updates['workflow_state'] = $targetState;
-                $updates['assigned_to'] = $user->id;
-                $updates['status'] = 'in-progress';
-                $updates['started_at'] = now();
-                $stateTransitioned = true;
-            }
-
-            $order->update($updates);
-
-            // Manage WIP counts when state transitions to IN_*
-            if ($stateTransitioned) {
-                // Decrement old assignee's WIP if different user was previously assigned_to
-                if ($oldAssignedTo && (int) $oldAssignedTo !== (int) $user->id) {
-                    \App\Models\User::where('id', $oldAssignedTo)->where('wip_count', '>', 0)->decrement('wip_count');
-                }
-                // Increment new assignee's WIP
-                $user->increment('wip_count');
-            }
-
-            // Verify the update actually persisted (guards against mass-assignment issues)
-            $verified = $order->fresh();
-            if ((int) $verified->{$cols['id_col']} !== (int) $user->id) {
-                throw new \RuntimeException("Assignment failed to persist for {$role} on order #{$order->id}");
-            }
-
-            AuditService::log(
-                $actor->id,
-                'assign_role',
-                'Order',
-                (int) $order->id,
-                (int) $order->project_id,
-                null,
-                ['role' => $role, 'user_id' => $user->id, 'user_name' => $user->name, 'state_from' => $currentState, 'state_to' => $verified->workflow_state, 'wip_incremented' => $stateTransitioned]
-            );
-
-            // ── Persist to crm_order_assignments (survives external sync truncation) ──
-            // Only write the role columns that were actually changed by this
-            // assignment. Reading other roles from $verified is unsafe because
-            // external sync may have wiped them from the project table.
-            $assignData = [
-                'workflow_state' => $verified->workflow_state,
-                'assigned_to'    => $verified->assigned_to,
-                $cols['id_col']  => $user->id,
-                $cols['name_col'] => $user->name,
-                'updated_at'     => now(),
-            ];
-            if ($cols['time_col']) {
-                $assignData[$cols['time_col']] = now();
-            }
-            $existing = DB::table('crm_order_assignments')
-                ->where('project_id', $order->project_id)
-                ->where('order_number', $order->order_number)
-                ->first();
-            if ($existing) {
-                DB::table('crm_order_assignments')
-                    ->where('id', $existing->id)
-                    ->update($assignData);
-            } else {
-                // New CRM row: safe to include all known values
-                $assignData['project_id']   = $order->project_id;
-                $assignData['order_number'] = $order->order_number;
-                $assignData['created_at']   = now();
-                $assignData['drawer_id']    = $verified->drawer_id;
-                $assignData['drawer_name']  = $verified->drawer_name;
-                $assignData['checker_id']   = $verified->checker_id;
-                $assignData['checker_name'] = $verified->checker_name;
-                $assignData['qa_id']        = $verified->qa_id;
-                $assignData['qa_name']      = $verified->qa_name;
-                $assignData['dassign_time'] = $verified->dassign_time;
-                $assignData['cassign_time'] = $verified->cassign_time;
-                DB::table('crm_order_assignments')->insert($assignData);
-            }
-        });
-
-        return response()->json([
-            'order' => $order->fresh(),
-            'message' => ucfirst($role) . " assigned: {$user->name}",
-        ]);
+    if ($user->role !== $role) {
+        return response()->json(['message' => "Selected user must have the {$role} role."], 422);
     }
+
+    if ($role === 'filler' && (int) $order->project_id !== 12) {
+        return response()->json(['message' => 'Filler assignment is only enabled for project 12.'], 422);
+    }
+
+    if ($role === 'designer' && $order->workflow_type !== 'PH_2_LAYER') {
+        return response()->json(['message' => 'Designer assignment is only enabled for PH_2_LAYER workflow orders.'], 422);
+    }
+
+    // DONE LOCK
+    $doneLockMap = [
+        'drawer'  => 'drawer_done',
+        'designer' => 'drawer_done',
+        'checker' => 'checker_done',
+        'filler'  => 'file_uploaded',
+        'qa'      => 'final_upload',
+    ];
+
+// DONE LOCK (optional warning only, does not block assignment)
+$doneCol = $doneLockMap[$role] ?? null;
+if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
+    // Log a warning instead of blocking
+    \Log::warning("Reassigning {$role} for order #{$order->id} which is already done.");
+    // If you want, you could also set $updates['status'] = 'in-progress'; here
 }
+
+    // Role column mapping
+    $colMap = [
+        'drawer'  => ['id_col' => 'drawer_id',  'name_col' => 'drawer_name',  'time_col' => 'dassign_time'],
+        'designer' => ['id_col' => 'drawer_id',  'name_col' => 'drawer_name',  'time_col' => 'dassign_time'],
+        'checker' => ['id_col' => 'checker_id', 'name_col' => 'checker_name', 'time_col' => 'cassign_time'],
+        'filler'  => ['id_col' => 'file_uploader_id', 'name_col' => 'file_uploader_name', 'time_col' => 'fassign_time'],
+        'qa'      => ['id_col' => 'qa_id',      'name_col' => 'qa_name',      'time_col' => null],
+    ];
+
+    $cols = $colMap[$role];
+
+    $roleToInState = [
+        'drawer'  => 'IN_DRAW',
+        'designer' => 'IN_DESIGN',
+        'checker' => 'IN_CHECK',
+        'filler'  => 'IN_FILLER',
+        'qa'      => 'IN_QA',
+    ];
+
+    $targetState = $roleToInState[$role];
+
+    DB::transaction(function () use ($order, $user, $cols, $actor, $role, $targetState) {
+
+        $oldAssignedTo = $order->assigned_to;
+
+        // =========================
+        // ALWAYS UPDATE ASSIGNMENT
+        // =========================
+        $updates = [
+            $cols['id_col']   => $user->id,
+            $cols['name_col'] => $user->name,
+            'assigned_to'     => $user->id, // 🔥 FIXED (CRITICAL)
+        ];
+        if ($role === 'filler') {
+            $updates['current_layer'] = 'filler';
+        } elseif ($role === 'designer') {
+            $updates['current_layer'] = 'designer';
+        }
+
+        if ($cols['time_col']) {
+            $updates[$cols['time_col']] = now();
+        }
+
+        // =========================
+        // STATE HANDLING
+        // =========================
+        $currentState = $order->workflow_state;
+
+        // If role is changed, move to the role's working state even when currently IN_*.
+        // This prevents checker->drawer reassignment from staying in IN_CHECK.
+        if ($currentState !== $targetState) {
+            $updates['workflow_state'] = $targetState;
+            $updates['status'] = 'in-progress';
+            $updates['started_at'] = now();
+        }
+
+        $order->update($updates);
+
+        // =========================
+        // WIP MANAGEMENT (ALWAYS ON REASSIGN)
+        // =========================
+        if ($oldAssignedTo && (int)$oldAssignedTo !== (int)$user->id) {
+
+            \App\Models\User::where('id', $oldAssignedTo)
+                ->where('wip_count', '>', 0)
+                ->decrement('wip_count');
+
+            $user->increment('wip_count');
+        }
+
+        // =========================
+        // VERIFY UPDATE
+        // =========================
+        $verified = $order->fresh();
+
+        if ((int)$verified->{$cols['id_col']} !== (int)$user->id) {
+            throw new \RuntimeException("Assignment failed for {$role} on order #{$order->id}");
+        }
+
+        // =========================
+        // UPDATE WORK ITEMS (🔥 VERY IMPORTANT)
+        // =========================
+// Only update assigned_user_id, keep timers intact
+\App\Models\WorkItem::where('order_id', $order->id)
+    ->where('project_id', $order->project_id)
+    ->where('assigned_user_id', $oldAssignedTo)
+    ->where('status', 'in_progress')
+    ->update([
+        'assigned_user_id' => $user->id,
+    ]);
+
+        // =========================
+        // AUDIT LOG
+        // =========================
+        AuditService::log(
+            $actor->id,
+            'assign_role',
+            'Order',
+            (int)$order->id,
+            (int)$order->project_id,
+            null,
+            [
+                'role' => $role,
+                'user_id' => $user->id,
+                'user_name' => $user->name,
+                'state_from' => $currentState,
+                'state_to' => $verified->workflow_state
+            ]
+        );
+
+        // =========================
+        // CRM SYNC (SAFE + CLEAN)
+        // =========================
+        $assignData = [
+            'project_id'     => $order->project_id,
+            'order_number'  => $order->order_number,
+            'workflow_state'=> $verified->workflow_state,
+            'assigned_to'   => $verified->assigned_to,
+            $cols['id_col'] => $user->id,
+            $cols['name_col'] => $user->name,
+            'updated_at'    => now(),
+        ];
+
+        if ($cols['time_col']) {
+            $assignData[$cols['time_col']] = now();
+        }
+
+        if (Schema::hasColumn('crm_order_assignments', 'current_layer') && isset($updates['current_layer'])) {
+            $assignData['current_layer'] = $updates['current_layer'];
+        }
+
+        // preserve full data on insert
+        $assignData['drawer_id']    = $verified->drawer_id;
+        $assignData['drawer_name']  = $verified->drawer_name;
+        $assignData['checker_id']   = $verified->checker_id;
+        $assignData['checker_name'] = $verified->checker_name;
+        $assignData['qa_id']        = $verified->qa_id;
+        $assignData['qa_name']      = $verified->qa_name;
+        $assignData['dassign_time'] = $verified->dassign_time;
+        $assignData['cassign_time'] = $verified->cassign_time;
+
+        if (!isset($assignData['created_at'])) {
+            $assignData['created_at'] = now();
+        }
+
+        DB::table('crm_order_assignments')->updateOrInsert(
+            [
+                'project_id'   => $order->project_id,
+                'order_number' => $order->order_number,
+            ],
+            $assignData
+        );
+
+    });
+
+    return response()->json([
+        'order' => $order->fresh(),
+        'message' => ucfirst($role) . " assigned: {$user->name}",
+    ]);
+}
+
+
+}
+

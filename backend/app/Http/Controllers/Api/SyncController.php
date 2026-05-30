@@ -53,12 +53,6 @@ class SyncController extends Controller
             $mapped = $this->mapFields($data);
 
             if ($existing) {
-                // Protect REJECTED states from being overwritten by external sync
-                if (in_array($existing->workflow_state, ['REJECTED_BY_CHECK', 'REJECTED_BY_QA'])) {
-                    unset($mapped['workflow_state']);
-                    Log::channel('daily')->info("SYNC: Skipped workflow_state update for METRO-{$oldId} (currently {$existing->workflow_state})");
-                }
-
                 // UPDATE existing order
                 DB::table($table)
                     ->where('id', $existing->id)
@@ -149,11 +143,6 @@ class SyncController extends Controller
                     ->first();
 
                 if ($existing) {
-                    // Protect REJECTED states from being overwritten by external sync
-                    if (in_array($existing->workflow_state, ['REJECTED_BY_CHECK', 'REJECTED_BY_QA'])) {
-                        unset($mapped['workflow_state']);
-                    }
-
                     DB::table($table)->where('id', $existing->id)->update($mapped);
                     // Re-apply CRM overlay (CRM assignments are authoritative over Metro)
                     $this->reApplyCrmOverlay($table, $existing->order_number, self::PROJECT_ID);

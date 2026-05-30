@@ -24,6 +24,8 @@ class Order extends Model
 {
     use HasFactory;
 
+    private static array $tableColumnsCache = [];
+
     /**
      * Default table — overridden at runtime by forProject().
      */
@@ -35,14 +37,16 @@ class Order extends Model
     public $incrementing = true;
 
     protected $fillable = [
-        'order_number', 'project_id', 'client_reference',
-        'address', 'client_name',
+        'order_number', 'project_id', 'batch_number', 'client_reference',
+        'address', 'client_name', 'company', 'branch', 'photographer', 'client_portal_id',
         'current_layer', 'status', 'workflow_state', 'workflow_type',
         'assigned_to', 'qa_supervisor_id', 'team_id', 'priority',
         'complexity_weight', 'estimated_minutes', 'order_type',
         'received_at', 'started_at', 'completed_at', 'delivered_at', 'due_date',
         'year', 'month', 'date', 'ausDatein',
-        'code', 'plan_type', 'instruction', 'project_type', 'due_in',
+        'code', 'plan_type', 'instruction', 'bedrooms', 'images', 'project_type', 'due_in',
+        'total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count', 'edited_images_count',
+        'it_datetime',
         'metadata', 'import_source', 'import_log_id',
         'recheck_count', 'rejected_by', 'rejected_at',
         'rejection_reason', 'rejection_type', 'checker_self_corrected',
@@ -54,7 +58,12 @@ class Order extends Model
         // Assignment role columns
         'drawer_id', 'drawer_name', 'dassign_time',
         'checker_id', 'checker_name', 'cassign_time',
+        'file_uploader_id', 'file_uploader_name', 'fassign_time',
         'qa_id', 'qa_name',
+        'drawer_done', 'drawer_date',
+        'checker_done', 'checker_date',
+        'file_uploaded', 'file_upload_date',
+        'final_upload', 'ausFinaldate',
     ];
 
     protected $casts = [
@@ -68,9 +77,31 @@ class Order extends Model
         'due_date' => 'date',
         'metadata' => 'array',
         'attachments' => 'array',
+        'images' => 'integer',
+        'total_raw_files' => 'integer',
+        'hdr_images_count' => 'integer',
+        'single_images_count' => 'integer',
+        'final_images_count' => 'integer',
+        'edited_images_count' => 'integer',
+        'it_datetime' => 'datetime',
         'checker_self_corrected' => 'boolean',
         'is_on_hold' => 'boolean',
     ];
+
+    private static function filterAttributesForTable(string $tableName, array $attributes): array
+    {
+        if (!array_key_exists($tableName, self::$tableColumnsCache)) {
+            self::$tableColumnsCache[$tableName] = Schema::hasTable($tableName)
+                ? array_flip(Schema::getColumnListing($tableName))
+                : null;
+        }
+
+        if (self::$tableColumnsCache[$tableName] === null) {
+            return $attributes;
+        }
+
+        return array_intersect_key($attributes, self::$tableColumnsCache[$tableName]);
+    }
 
     // ─── Dynamic Table Resolution ───────────────────────────────────
 
@@ -139,6 +170,7 @@ class Order extends Model
 
         $instance = new static;
         $instance->setTable(ProjectOrderService::getTableName($projectId));
+        $attributes = self::filterAttributesForTable($instance->getTable(), $attributes);
 
         $model = $instance->newInstance($attributes);
         $model->setTable(ProjectOrderService::getTableName($projectId));
@@ -154,6 +186,7 @@ class Order extends Model
     {
         if ($this->project_id) {
             $this->setTable(ProjectOrderService::getTableName($this->project_id));
+            $this->attributes = self::filterAttributesForTable($this->getTable(), $this->attributes);
         }
         return parent::save($options);
     }
@@ -165,6 +198,7 @@ class Order extends Model
     {
         if ($this->project_id) {
             $this->setTable(ProjectOrderService::getTableName($this->project_id));
+            $attributes = self::filterAttributesForTable($this->getTable(), $attributes);
         }
         return parent::update($attributes, $options);
     }

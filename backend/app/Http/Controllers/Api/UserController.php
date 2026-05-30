@@ -25,23 +25,26 @@ class UserController extends Controller
             // CEO only sees Directors and Operations Managers
             $query->whereIn('role', ['director', 'operations_manager']);
         } elseif ($authUser->role === 'project_manager') {
-            // PM sees only users in their own team — NOT other PMs or other teams
+            // PM sees only workers in their team/projects — NOT other PMs or themselves
+            // Only OM can manage PM accounts
             $query->where('id', '!=', $authUser->id);
             $query->where('role', '!=', 'project_manager');
             if ($authUser->team_id) {
                 $query->where('team_id', $authUser->team_id);
             } else {
-                // Fallback: PM without team sees managed-project workers
                 $managedIds = $authUser->getManagedProjectIds();
-                if (!empty($managedIds)) {
-                    $query->whereIn('project_id', $managedIds);
-                } else {
-                    $query->whereRaw('0 = 1'); // no results
-                }
+                $query->whereIn('project_id', $managedIds);
             }
         } elseif ($authUser->role === 'operations_manager') {
-            // OM sees all staff (excluding CEO/director) — they manage everyone below
-            $query->whereNotIn('role', ['ceo', 'director']);
+            $managedIds = $authUser->getManagedProjectIds();
+            $query->where(function ($q) use ($managedIds, $authUser) {
+                // OM sees workers in their projects + PMs assigned to their projects + self
+                $q->whereIn('project_id', $managedIds)
+                  ->orWhereHas('managedProjects', function ($sub) use ($managedIds) {
+                      $sub->whereIn('projects.id', $managedIds);
+                  })
+                  ->orWhere('id', $authUser->id);
+            });
         }
 
         // Filter by role
@@ -205,7 +208,7 @@ class UserController extends Controller
         }
 
         // Role hierarchy check: prevent deleting users at same or higher level
-        $roleHierarchy = ['ceo' => 6, 'director' => 5, 'operations_manager' => 4, 'project_manager' => 3, 'accounts_manager' => 3, 'qa' => 2, 'drawer' => 1, 'checker' => 1, 'designer' => 1];
+        $roleHierarchy = ['ceo' => 6, 'director' => 5, 'operations_manager' => 4, 'project_manager' => 3, 'accounts_manager' => 3, 'qa' => 2, 'live_qa' => 2, 'drawer' => 1, 'checker' => 1, 'designer' => 1];
         $authLevel = $roleHierarchy[$authUser->role] ?? 0;
         $targetLevel = $roleHierarchy[$user->role] ?? 0;
 

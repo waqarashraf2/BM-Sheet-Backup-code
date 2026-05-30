@@ -25,8 +25,8 @@ class UpdateInvoiceRequest extends FormRequest
         return [
             'invoice_number' => ['sometimes', 'string', Rule::unique('invoices', 'invoice_number')->ignore($this->invoice)],
             'project_id' => 'sometimes|exists:projects,id',
-            'month' => 'sometimes|string',
-            'year' => 'sometimes|string',
+            'month' => 'sometimes|integer|min:1|max:12',
+            'year' => 'sometimes|integer|min:2020|max:2100',
             'service_counts' => 'sometimes|array',
             'total_amount' => 'nullable|numeric|min:0',
             'status' => 'sometimes|in:draft,pending_approval,approved,sent',
