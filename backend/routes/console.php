@@ -20,10 +20,10 @@ Artisan::command('inspire', function () {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // Real-time dashboard cache refresh (every minute)
-Schedule::job(new RefreshDashboardCache())
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->description('Pre-compute dashboard statistics for fast retrieval');
+// DISABLED (cache keys mismatch) Schedule::job(new RefreshDashboardCache())
+// DISABLED (cache keys mismatch)     ->everyMinute()
+// DISABLED (cache keys mismatch)     ->withoutOverlapping()
+// DISABLED (cache keys mismatch)     ->description('Pre-compute dashboard statistics for fast retrieval');
 
 // Auto-reassign orders from inactive workers (every 5 minutes)
 // Schedule::job(new AutoReassignOrders(30)) // 30 minutes inactivity threshold

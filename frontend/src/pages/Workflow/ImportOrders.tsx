@@ -1,10 +1,54 @@
 import { useEffect, useState, useRef } from 'react';
+import { useSelector } from 'react-redux';
 
 import { orderImportService, projectService } from '../../services';
-import { AnimatedPage, PageHeader, StatusBadge, Button, DataTable } from '../../components/ui';
-import { Upload, FileSpreadsheet, Server, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
+import { AnimatedPage, PageHeader, StatusBadge, Button, DataTable, Modal, useToast } from '../../components/ui';
+import { Upload, FileSpreadsheet, Server, RefreshCw, CheckCircle, XCircle, Save, Trash2, Pencil, Search, AlertTriangle } from 'lucide-react';
+import type { RootState } from '../../store/store';
+
+type ImportedOrder = {
+  order_id: number;
+  order_number: string;
+  address: string | null;
+  client_name: string | null;
+  import_source: string | null;
+  import_log_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ImportedOrdersPagination = {
+  total: number;
+  per_page: number;
+  current_page: number;
+  last_page: number;
+};
 
 export default function ImportOrders() {
+  const { toast } = useToast();
+  const user = useSelector((state: RootState) => state.auth.user);
+  const isDirector = user?.role === 'director';
+  const isQA = user?.role === 'qa';
+  const normalizeHeaderValue = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => String(item).trim())
+        .filter(Boolean);
+    }
+    if (typeof value === 'string') {
+      return value
+        .split(/[,\r\n]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    if (value && typeof value === 'object') {
+      const nestedHeaders = (value as { headers?: unknown }).headers;
+      return normalizeHeaderValue(nestedHeaders);
+    }
+    return [];
+  };
+  const headerArrayToText = (value: unknown): string => normalizeHeaderValue(value).join(',');
+  const headerTextToArray = (value: string): string[] => normalizeHeaderValue(value);
 
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
@@ -16,19 +60,91 @@ export default function ImportOrders() {
   const [importResult, setImportResult] = useState<any>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [csvText, setCsvText] = useState('');
+  const [defaultCsvHeader, setDefaultCsvHeader] = useState('');
+  const [headerDraft, setHeaderDraft] = useState('');
+  const [headerLoading, setHeaderLoading] = useState(false);
+  const [savingHeader, setSavingHeader] = useState(false);
+  const [deletingHeader, setDeletingHeader] = useState(false);
+  const [importedOrders, setImportedOrders] = useState<ImportedOrder[]>([]);
+  const [importedOrdersLoading, setImportedOrdersLoading] = useState(false);
+  const [importedOrderPage, setImportedOrderPage] = useState(1);
+  const [importedOrderSearchDraft, setImportedOrderSearchDraft] = useState('');
+  const [importedOrderSearch, setImportedOrderSearch] = useState('');
+  const [importedOrdersPagination, setImportedOrdersPagination] = useState<ImportedOrdersPagination>({
+    total: 0,
+    per_page: 50,
+    current_page: 1,
+    last_page: 1,
+  });
+  const [editingOrder, setEditingOrder] = useState<ImportedOrder | null>(null);
+  const [editOrderForm, setEditOrderForm] = useState({
+    order_number: '',
+    address: '',
+    client_name: '',
+  });
+  const [savingImportedOrder, setSavingImportedOrder] = useState(false);
+  const [deletingImportedOrderId, setDeletingImportedOrderId] = useState<number | null>(null);
+  const [deleteOrderTarget, setDeleteOrderTarget] = useState<ImportedOrder | null>(null);
 
   useEffect(() => {
     projectService.list().then(res => {
       const d = res.data?.data || res.data;
       const list = Array.isArray(d) ? d : [];
-      setProjects(list);
-      if (list.length > 0) setSelectedProject(list[0].id);
+      const filteredProjects = isQA && user?.project_id
+        ? list.filter((project: any) => project.id === user.project_id)
+        : list;
+      setProjects(filteredProjects);
+      if (filteredProjects.length > 0) {
+        setSelectedProject(filteredProjects[0].id);
+      } else {
+        setSelectedProject(null);
+      }
     }).catch(() => {});
-  }, []);
+  }, [isQA, user?.project_id]);
 
   useEffect(() => {
     if (selectedProject) loadData();
   }, [selectedProject]);
+
+  useEffect(() => {
+    if (!selectedProject) {
+      setImportedOrders([]);
+      setImportedOrdersPagination({
+        total: 0,
+        per_page: 50,
+        current_page: 1,
+        last_page: 1,
+      });
+      return;
+    }
+
+    loadImportedOrders(selectedProject, importedOrderPage, importedOrderSearch);
+  }, [selectedProject, importedOrderPage, importedOrderSearch]);
+
+  useEffect(() => {
+    if (selectedProject) {
+      loadProjectHeaders(selectedProject);
+    } else {
+      setDefaultCsvHeader('');
+      setCsvText('');
+    }
+  }, [selectedProject]);
+
+  useEffect(() => {
+    setImportedOrderPage(1);
+    setImportedOrderSearchDraft('');
+    setImportedOrderSearch('');
+  }, [selectedProject]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setImportedOrderPage(1);
+      setImportedOrderSearch(importedOrderSearchDraft.trim());
+    }, 400);
+
+    return () => window.clearTimeout(timeout);
+  }, [importedOrderSearchDraft]);
 
   const loadData = async () => {
     if (!selectedProject) return;
@@ -44,6 +160,71 @@ export default function ImportOrders() {
     finally { setLoading(false); }
   };
 
+  const loadProjectHeaders = async (projectId: number) => {
+    try {
+      setHeaderLoading(true);
+      const res = await orderImportService.getProjectCsvHeaders(projectId);
+      const savedHeaders = headerArrayToText(res.data?.data?.headers ?? res.data?.headers ?? '');
+      setDefaultCsvHeader(savedHeaders);
+      setHeaderDraft(savedHeaders);
+      setCsvText(savedHeaders);
+    } catch (error) {
+      console.error(error);
+      setDefaultCsvHeader('');
+      setHeaderDraft('');
+      setCsvText('');
+    } finally {
+      setHeaderLoading(false);
+    }
+  };
+
+  const loadImportedOrders = async (
+    projectId = selectedProject,
+    page = importedOrderPage,
+    search = importedOrderSearch
+  ) => {
+    if (!projectId) return;
+
+    try {
+      setImportedOrdersLoading(true);
+      const res = await orderImportService.importedOrders(projectId, {
+        page,
+        per_page: 50,
+        search: search || undefined,
+      });
+      const nextOrders = res.data?.data || [];
+      const nextPagination = res.data?.pagination || {
+        total: nextOrders.length,
+        per_page: 50,
+        current_page: page,
+        last_page: 1,
+      };
+
+      setImportedOrders(nextOrders);
+      setImportedOrdersPagination(nextPagination);
+
+      if (nextPagination.last_page > 0 && nextPagination.current_page !== page) {
+        setImportedOrderPage(nextPagination.current_page);
+      }
+    } catch (error) {
+      console.error(error);
+      setImportedOrders([]);
+      setImportedOrdersPagination({
+        total: 0,
+        per_page: 50,
+        current_page: 1,
+        last_page: 1,
+      });
+      toast({
+        title: 'Imported orders failed',
+        description: 'Could not load imported orders for this project.',
+        type: 'error',
+      });
+    } finally {
+      setImportedOrdersLoading(false);
+    }
+  };
+
   const handleFile = async (file: File) => {
     if (!selectedProject || !file) return;
     const formData = new FormData();
@@ -53,6 +234,7 @@ export default function ImportOrders() {
       const res = await orderImportService.importCsv(selectedProject, formData);
       setImportResult(res.data);
       loadData();
+      loadImportedOrders(selectedProject, 1, importedOrderSearch);
     } catch (e: any) {
       setImportResult({ error: e.response?.data?.message || 'Import failed.' });
     } finally { setUploading(false); }
@@ -68,13 +250,165 @@ export default function ImportOrders() {
       setSyncing(sourceId);
       await orderImportService.syncFromApi(sourceId);
       loadData();
+      loadImportedOrders();
     } catch (e) { console.error(e); }
     finally { setSyncing(null); }
   };
 
+  const handleSaveHeaders = async () => {
+    const safeHeaderDraft = headerTextToArray(headerDraft);
+    if (!selectedProject || !isDirector || safeHeaderDraft.length === 0) return;
+
+    try {
+      setSavingHeader(true);
+      const payload = safeHeaderDraft;
+      const res = defaultCsvHeader
+        ? await orderImportService.updateProjectCsvHeaders(selectedProject, payload)
+        : await orderImportService.saveProjectCsvHeaders(selectedProject, payload);
+
+      const savedHeaders = headerArrayToText(res.data?.data?.headers ?? res.data?.headers ?? payload);
+      setDefaultCsvHeader(savedHeaders);
+      setHeaderDraft(savedHeaders);
+      setCsvText(savedHeaders);
+      toast({
+        title: 'CSV headers saved',
+        description: res.data?.message || 'Default CSV headers were saved for this project.',
+        type: 'success',
+      });
+    } catch (e: any) {
+      console.error(e);
+      toast({
+        title: 'Save failed',
+        description: e?.response?.data?.message || 'Could not save CSV headers.',
+        type: 'error',
+      });
+    } finally {
+      setSavingHeader(false);
+    }
+  };
+
+  const handleDeleteHeaders = async () => {
+    if (!selectedProject || !isDirector || !defaultCsvHeader) return;
+
+    try {
+      setDeletingHeader(true);
+      const res = await orderImportService.deleteProjectCsvHeaders(selectedProject);
+      setDefaultCsvHeader('');
+      setHeaderDraft('');
+      setCsvText('');
+      toast({
+        title: 'CSV headers removed',
+        description: res.data?.message || 'Default CSV headers were deleted for this project.',
+        type: 'success',
+      });
+    } catch (e: any) {
+      console.error(e);
+      toast({
+        title: 'Delete failed',
+        description: e?.response?.data?.message || 'Could not delete CSV headers.',
+        type: 'error',
+      });
+    } finally {
+      setDeletingHeader(false);
+    }
+  };
+
+  const openEditModal = (order: ImportedOrder) => {
+    setEditingOrder(order);
+    setEditOrderForm({
+      order_number: order.order_number || '',
+      address: order.address || '',
+      client_name: order.client_name || '',
+    });
+  };
+
+  const handleUpdateImportedOrder = async () => {
+    if (!selectedProject || !editingOrder) return;
+
+    try {
+      setSavingImportedOrder(true);
+      const res = await orderImportService.updateImportedOrder(selectedProject, editingOrder.order_id, {
+        order_number: editOrderForm.order_number.trim(),
+        address: editOrderForm.address.trim() || null,
+        client_name: editOrderForm.client_name.trim() || null,
+      });
+      const updatedOrder = res.data?.data;
+
+      setImportedOrders((prev) => prev.map((order) => (
+        order.order_id === editingOrder.order_id
+          ? { ...order, ...updatedOrder }
+          : order
+      )));
+      setEditingOrder(null);
+      toast({
+        title: 'Imported order updated',
+        description: res.data?.message || 'The imported order was updated successfully.',
+        type: 'success',
+      });
+      loadImportedOrders();
+    } catch (e: any) {
+      console.error(e);
+      const validationErrors = e?.response?.data?.errors;
+      const firstValidationMessage = validationErrors
+        ? Object.values(validationErrors)[0]
+        : null;
+      toast({
+        title: 'Update failed',
+        description: Array.isArray(firstValidationMessage)
+          ? firstValidationMessage[0]
+          : e?.response?.data?.message || 'Could not update the imported order.',
+        type: 'error',
+      });
+    } finally {
+      setSavingImportedOrder(false);
+    }
+  };
+
+  const handleDeleteImportedOrder = async () => {
+    if (!selectedProject || !deleteOrderTarget) return;
+
+    const targetPage = importedOrders.length === 1 && importedOrderPage > 1
+      ? importedOrderPage - 1
+      : importedOrderPage;
+
+    try {
+      setDeletingImportedOrderId(deleteOrderTarget.order_id);
+      const res = await orderImportService.deleteImportedOrder(selectedProject, deleteOrderTarget.order_id);
+      setDeleteOrderTarget(null);
+      toast({
+        title: 'Imported order deleted',
+        description: res.data?.message || 'The imported order was deleted successfully.',
+        type: 'success',
+      });
+      if (targetPage !== importedOrderPage) {
+        setImportedOrderPage(targetPage);
+      } else {
+        loadImportedOrders(selectedProject, targetPage, importedOrderSearch);
+      }
+      loadData();
+    } catch (e: any) {
+      console.error(e);
+      toast({
+        title: 'Delete failed',
+        description: e?.response?.data?.message || 'Could not delete the imported order.',
+        type: 'error',
+      });
+    } finally {
+      setDeletingImportedOrderId(null);
+    }
+  };
+
   return (
     <AnimatedPage>
-      <PageHeader title="Import Orders" subtitle="Upload CSV files or sync from API sources" />
+      <PageHeader
+        title="Import Orders"
+        subtitle="Upload CSV files or sync from API sources"
+        badge={selectedProject ? (
+          <span className="text-xs font-medium text-slate-600 bg-slate-100 px-2.5 py-1 rounded-full">
+            {defaultCsvHeader ? 'Default header ready' : 'No default header'}
+          </span>
+        ) : undefined}
+      />
 
       {/* Project selector */}
       {projects.length > 1 && (
@@ -87,6 +421,110 @@ export default function ImportOrders() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      {/* ✅ CSV TEXT INPUT (PASTE HERE) */}
+<div className="bg-white rounded-xl border border-slate-200/60 p-6 mb-6">
+  <div className="mb-4 flex items-start justify-between gap-3">
+    <div>
+      <h3 className="text-sm font-semibold text-slate-900">
+        Paste CSV Data
+      </h3>
+      <p className="mt-1 text-xs text-slate-500">
+        {headerLoading
+          ? 'Loading project CSV headers...'
+          : defaultCsvHeader
+            ? 'Saved project CSV headers are loaded by default in this box.'
+            : 'No saved CSV headers for this project yet.'}
+      </p>
+    </div>
+    {isDirector && <div className="text-xs text-slate-500">You can add, update, or delete the project header in the box below.</div>}
+  </div>
+
+  {isDirector && (
+    <div className="mb-4 rounded-xl border border-brand-200 bg-brand-50/40 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h4 className="text-sm font-semibold text-slate-900">Project Import Header</h4>
+          <p className="mt-1 text-xs text-slate-500">
+            Add or update the default header for this project here. It will automatically appear in the import text area below.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={Save}
+            loading={savingHeader}
+            disabled={!selectedProject || headerTextToArray(headerDraft).length === 0}
+            onClick={handleSaveHeaders}
+          >
+            Save Header
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={Trash2}
+            loading={deletingHeader}
+            disabled={!selectedProject || !defaultCsvHeader}
+            onClick={handleDeleteHeaders}
+          >
+            Delete Header
+          </Button>
+        </div>
+      </div>
+
+      <textarea
+        value={headerDraft}
+        onChange={(e) => setHeaderDraft(e.target.value)}
+        rows={5}
+        placeholder="Add your project CSV header here..."
+        className="w-full rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-900"
+      />
+    </div>
+  )}
+
+  <textarea
+    value={csvText}
+    onChange={(e) => setCsvText(e.target.value)}
+    rows={8}
+    placeholder="Paste CSV here..."
+    className="w-full border border-slate-200 rounded-lg p-3 text-sm"
+  />
+  {!isDirector && defaultCsvHeader && (
+    <p className="mt-2 text-xs text-slate-500">
+      Default headers are prefilled for this project. Only director can change them.
+    </p>
+  )}
+
+  <Button
+    className="mt-3"
+    loading={uploading}
+    onClick={async () => {
+      if (!selectedProject || !csvText) return;
+
+      try {
+        setUploading(true);
+        setImportResult(null);
+
+        const res = await orderImportService.importCsvText(selectedProject, {
+          csv_text: csvText
+        });
+
+        setImportResult(res.data);
+        loadData();
+        loadImportedOrders(selectedProject, 1, importedOrderSearch);
+        setCsvText(defaultCsvHeader);
+      } catch (e: any) {
+        setImportResult({
+          error: e.response?.data?.message || 'Import failed'
+        });
+      } finally {
+        setUploading(false);
+      }
+    }}
+  >
+    Import from Text
+  </Button>
+</div>
         {/* CSV Upload */}
         <div className="bg-white rounded-xl border border-slate-200/60 p-6">
           <h3 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
@@ -172,9 +610,153 @@ export default function ImportOrders() {
                 </div>
               )}
             </div>
+            
           )}
         </div>
+        
       )}
+
+      <div className="mb-6">
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Imported Orders</h3>
+            <p className="text-xs text-slate-500">
+              Manage imported orders with server pagination at 50 orders per page.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative w-full sm:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={importedOrderSearchDraft}
+                onChange={(e) => setImportedOrderSearchDraft(e.target.value)}
+                placeholder="Search order, address, client..."
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900"
+              />
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={RefreshCw}
+              onClick={() => loadImportedOrders()}
+              loading={importedOrdersLoading}
+            >
+              Refresh
+            </Button>
+          </div>
+        </div>
+
+        <DataTable
+          pageSize={50}
+          keyField="order_id"
+          data={importedOrders}
+          loading={importedOrdersLoading}
+          columns={[
+            {
+              key: 'order_number',
+              label: 'Order Number',
+              sortable: true,
+              render: (order) => <span className="font-medium text-slate-900">{order.order_number}</span>,
+            },
+            {
+              key: 'client_name',
+              label: 'Client',
+              render: (order) => <span className="text-sm text-slate-600">{order.client_name || '-'}</span>,
+            },
+            {
+              key: 'address',
+              label: 'Address',
+              render: (order) => (
+                <span className="block max-w-xs truncate text-sm text-slate-600" title={order.address || '-'}>
+                  {order.address || '-'}
+                </span>
+              ),
+            },
+            {
+              key: 'import_source',
+              label: 'Source',
+              render: (order) => (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium capitalize text-slate-600">
+                  {order.import_source || 'manual'}
+                </span>
+              ),
+            },
+            {
+              key: 'updated_at',
+              label: 'Updated',
+              sortable: true,
+              render: (order) => <span className="text-sm text-slate-500">{new Date(order.updated_at).toLocaleString()}</span>,
+            },
+            {
+              key: 'actions',
+              label: 'Actions',
+              align: 'right',
+              render: (order) => (
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    icon={Pencil}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEditModal(order);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="danger"
+                    icon={Trash2}
+                    loading={deletingImportedOrderId === order.order_id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteOrderTarget(order);
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+          emptyIcon={FileSpreadsheet}
+          emptyTitle="No imported orders"
+          emptyDescription={importedOrderSearch
+            ? 'No imported orders matched your search.'
+            : 'Imported orders will appear here after CSV or API imports.'}
+        />
+
+        <div className="mt-3 flex flex-col gap-3 rounded-xl border border-slate-200/70 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-slate-500">
+            Showing page <span className="font-semibold text-slate-700">{importedOrdersPagination.current_page}</span> of{' '}
+            <span className="font-semibold text-slate-700">{Math.max(importedOrdersPagination.last_page, 1)}</span>
+            {' '}with <span className="font-semibold text-slate-700">{importedOrdersPagination.total}</span> total imported orders.
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setImportedOrderPage((prev) => Math.max(1, prev - 1))}
+              disabled={importedOrdersLoading || importedOrdersPagination.current_page <= 1}
+            >
+              Previous
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setImportedOrderPage((prev) => Math.min(importedOrdersPagination.last_page, prev + 1))}
+              disabled={
+                importedOrdersLoading
+                || importedOrdersPagination.current_page >= importedOrdersPagination.last_page
+              }
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* History */}
       <h3 className="text-sm font-semibold text-slate-900 mb-3">Import History</h3>
@@ -195,6 +777,105 @@ export default function ImportOrders() {
         emptyTitle="No import history"
         emptyDescription="Import your first batch of orders."
       />
+
+      <Modal
+        open={!!editingOrder}
+        onClose={() => !savingImportedOrder && setEditingOrder(null)}
+        title={editingOrder ? `Edit ${editingOrder.order_number}` : 'Edit Imported Order'}
+        subtitle="Update the imported order details for this project."
+        size="md"
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => setEditingOrder(null)} disabled={savingImportedOrder}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              icon={Save}
+              loading={savingImportedOrder}
+              disabled={!editOrderForm.order_number.trim()}
+              onClick={handleUpdateImportedOrder}
+            >
+              Update Order
+            </Button>
+          </>
+        )}
+      >
+        <div className="space-y-4">
+          <div>
+            <label htmlFor="edit-order-number" className="mb-1 block text-sm font-medium text-slate-700">
+              Order Number
+            </label>
+            <input
+              id="edit-order-number"
+              type="text"
+              value={editOrderForm.order_number}
+              onChange={(e) => setEditOrderForm((prev) => ({ ...prev, order_number: e.target.value }))}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-client-name" className="mb-1 block text-sm font-medium text-slate-700">
+              Client Name
+            </label>
+            <input
+              id="edit-client-name"
+              type="text"
+              value={editOrderForm.client_name}
+              onChange={(e) => setEditOrderForm((prev) => ({ ...prev, client_name: e.target.value }))}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-address" className="mb-1 block text-sm font-medium text-slate-700">
+              Address
+            </label>
+            <textarea
+              id="edit-address"
+              value={editOrderForm.address}
+              onChange={(e) => setEditOrderForm((prev) => ({ ...prev, address: e.target.value }))}
+              rows={4}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!deleteOrderTarget}
+        onClose={() => deletingImportedOrderId == null && setDeleteOrderTarget(null)}
+        title="Delete Imported Order?"
+        subtitle={deleteOrderTarget
+          ? `This will permanently remove ${deleteOrderTarget.order_number} from imported orders.`
+          : 'This action cannot be undone.'}
+        size="sm"
+        variant="danger"
+        icon={AlertTriangle}
+        footer={(
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setDeleteOrderTarget(null)}
+              disabled={deletingImportedOrderId != null}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              icon={Trash2}
+              loading={deletingImportedOrderId != null}
+              onClick={handleDeleteImportedOrder}
+            >
+              Delete Order
+            </Button>
+          </>
+        )}
+      >
+        <p className="text-sm text-slate-600">
+          Delete this imported order only if you are sure it should no longer remain in the project import list.
+        </p>
+      </Modal>
+
     </AnimatedPage>
   );
 }

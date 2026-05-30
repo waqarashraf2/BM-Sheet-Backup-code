@@ -697,6 +697,7 @@ if ($request->query('date')) {
               ->whereNotNull('received_at')
               ->whereNotNull('delivered_at')
               ->where('delivered_at', '>=', now()->startOfMonth())
+              ->whereRaw('delivered_at >= received_at') // exclude corrupt timestamps
               ->selectRaw("
                   project_id,
                   AVG(TIMESTAMPDIFF(HOUR, received_at, delivered_at)) as avg_hours,
@@ -804,21 +805,21 @@ if ($request->query('date')) {
             $q->where('received_at', '>=', now()->subDays(7)->startOfDay())
               ->selectRaw("DATE(received_at) as the_date, COUNT(*) as cnt")
               ->groupByRaw('DATE(received_at)');
-        })->pluck('cnt', 'the_date');
+        })->groupBy('the_date')->map(fn($rows) => $rows->sum('cnt'));
 
         $trendDelivered = Order::queryAcrossProjects($allProjectIds->toArray(), function($q) {
             $q->where('workflow_state', 'DELIVERED')
               ->where('delivered_at', '>=', now()->subDays(7)->startOfDay())
               ->selectRaw("DATE(delivered_at) as the_date, COUNT(*) as cnt")
               ->groupByRaw('DATE(delivered_at)');
-        })->pluck('cnt', 'the_date');
+        })->groupBy('the_date')->map(fn($rows) => $rows->sum('cnt'));
 
         $trendRejected = Order::queryAcrossProjects($allProjectIds->toArray(), function($q) {
             $q->where('rejected_at', '>=', now()->subDays(7)->startOfDay())
               ->whereNotNull('rejected_at')
               ->selectRaw("DATE(rejected_at) as the_date, COUNT(*) as cnt")
               ->groupByRaw('DATE(rejected_at)');
-        })->pluck('cnt', 'the_date');
+        })->groupBy('the_date')->map(fn($rows) => $rows->sum('cnt'));
 
         $trend7d = [];
         for ($i = 6; $i >= 0; $i--) {

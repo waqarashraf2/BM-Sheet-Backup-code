@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, CheckCircle, RotateCcw, AlertTriangle, Loader2, Clock, Flag, HelpCircle, FileText, MessageSquare, Paperclip, ExternalLink, Play, Pause } from 'lucide-react';
 import { workflowService } from '../services';
-import type { Order } from '../types';
+import type { Order, WorkItem } from '../types';
 import { REJECTION_CODES } from '../types';
+import { getLatestStageArea } from '../utils/workItemArea';
 
 interface CheckerWorkFormProps {
   order: Order;
@@ -17,6 +18,7 @@ interface OrderDetails {
   issue_flags: any[];
   current_time_seconds: number;
   timer_running: boolean;
+  work_items?: WorkItem[];
 }
 
 export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerWorkFormProps) {
@@ -26,13 +28,13 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectCode, setRejectCode] = useState('');
-  
+
   // Timer state
   const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null);
   const [timerRunning, setTimerRunning] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [activeTab, setActiveTab] = useState<'form' | 'notes' | 'attachments' | 'history'>('form');
-  
+
   // Flag/Help modals
   const [showFlagModal, setShowFlagModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
@@ -43,6 +45,7 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
 
   // Drawer's entered values (from order metadata)
   const drawerData = (order.metadata || {}) as Record<string, string>;
+  const initialAreaValue = String(drawerData.enter_area ?? drawerData.area ?? '');
 
   // Checker verification state
   const [verifyData, setVerifyData] = useState({
@@ -62,6 +65,7 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
 
   // Drawer mistake box
   const [mistakeBox, setMistakeBox] = useState('');
+  const [editableArea, setEditableArea] = useState(initialAreaValue);
 
   // Load order details
   const loadOrderDetails = useCallback(async () => {
@@ -70,6 +74,11 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
       setOrderDetails(res.data);
       setElapsedSeconds(Math.max(0, Math.floor(res.data.current_time_seconds)));
       setTimerRunning(res.data.timer_running);
+
+      const drawerArea = getLatestStageArea(res.data.work_items ?? res.data.order?.work_items, 'DRAW');
+      if (drawerArea) {
+        setEditableArea(drawerArea);
+      }
     } catch (e) {
       console.error('Failed to load order details:', e);
     }
@@ -117,24 +126,68 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
   };
 
   const handleCheckerDone = async () => {
+    // Validation: Check if all verification fields are checked (allow some flexibility)
+    const requiredFields = [
+      { key: 'template', label: 'Template' },
+      { key: 'address', label: 'Address' },
+    ];
+
+    const uncheckedRequired = requiredFields.filter(field => {
+      const value = verifyData[field.key as keyof typeof verifyData];
+      return !value || value === '---';
+    });
+
+    if (uncheckedRequired.length > 0) {
+      setError(`Please verify essential fields: ${uncheckedRequired.map(f => f.label).join(', ')}`);
+      return;
+    }
+
     // Check if any field has issues
     const hasWrong = Object.values(verifyData).some(v => v === 'Wrong' || v === 'Missing');
-    
+
     if (hasWrong && !mistakeBox.trim()) {
       setError('Please document drawer mistakes in the Mistake Box');
       return;
     }
 
+    // Warn about unverified optional fields but allow submission
+    const optionalFields = [
+      { key: 'wall_thickness', label: 'Wall Thickness' },
+      { key: 'structure', label: 'Structure' },
+      { key: 'door', label: 'Door' },
+      { key: 'window', label: 'Window' },
+      { key: 'label_dimension', label: 'Label / Dimension' },
+      { key: 'final_files', label: 'Final Files' },
+      { key: 'plan_rotation', label: 'Plan Rotation' },
+      { key: 'area', label: 'Area' },
+      { key: 'north', label: 'North' },
+      { key: 'site_plan', label: 'Site Plan' },
+    ];
+
+    const unverifiedOptional = optionalFields.filter(field => {
+      const value = verifyData[field.key as keyof typeof verifyData];
+      return !value || value === '---';
+    });
+
+    if (unverifiedOptional.length > 0) {
+      const proceed = window.confirm(
+        `Some fields are not verified: ${unverifiedOptional.map(f => f.label).join(', ')}. Do you want to proceed with submission?`
+      );
+      if (!proceed) return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      const comment = mistakeBox 
-        ? `Checker Notes: ${mistakeBox}` 
-        : 'Checked and approved';
+      const comment = mistakeBox
+        ? `Checker Notes: ${mistakeBox}${editableArea.trim() ? `\nArea: ${editableArea.trim()}` : ''}`
+        : `Checked and approved${editableArea.trim() ? `\nArea: ${editableArea.trim()}` : ''}`;
       await workflowService.submitWork(order.id, comment);
       onComplete();
     } catch (e: any) {
-      setError(e.response?.data?.message || 'Failed to submit');
+      setError(e.response?.data?.message || 'Failed to submit. Please try again.');
+      // Allow retry on error - don't disable the form permanently
+      console.error('Submission error:', e);
     } finally {
       setSubmitting(false);
     }
@@ -204,7 +257,7 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div 
+      <div
         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
         onClick={onClose}
       />
@@ -317,7 +370,7 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
                   {orderDetails?.supervisor_notes || 'No special instructions for this order.'}
                 </p>
               </div>
-              
+
               {orderDetails?.help_requests && orderDetails.help_requests.length > 0 && (
                 <div>
                   <h3 className="text-sm font-semibold text-slate-700 mb-2">Help Requests</h3>
@@ -408,63 +461,63 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
               </div>
 
               {/* Verification Rows - Drawer Value + Checker Verify */}
-              <VerifyRow 
-                label="Template" 
-                drawerValue={drawerData.template || 'Not specified'} 
+              <VerifyRow
+                label="Template"
+                drawerValue={drawerData.template || 'Not specified'}
                 verifyValue={verifyData.template}
                 onChange={(v) => handleVerifyChange('template', v)}
               />
-              <VerifyRow 
-                label="Address" 
-                drawerValue={drawerData.address || order.client_reference || 'Yes'} 
+              <VerifyRow
+                label="Address"
+                drawerValue={drawerData.address || order.client_reference || 'Yes'}
                 verifyValue={verifyData.address}
                 onChange={(v) => handleVerifyChange('address', v)}
               />
-              <VerifyRow 
-                label="Wall Thickness" 
-                drawerValue={drawerData.wall_thickness || 'Yes'} 
+              <VerifyRow
+                label="Wall Thickness"
+                drawerValue={drawerData.wall_thickness || 'Yes'}
                 verifyValue={verifyData.wall_thickness}
                 onChange={(v) => handleVerifyChange('wall_thickness', v)}
               />
-              <VerifyRow 
-                label="Structure" 
-                drawerValue={drawerData.structure || 'Yes'} 
+              <VerifyRow
+                label="Structure"
+                drawerValue={drawerData.structure || 'Yes'}
                 verifyValue={verifyData.structure}
                 onChange={(v) => handleVerifyChange('structure', v)}
               />
-              <VerifyRow 
-                label="Door" 
-                drawerValue={drawerData.door || 'Yes'} 
+              <VerifyRow
+                label="Door"
+                drawerValue={drawerData.door || 'Yes'}
                 verifyValue={verifyData.door}
                 onChange={(v) => handleVerifyChange('door', v)}
               />
-              <VerifyRow 
-                label="Window" 
-                drawerValue={drawerData.window || 'Yes'} 
+              <VerifyRow
+                label="Window"
+                drawerValue={drawerData.window || 'Yes'}
                 verifyValue={verifyData.window}
                 onChange={(v) => handleVerifyChange('window', v)}
               />
-              <VerifyRow 
-                label="Label / Dimension" 
-                drawerValue={drawerData.label_dimension || 'Yes'} 
+              <VerifyRow
+                label="Label / Dimension"
+                drawerValue={drawerData.label_dimension || 'Yes'}
                 verifyValue={verifyData.label_dimension}
                 onChange={(v) => handleVerifyChange('label_dimension', v)}
               />
-              <VerifyRow 
-                label="Final Files" 
-                drawerValue={drawerData.final_files || 'Yes'} 
+              <VerifyRow
+                label="Final Files"
+                drawerValue={drawerData.final_files || 'Yes'}
                 verifyValue={verifyData.final_files}
                 onChange={(v) => handleVerifyChange('final_files', v)}
               />
-              <VerifyRow 
-                label="Plan Rotation" 
-                drawerValue={drawerData.plan_rotation || 'Yes'} 
+              <VerifyRow
+                label="Plan Rotation"
+                drawerValue={drawerData.plan_rotation || 'Yes'}
                 verifyValue={verifyData.plan_rotation}
                 onChange={(v) => handleVerifyChange('plan_rotation', v)}
               />
-              <VerifyRow 
-                label="Area" 
-                drawerValue={drawerData.area || 'Yes'} 
+              <VerifyRow
+                label="Area"
+                drawerValue={drawerData.area || 'Yes'}
                 verifyValue={verifyData.area}
                 onChange={(v) => handleVerifyChange('area', v)}
               />
@@ -477,23 +530,24 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
                 <div className="flex-1 px-4 py-3">
                   <input
                     type="text"
-                    value={drawerData.enter_area || 'Y'}
-                    disabled
-                    title="Drawer entered area value"
-                    className="px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-sm text-slate-600 w-full"
+                    value={editableArea}
+                    onChange={e => setEditableArea(e.target.value)}
+                    title="Edit area value"
+                    placeholder="Please write area with its unit"
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-700 w-full focus:outline-none focus:ring-2 focus:ring-brand-200"
                   />
                 </div>
               </div>
 
-              <VerifyRow 
-                label="North" 
-                drawerValue={drawerData.north || 'Yes'} 
+              <VerifyRow
+                label="North"
+                drawerValue={drawerData.north || 'Yes'}
                 verifyValue={verifyData.north}
                 onChange={(v) => handleVerifyChange('north', v)}
               />
-              <VerifyRow 
-                label="Site Plan" 
-                drawerValue={drawerData.site_plan || 'Yes'} 
+              <VerifyRow
+                label="Site Plan"
+                drawerValue={drawerData.site_plan || 'Yes'}
                 verifyValue={verifyData.site_plan}
                 onChange={(v) => handleVerifyChange('site_plan', v)}
               />
@@ -528,7 +582,7 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
                       title="Drawer link value"
                       className="flex-1 px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-sm text-slate-600"
                     />
-                    {drawerData.link && drawerData.link.startsWith('http') && (
+                    {typeof drawerData.link === 'string' && drawerData.link.startsWith('http') && (
                       <a
                         href={drawerData.link}
                         target="_blank"
@@ -738,19 +792,19 @@ export default function CheckerWorkForm({ order, onComplete, onClose }: CheckerW
 }
 
 // Verification Row Component
-function VerifyRow({ 
-  label, 
-  drawerValue, 
-  verifyValue, 
-  onChange 
-}: { 
-  label: string; 
-  drawerValue: string; 
-  verifyValue: string; 
+function VerifyRow({
+  label,
+  drawerValue,
+  verifyValue,
+  onChange
+}: {
+  label: string;
+  drawerValue: string;
+  verifyValue: string;
   onChange: (v: string) => void;
 }) {
   const VERIFY_OPTIONS = ['---', 'OK', 'Wrong', 'Missing', 'N/A'];
-  
+
   return (
     <div className="flex items-center bg-slate-50 rounded-lg">
       <div className="w-44 px-4 py-3 text-sm font-semibold text-slate-700 text-right flex-shrink-0">
@@ -761,13 +815,12 @@ function VerifyRow({
         <select
           value={verifyValue}
           onChange={e => onChange(e.target.value)}
-          className={`px-3 py-2 border rounded-lg text-sm min-w-[100px] ${
-            verifyValue === 'Wrong' || verifyValue === 'Missing' 
-              ? 'border-rose-300 bg-rose-50 text-rose-700' 
-              : verifyValue === 'OK' 
-                ? 'border-brand-300 bg-brand-50 text-brand-700'
-                : 'border-slate-300 bg-white'
-          }`}
+          className={`px-3 py-2 border rounded-lg text-sm min-w-[100px] ${verifyValue === 'Wrong' || verifyValue === 'Missing'
+            ? 'border-rose-300 bg-rose-50 text-rose-700'
+            : verifyValue === 'OK'
+              ? 'border-brand-300 bg-brand-50 text-brand-700'
+              : 'border-slate-300 bg-white'
+            }`}
           title={`Verify ${label}`}
         >
           {VERIFY_OPTIONS.map(opt => (

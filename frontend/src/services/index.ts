@@ -2,7 +2,7 @@ import api from './api';
 import type {
   User, LoginCredentials, LoginResponse, SessionCheckResponse,
   Project, ProjectInput, Team,
-  Order, WorkItem, MonthLock, Invoice, InvoiceInput,
+  Order, WorkItem, MonthLock, Invoice, InvoiceInput, InvoiceMonthlyQuantity,
   MasterDashboard, ProjectDashboard, WorkerDashboardData, OpsDashboardData, QueueHealth,
   DailyOperationsData, PMDashboardData, AssignmentDashboardData,
   PaginatedResponse, Notification,
@@ -22,6 +22,31 @@ export const authService = {
   forceLogout: (userId: number) => api.post(`/auth/force-logout/${userId}`),
 };
 
+// Project 16 Batch Report
+type Batch = {
+  batch_no: string;
+  received_time: string;
+  remaining_time: string;
+  plans: number;
+  done: number;
+  pending: number;
+  fixing: number;
+};
+
+type BatchSummary = {
+  total_batches: number;
+  total_plans: number;
+  total_done: number;
+  total_pending: number;
+  total_fixing: number;
+};
+
+type BatchStatusResponse = {
+  success: boolean;
+  data: Batch[];
+  summary: BatchSummary;
+};
+
 // ═══════════════════════════════════════════
 // WORKFLOW SERVICE (State Machine)
 // ═══════════════════════════════════════════
@@ -31,16 +56,16 @@ export const workflowService = {
 
   // Worker: Get current assigned order
   myCurrent: () => api.get<{ order: Order | null }>('/workflow/my-current'),
-  
+
   // Worker: Get queue of orders assigned to worker
   getQueue: () => api.get<{ orders: Order[] }>('/workflow/my-queue'),
-  
+
   // Worker: Get completed orders today
   getCompleted: () => api.get<{ orders: Order[] }>('/workflow/my-completed'),
-  
+
   // Worker: Get order history (all time)
   getHistory: (page?: number) => api.get<{ data: Order[]; current_page: number; last_page: number }>('/workflow/my-history', { params: { page } }),
-  
+
   // Worker: Get performance stats
   getPerformance: () => api.get<{
     today_completed: number;
@@ -59,25 +84,25 @@ export const workflowService = {
 
   // Worker: My daily stats
   myStats: () => api.get<{ today_completed: number; daily_target: number; wip_count: number; queue_count: number; is_absent: boolean }>('/workflow/my-stats'),
-  
+
   // Worker: Reassign order back to queue
   reassignToQueue: (orderId: number, reason?: string) =>
     api.post<{ order: Order; message: string }>(`/workflow/orders/${orderId}/reassign-queue`, { reason }),
-  
+
   // Worker: Flag issue on order
   flagIssue: (orderId: number, flagType: string, description: string, severity?: string) =>
     api.post<{ flag: any; message: string }>(`/workflow/orders/${orderId}/flag-issue`, { flag_type: flagType, description, severity }),
-  
+
   // Worker: Request help/clarification
   requestHelp: (orderId: number, question: string) =>
     api.post<{ help_request: any; message: string }>(`/workflow/orders/${orderId}/request-help`, { question }),
-  
+
   // Worker: Timer controls
   startTimer: (orderId: number) =>
     api.post<{ work_item: WorkItem; message: string }>(`/workflow/orders/${orderId}/timer/start`),
   stopTimer: (orderId: number) =>
     api.post<{ work_item: WorkItem; time_added_seconds: number; total_time_seconds: number; message: string }>(`/workflow/orders/${orderId}/timer/stop`),
-  
+
   // Worker: Full order details
   orderFullDetails: (orderId: number) =>
     api.get<{
@@ -88,11 +113,16 @@ export const workflowService = {
       issue_flags: any[];
       current_time_seconds: number;
       timer_running: boolean;
+      work_items?: WorkItem[];
     }>(`/workflow/orders/${orderId}/full-details`),
 
   // Checker/QA: Reject order (mandatory reason)
   rejectOrder: (orderId: number, reason: string, rejectionCode: string, routeTo?: string) =>
     api.post<{ order: Order }>(`/workflow/orders/${orderId}/reject`, { reason, rejection_code: rejectionCode, route_to: routeTo }),
+
+  // Checker/QA: Cancel order (mandatory reason)
+  cancelOrder: (orderId: number, reason: string, projectId?: number) =>
+    api.post<{ order: Order; message?: string }>(`/workflow/orders/${orderId}/cancel`, { reason, ...(projectId ? { project_id: projectId } : {}) }),
 
   // Hold/Resume
   holdOrder: (orderId: number, holdReason: string) =>
@@ -107,6 +137,56 @@ export const workflowService = {
   // Work item history
   workItemHistory: (orderId: number) =>
     api.get<{ work_items: WorkItem[] }>(`/workflow/work-items/${orderId}`),
+
+  // Order assets/images by external job_order_id value (order_number or client order number)
+  orderAssetLinks: (jobOrderId: string) =>
+    api.get<{
+      job_order_id: string;
+      requested_project_id: number | null;
+      matched_project_ids: number[];
+      include_external: boolean;
+      count: number;
+      links: Array<{
+        source: string;
+        source_table: string;
+        project_id: number;
+        job_order_id: string;
+        id: number;
+        name: string;
+        url: string;
+        link_type: string;
+        meta: Record<string, unknown> | null;
+      }>;
+    }>(`/workflow/orders/links/${encodeURIComponent(jobOrderId)}`),
+
+  // Backward-compatible alias for order assets endpoint
+  orderImageLinks: (jobOrderId: string) =>
+    api.get<{
+      job_order_id: string;
+      requested_project_id: number | null;
+      matched_project_ids: number[];
+      include_external: boolean;
+      count: number;
+      links: Array<{
+        source: string;
+        source_table: string;
+        project_id: number;
+        job_order_id: string;
+        id: number;
+        name: string;
+        url: string;
+        link_type: string;
+        meta: Record<string, unknown> | null;
+      }>;
+    }>(`/workflow/orders/images/${encodeURIComponent(jobOrderId)}`),
+
+  // Optional helper: submit to client portal (separate from internal submitWork)
+  submitOrderToClientPortal: (jobOrderId: string, orderId?: number) =>
+    api.post<{
+      message: string;
+      job_order_id: string;
+      response: unknown;
+    }>(`/workflow/orders/${encodeURIComponent(jobOrderId)}/client-portal-submit`, orderId ? { order_id: orderId } : {}),
 
   // Management: Receive new order
   receiveOrder: (data: { project_id: number; client_reference: string; priority?: string; due_date?: string; metadata?: Record<string, unknown> }) =>
@@ -127,6 +207,25 @@ export const workflowService = {
   // PM: Assign role (drawer/checker/qa) to an order
   assignRole: (orderId: number, role: string, userId: number, projectId?: number) =>
     api.post<{ order: Order; message: string }>(`/workflow/orders/${orderId}/assign-role`, { role, user_id: userId, ...(projectId ? { project_id: projectId } : {}) }),
+
+  // Supervisor: Update order instruction / plan type
+  updateInstruction: (
+    orderId: number,
+    payload: {
+      instruction?: string | null;
+      plan_type?: string | null;
+      code?: string | null;
+      it_datetime?: string | null;
+      received_at?: string | null;
+      total_raw_files?: number | null;
+      hdr_images_count?: number | null;
+      single_images_count?: number | null;
+      final_images_count?: number | null;
+      edited_images_count?: number | null;
+      project_id?: number;
+    }
+  ) =>
+    api.put<{ order: Order; message?: string }>(`/orders/${orderId}/instruction`, payload),
 
   // QA: Get orders assigned to QA supervisor for team distribution
   qaOrders: () =>
@@ -176,15 +275,31 @@ export const dashboardService = {
   absentees: () => api.get<{ absentees: User[] }>('/dashboard/absentees'),
 
   // CEO: Daily Operations - All projects with layer-wise worker activity
-  dailyOperations: (date?: string, viewMode?: string) =>
-    api.get<DailyOperationsData>('/dashboard/daily-operations', { params: { ...(date ? { date } : {}), ...(viewMode ? { view_mode: viewMode } : {}) } }),
+  dailyOperations: (
+    dateFrom?: string,
+    dateTo?: string,
+    viewMode?: string
+  ) =>
+    api.get<DailyOperationsData>('/dashboard/daily-operations', {
+      params: {
+        ...(dateFrom && !dateTo ? { date: dateFrom } : {}),
+        ...(dateFrom && dateTo ? { date_from: dateFrom, date_to: dateTo } : {}),
+        ...(viewMode ? { view_mode: viewMode } : {}),
+      }
+    }),
+
+
+
+
+  batchStatus: (params?: { date?: string; project_id?: number }) =>
+    api.get<BatchStatusResponse>('/dashboard/batch-status', { params }),
 
   // Queues list — returns distinct queue names with their projects
   queues: () => api.get<{ queues: import('../types').QueueInfo[] }>('/dashboard/queues'),
 
   // Assignment Dashboard — queue-based view combining orders from all projects in a queue
   assignmentDashboard: (queueName: string, params?: {
-    status?: string; date?: string; search?: string; assigned_to?: number; page?: number; per_page?: number;
+    status?: string; date?: string; search?: string; assigned_to?: number; page?: number; per_page?: number; start_date?: string; end_date?: string;
   }) => api.get<AssignmentDashboardData>(`/dashboard/assignment/${encodeURIComponent(queueName)}`, { params }),
 };
 
@@ -218,6 +333,9 @@ export const invoiceService = {
   create: (data: InvoiceInput) =>
     api.post<{ invoice: Invoice }>('/invoices', data),
 
+  update: (id: number, data: Partial<InvoiceInput>) =>
+    api.put<{ invoice: Invoice }>(`/invoices/${id}`, data),
+
   show: (id: number) =>
     api.get<{ invoice: Invoice }>(`/invoices/${id}`),
 
@@ -226,6 +344,21 @@ export const invoiceService = {
 
   delete: (id: number) =>
     api.delete(`/invoices/${id}`),
+
+  listMonthlyQuantities: (projectId: number, year: number) =>
+    api.get<{ project_id: number; year: number; months: InvoiceMonthlyQuantity[] }>(`/invoices/monthly-quantity/${projectId}/${year}`),
+
+  getMonthlyQuantity: (projectId: number, year: number, month: number) =>
+    api.get<{ monthly_quantity: InvoiceMonthlyQuantity }>(`/invoices/monthly-quantity/${projectId}/${year}/${month}`),
+
+  storeManualQuantity: (data: { project_id: number; month: number; year: number; manual_qty_total: number; manual_qty_breakdown?: Record<string, number>; manual_notes?: string }) =>
+    api.post<{ monthly_quantity: InvoiceMonthlyQuantity; message: string }>('/invoices/monthly-quantity', data),
+
+  updateManualQuantity: (id: number, data: { manual_qty_total?: number; manual_qty_breakdown?: Record<string, number>; manual_notes?: string }) =>
+    api.put<{ monthly_quantity: InvoiceMonthlyQuantity; message: string }>(`/invoices/monthly-quantity/${id}`, data),
+
+  computeMonthlyQuantity: (projectId: number, year: number, month: number) =>
+    api.post<{ monthly_quantity: InvoiceMonthlyQuantity; message: string }>(`/invoices/monthly-quantity/${projectId}/${year}/${month}/compute`),
 };
 
 // ═══════════════════════════════════════════
@@ -241,6 +374,7 @@ export const projectService = {
   statistics: (id: number) => api.get(`/projects/${id}/statistics`),
   teams: (id: number) => api.get<{ data: Team[] }>(`/projects/${id}/teams`),
   createTeam: (projectId: number, name: string) => api.post<{ data: Team; message: string }>(`/projects/${projectId}/teams`, { name }),
+  updateTeam: (projectId: number, teamId: number, data: { name: string }) => api.put<{ data: Team; message: string }>(`/projects/${projectId}/teams/${teamId}`, data),
   deleteTeam: (projectId: number, teamId: number) => api.delete(`/projects/${projectId}/teams/${teamId}`),
 };
 
@@ -300,6 +434,45 @@ export const orderImportService = {
     api.get<{ data: OrderImportLog[] }>(`/projects/${projectId}/import-history`),
   importDetails: (logId: number) =>
     api.get<{ data: OrderImportLog }>(`/import-logs/${logId}`),
+  getProjectCsvHeaders: (projectId: number) =>
+    api.get<{ headers?: unknown; data?: { headers?: unknown } }>(`/projects/${projectId}/csv-headers`),
+  saveProjectCsvHeaders: (projectId: number, headers: string[]) =>
+    api.post<{ message?: string; headers?: unknown; data?: { headers?: unknown } }>(`/projects/${projectId}/csv-headers`, { headers }),
+  updateProjectCsvHeaders: (projectId: number, headers: string[]) =>
+    api.put<{ message?: string; headers?: unknown; data?: { headers?: unknown } }>(`/projects/${projectId}/csv-headers`, { headers }),
+  deleteProjectCsvHeaders: (projectId: number) =>
+    api.delete<{ message?: string }>(`/projects/${projectId}/csv-headers`),
+  importCsvText: (projectId: number, data: { csv_text: string }) =>
+    api.post(`/projects/${projectId}/import-csv-text`, data),
+  importedOrders: (projectId: number, params?: { page?: number; per_page?: number; search?: string }) =>
+    api.get<{
+      success: boolean;
+      project_id: number;
+      data: Array<{
+        order_id: number;
+        order_number: string;
+        address: string | null;
+        client_name: string | null;
+        import_source: string | null;
+        import_log_id: number | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+      pagination: {
+        total: number;
+        per_page: number;
+        current_page: number;
+        last_page: number;
+      };
+    }>(`/projects/${projectId}/imported-orders`, { params }),
+  updateImportedOrder: (
+    projectId: number,
+    orderId: number,
+    data: { order_number?: string; address?: string | null; client_name?: string | null }
+  ) =>
+    api.put(`/projects/${projectId}/imported-orders/${orderId}`, data),
+  deleteImportedOrder: (projectId: number, orderId: number) =>
+    api.delete(`/projects/${projectId}/imported-orders/${orderId}`),
 };
 
 // ═══════════════════════════════════════════
@@ -371,38 +544,352 @@ export const auditLogService = {
 };
 
 // ═══════════════════════════════════════════
+// LIVE QA TYPES
+// ═══════════════════════════════════════════
+
+// Product checklist item (shared definition)
+export interface ProductChecklistItem {
+  id: number;
+  title: string;
+  client: string;
+  product: string;
+  check_list_type_id: number;
+  is_active: boolean;
+  sort_order: number;
+}
+
+// Checklist item during review (with review response data)
+export interface ReviewChecklistItem {
+  product_checklist_id: number;
+  title: string;
+  client: string;
+  product: string;
+  is_checked: boolean;
+  count_value: number;
+  text_value: string;
+  review_id: number | null;
+  created_by: string | null;
+  updated_at: string | null;
+}
+
+// Order minimal info for review context
+export interface ReviewOrderInfo {
+  id: number;
+  order_number: string;
+  address: string;
+  client_name?: string | null;
+  drawer_name: string;
+  checker_name: string;
+  qa_name: string;
+  drawer_done: string;
+  checker_done: string;
+  final_upload: string;
+}
+
+// Complete review data structure (matching backend response)
+export interface ReviewData {
+  order_number: string;
+  layer: string;
+  worker_name: string;
+  order: ReviewOrderInfo | null;
+  items: ReviewChecklistItem[];
+  total_items: number;
+  reviewed_items: number;
+}
+
+// Review submission payload
+export interface ReviewSubmissionItem {
+  product_checklist_id: number;
+  is_checked: boolean;
+  count_value: number;
+  text_value: string;
+}
+
+export interface ReviewSubmissionPayload {
+  items: ReviewSubmissionItem[];
+}
+
+// Stats response
+export interface LiveQAStats {
+  success?: boolean;
+  layer?: string;
+  date_from?: string | null;
+  date_to?: string | null;
+  from_datetime?: string | null;
+  to_datetime?: string | null;
+  total_reviews: number;
+  total_mistakes: number;
+  orders_reviewed: number;
+  order_comments?: Array<Record<string, unknown>>;
+  report_columns?: string[];
+  report_rows?: Array<Record<string, unknown>>;
+  worker_stats: Array<{
+    worker: string;
+    orders_checked: number;
+    total_mistakes: number;
+    comments?: unknown;
+    text_values?: unknown;
+    mistake_comments?: unknown;
+    details?: unknown;
+  }>;
+  checklist_stats: Array<{
+    title: string;
+    total_mistakes: number;
+    orders_affected: number;
+    comments?: unknown;
+    text_values?: unknown;
+    mistake_comments?: unknown;
+    details?: unknown;
+  }>;
+}
+
+// Mistake summary worker
+export interface MistakeSummaryWorker {
+  name: string;
+  client_name?: string | null;
+  plan_count: number;
+  items: Record<string, number>;
+  mistake_total: number;
+  comments?: unknown;
+  text_values?: unknown;
+  mistake_comments?: unknown;
+  details?: unknown;
+}
+
+// Mistake summary team
+export interface MistakeSummaryTeam {
+  team_id: number;
+  team_name: string;
+  client_name?: string | null;
+  workers: MistakeSummaryWorker[];
+}
+
+// Mistake summary response
+export interface MistakeSummaryResponse {
+  teams: MistakeSummaryTeam[];
+  checklist_items?: string[];
+  report_columns?: string[];
+  report_rows?: Array<Record<string, unknown>>;
+  order_comments?: Array<Record<string, unknown>>;
+  summary?: {
+    total_orders: number;
+    total_mistakes: number;
+  };
+}
+
+// Overview order (matches old Metro layout)
+export interface LiveQAOverviewOrder {
+  id: number;
+  order_number: string;
+  VARIANT_no?: string;
+  address?: string;
+  client_name?: string;
+  priority?: string;
+  due_in?: string;
+  received_at?: string;
+  drawer_name?: string;
+  drawer_done?: string;
+  drawer_date?: string;
+  dassign_time?: string;
+  d_live_qa: number;
+  d_qa_reviewed: number;
+  d_qa_total: number;
+  d_qa_done: boolean;
+  checker_name?: string;
+  checker_done?: string;
+  checker_date?: string;
+  cassign_time?: string;
+  c_live_qa: number;
+  c_qa_reviewed: number;
+  c_qa_total: number;
+  c_qa_done: boolean;
+  qa_name?: string;
+  qa_done?: boolean;
+  q_live_qa?: number | null;
+  qa_live_qa?: number | null;
+  final_upload?: string;
+  amend?: number;
+  status?: string;
+  workflow_state?: string;
+  created_at?: string;
+}
+
+// Overview response
+export interface LiveQAOverviewResponse {
+  data: LiveQAOverviewOrder[];
+  counts: {
+    today_total: number;
+    pending: number;
+    completed: number;
+    amends: number;
+    unassigned?: number;
+  };
+}
+
+export interface LiveQAWorkerOrder {
+  id: number;
+  order_number: string;
+  address?: string | null;
+  drawer_name?: string | null;
+  checker_name?: string | null;
+  drawer_done?: string | null;
+  checker_done?: string | null;
+  final_upload?: string | null;
+  d_live_qa?: number;
+  c_live_qa?: number;
+  qa_reviewed_items?: number;
+  qa_total_items?: number;
+  qa_review_complete?: boolean;
+}
+
+export interface LiveQAWorkerOrdersResponse {
+  success?: boolean;
+  data: LiveQAWorkerOrder[];
+  pagination?: {
+    total: number;
+    per_page: number;
+    current_page: number;
+    last_page: number;
+  };
+  meta?: {
+    total?: number;
+    per_page?: number;
+    current_page?: number;
+    last_page?: number;
+  };
+}
+
+// ═══════════════════════════════════════════
 // LIVE QA SERVICE
 // ═══════════════════════════════════════════
 export const liveQAService = {
-  // Overview: unified table of all orders with D-LiveQA + C-LiveQA status
-  getOverview: (projectId: number, params: Record<string, any> = {}) =>
-    api.get(`/live-qa/overview/${projectId}`, { params }),
-
-  // Orders by layer (drawer/checker/qa) – legacy
-  getOrders: (projectId: number, params: Record<string, any> = {}) =>
-    api.get(`/live-qa/orders/${projectId}`, { params }),
-
-  // Checklist CRUD
+  // ─── Checklists (Product Definitions) ───────────────────────────────────
+  // GET /live-qa/checklists - Fetch all checklists
   getChecklists: () =>
-    api.get('/live-qa/checklists'),
+    api.get<{ data: ProductChecklistItem[] }>('/live-qa/checklists'),
+
+  // POST /live-qa/checklists - Create new checklist
   createChecklist: (data: { title: string; check_list_type_id: number; client?: string; product?: string }) =>
-    api.post('/live-qa/checklists', data),
+    api.post<{ data: ProductChecklistItem; message: string }>('/live-qa/checklists', data),
+
+  // PUT /live-qa/checklists/{id} - Update checklist
   updateChecklist: (id: number, data: Record<string, any>) =>
-    api.put(`/live-qa/checklists/${id}`, data),
+    api.put<{ data: ProductChecklistItem; message: string }>(`/live-qa/checklists/${id}`, data),
+
+  // DELETE /live-qa/checklists/{id} - Delete checklist
   deleteChecklist: (id: number) =>
-    api.delete(`/live-qa/checklists/${id}`),
+    api.delete<{ message: string }>(`/live-qa/checklists/${id}`),
 
-  // Review per order
+  // ─── Overview & Orders ──────────────────────────────────────────────────
+  // GET /live-qa/overview/{projectId} - Unified view matching old Metro layout
+  getOverview: (projectId: number, params: Record<string, any> = {}) =>
+    api.get<LiveQAOverviewResponse>(`/live-qa/overview/${projectId}`, { params }),
+
+  // GET /live-qa/orders/{projectId} - Orders ready for Live QA per layer (legacy)
+  getOrders: (projectId: number, params: Record<string, any> = {}) =>
+    api.get<LiveQAWorkerOrdersResponse>(`/live-qa/orders/${projectId}?debug=true`, { params }),
+
+  // ─── Review Workflow ────────────────────────────────────────────────────
+  // GET /live-qa/review/{projectId}/{orderNumber}/{layer} - Fetch review checklist
+  // Returns pre-filled review items with comments (text_value) and mistake counts
   getReview: (projectId: number, orderNumber: string, layer: string) =>
-    api.get(`/live-qa/review/${projectId}/${orderNumber}/${layer}`),
-  submitReview: (projectId: number, orderNumber: string, layer: string, data: { items: any[] }) =>
-    api.post(`/live-qa/review/${projectId}/${orderNumber}/${layer}`, data),
+    api.get<ReviewData | { data: ReviewData }>(
+      `/live-qa/review/${projectId}/${encodeURIComponent(String(orderNumber))}/${encodeURIComponent(String(layer))}`
+    ),
 
-  // Stats
-  getStats: (projectId: number, layer?: string) =>
-    api.get(`/live-qa/stats/${projectId}`, { params: { layer } }),
+  // POST /live-qa/review/{projectId}/{orderNumber}/{layer} - Submit review
+  // Includes: is_checked flags, count_value (mistake counts), text_value (comments)
+  submitReview: (projectId: number, orderNumber: string, layer: string, data: ReviewSubmissionPayload) =>
+    api.post<{ message: string; data?: ReviewData }>(
+      `/live-qa/review/${projectId}/${encodeURIComponent(String(orderNumber))}/${encodeURIComponent(String(layer))}`,
+      data
+    ),
 
-  // Mistake summary reports
+  // ─── Reports & Analytics ───────────────────────────────────────────────
+  // GET /live-qa/stats/{projectId} - QA stats (optional layer filter)
+  getStats: (projectId: number, layer?: string, params: Record<string, any> = {}) =>
+    api.get<LiveQAStats>(`/live-qa/stats/${projectId}?debug=true`, {
+      params: {
+        ...(layer ? { layer } : {}),
+        ...params,
+      },
+    }),
+
+  // GET /live-qa/mistake-summary/{projectId}/{layer} - Mistake summary by team/worker
   getMistakeSummary: (projectId: number, layer: string, params: Record<string, any> = {}) =>
-    api.get(`/live-qa/mistake-summary/${projectId}/${layer}`, { params }),
+    api.get<MistakeSummaryResponse>(`/live-qa/mistake-summary/${projectId}/${layer}?debug=true`, { params }),
+
+  // ─── Internal QA ─────────────────────────────────────────────────────────
+  getInternalQaOrders: (projectId: number, params: Record<string, any> = {}) =>
+    api.get<{ success: boolean; data: any[]; pagination: any }>(`/live-qa/internal-qa/orders/${projectId}`, { params: { ...params, debug: true } }),
+
+  getInternalQaReview: (projectId: number, orderNumber: string) =>
+    api.get<any>(`/live-qa/internal-qa/review/${projectId}/${encodeURIComponent(String(orderNumber))}`),
+
+  submitInternalQaReview: (projectId: number, orderNumber: string, data: ReviewSubmissionPayload) =>
+    api.post<{ message: string }>(`/live-qa/internal-qa/review/${projectId}/${encodeURIComponent(String(orderNumber))}`, data),
+
+  getInternalQaMistakeSummary: (projectId: number, params: Record<string, any> = {}) =>
+    api.get<MistakeSummaryResponse>(`/live-qa/internal-qa/mistake-summary/${projectId}`, { params }),
+
+  getInternalQaAllProjectsReport: (params: Record<string, any> = {}) =>
+    api.get<any>(`/live-qa/internal-qa/all-projects-report`, { params }),
+};
+
+
+
+// ─────────────────────────────────────────
+// Core Column Type (Aligned with Backend + UI)
+// ─────────────────────────────────────────
+export type ProjectColumn = {
+  id?: number;
+  project_id: number;
+
+  // Backend + UI compatibility
+  name: string;        // DB column name
+  label?: string;      // optional UI label
+
+  field: string;       // data key
+
+  visible: boolean;
+  sortable: boolean;
+
+  width?: number;
+  order: number;
+};
+
+// ─────────────────────────────────────────
+// API Response Types
+// ─────────────────────────────────────────
+export type ProjectColumnsResponse = {
+  success: boolean;
+  data: ProjectColumn[];
+};
+
+export type SaveProjectColumnsPayload = {
+  project_id?: number; // optional → supports "all"
+  columns: ProjectColumn[];
+};
+
+export type SaveProjectColumnsResponse = {
+  success: boolean;
+  message: string;
+  data: ProjectColumn[];
+};
+
+// ─────────────────────────────────────────
+// Service
+// ─────────────────────────────────────────
+export const columnService = {
+
+  getAllColumns: (projectId: number) =>
+    api.get<ProjectColumnsResponse>(`/assignments/columns`, {
+      params: { project_id: projectId },
+    }),
+
+  saveAllColumns: (columns: ProjectColumn[]) =>
+    api.post<SaveProjectColumnsResponse>(`/assignments/columns/save`, {
+      columns,
+    }),
+
 };

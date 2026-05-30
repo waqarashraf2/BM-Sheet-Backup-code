@@ -36,6 +36,14 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
   const [virtualStaging, setVirtualStaging] = useState(false);
   const [outputNotes, setOutputNotes] = useState('');
 
+  // PH_2_LAYER image counts
+  const isPh2Layer = order.workflow_type === 'PH_2_LAYER';
+  const [totalImages, setTotalImages] = useState('');
+  const [hdrImages, setHdrImages] = useState('');
+  const [editImages, setEditImages] = useState('');
+  const [normalImages, setNormalImages] = useState('');
+  const [finalImages, setFinalImages] = useState('');
+
   // Flag/Help
   const [showFlag, setShowFlag] = useState(false);
   const [flagDescription, setFlagDescription] = useState('');
@@ -53,7 +61,7 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
 
   useEffect(() => {
     loadDetails();
-    workflowService.startTimer(order.id).catch(() => {});
+    workflowService.startTimer(order.id).catch(() => { });
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [order.id]);
 
@@ -70,6 +78,27 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
     try {
       const res = await workflowService.orderFullDetails(order.id);
       setDetails(res.data);
+
+      const metadata = ((res.data?.order?.metadata || order.metadata || {}) as Record<string, unknown>);
+      const getCount = (keys: string[]) => {
+        for (const key of keys) {
+          const value = metadata[key];
+          if (value === null || value === undefined || value === '') continue;
+          return String(value);
+        }
+        return '';
+      };
+
+      setTotalImages(getCount(['total_images', 'totalImages']));
+      setHdrImages(getCount(['hdr_images', 'hdrImages']));
+      setEditImages(getCount(['edit_images', 'editImages']));
+
+      const normal = getCount(['normal_images', 'normalImages']);
+      const final = getCount(['final_images', 'finalImages']);
+      const legacyNormalFinal = getCount(['normal_final_images', 'normalFinalImages']);
+
+      setNormalImages(normal || legacyNormalFinal);
+      setFinalImages(final);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -95,14 +124,61 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
       if (skyReplacement) tasks.push('Sky Replacement');
       if (virtualStaging) tasks.push('Virtual Staging');
 
+      const imageCounts = isPh2Layer && (totalImages || hdrImages || editImages || normalImages || finalImages)
+        ? `Images — Total: ${totalImages || 0}, HDR: ${hdrImages || 0}, Edit: ${editImages || 0}, Normal: ${normalImages || 0}, Final: ${finalImages || 0}`
+        : null;
+
       const summary = [
         `Enhancement: ${enhancementType}`,
         tasks.length > 0 ? `Tasks: ${tasks.join(', ')}` : null,
+        imageCounts,
         outputNotes ? `Output notes: ${outputNotes}` : null,
         comment ? `Comments: ${comment}` : null,
       ].filter(Boolean).join('\n');
 
       await workflowService.submitWork(order.id, summary);
+
+      if (isPh2Layer && order.project_id === 17) {
+        const parseOptionalCount = (value: string): number | null => {
+          const trimmed = value.trim();
+          if (trimmed === '') return null;
+          if (!/^\d+$/.test(trimmed)) return null;
+          return Number(trimmed);
+        };
+
+        const parsedTotalImages = parseOptionalCount(totalImages);
+        const parsedHdrImages = parseOptionalCount(hdrImages);
+        const parsedEditImages = parseOptionalCount(editImages);
+        const parsedNormalImages = parseOptionalCount(normalImages);
+        const parsedFinalImages = parseOptionalCount(finalImages);
+
+        const derivedTotalRawFiles = parsedTotalImages
+          ?? ((parsedNormalImages ?? 0) + (parsedHdrImages ?? 0));
+
+        const hasCountPayload = [
+          derivedTotalRawFiles,
+          parsedHdrImages,
+          parsedNormalImages,
+          parsedFinalImages,
+          parsedEditImages,
+        ].some((value) => value !== null);
+
+        if (hasCountPayload) {
+          try {
+            await workflowService.updateInstruction(order.id, {
+              project_id: order.project_id,
+              total_raw_files: derivedTotalRawFiles,
+              hdr_images_count: parsedHdrImages,
+              single_images_count: parsedNormalImages,
+              final_images_count: parsedFinalImages,
+              edited_images_count: parsedEditImages,
+            });
+          } catch (syncError) {
+            console.warn('Submit succeeded, but image count sync failed.', syncError);
+          }
+        }
+      }
+
       onComplete();
     } catch (e) { console.error(e); }
     finally { setSubmitting(false); }
@@ -171,9 +247,8 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
           <div className="flex items-center gap-2">
             <button
               onClick={toggleTimer}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                timerRunning ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
-              }`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${timerRunning ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                }`}
             >
               <Clock className="h-3.5 w-3.5" />
               {formatTime(elapsed)}
@@ -275,11 +350,10 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                activeTab === tab.id
-                  ? 'border-pink-500 text-pink-700'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${activeTab === tab.id
+                ? 'border-pink-500 text-pink-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
             >
               <tab.icon className="h-3.5 w-3.5" />
               {tab.label}
@@ -308,11 +382,10 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
                         <button
                           key={type}
                           onClick={() => setEnhancementType(type)}
-                          className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                            enhancementType === type
-                              ? 'bg-pink-500 text-white shadow-sm'
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
+                          className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${enhancementType === type
+                            ? 'bg-pink-500 text-white shadow-sm'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
                         >
                           {type.charAt(0).toUpperCase() + type.slice(1)}
                         </button>
@@ -334,11 +407,10 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
                         <button
                           key={task.label}
                           onClick={() => task.setter(!task.state)}
-                          className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-                            task.state
-                              ? 'border-pink-200 bg-pink-50/50'
-                              : 'border-slate-200 bg-white hover:border-slate-300'
-                          }`}
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${task.state
+                            ? 'border-pink-200 bg-pink-50/50'
+                            : 'border-slate-200 bg-white hover:border-slate-300'
+                            }`}
                         >
                           <div className={`p-1.5 rounded-lg ${task.state ? 'bg-pink-100' : 'bg-slate-100'}`}>
                             <task.icon className={`h-4 w-4 ${task.state ? 'text-pink-600' : 'text-slate-400'}`} />
@@ -351,6 +423,34 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
                       ))}
                     </div>
                   </div>
+
+                  {/* PH_2_LAYER Image Counts */}
+                  {isPh2Layer && (
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-2">Image Counts</label>
+                      <div className="grid grid-cols-2 gap-3">
+                        {[
+                          { label: 'Total Images', value: totalImages, setter: setTotalImages },
+                          { label: 'HDR Images', value: hdrImages, setter: setHdrImages },
+                          { label: 'Edit Images', value: editImages, setter: setEditImages },
+                          { label: 'Normal Images', value: normalImages, setter: setNormalImages },
+                          { label: 'Final Images', value: finalImages, setter: setFinalImages },
+                        ].map(field => (
+                          <div key={field.label}>
+                            <label className="block text-xs text-slate-500 mb-1">{field.label}</label>
+                            <input
+                              type="number"
+                              min="0"
+                              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 focus:ring-pink-500 focus:border-pink-500"
+                              placeholder="0"
+                              value={field.value}
+                              onChange={e => field.setter(e.target.value)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Output Notes */}
                   <div>

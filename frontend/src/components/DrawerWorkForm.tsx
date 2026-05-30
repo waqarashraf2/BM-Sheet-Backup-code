@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Save, AlertTriangle, ExternalLink, Loader2, Play, Pause, Flag, HelpCircle, RotateCcw, Clock, FileText, Paperclip, MessageSquare } from 'lucide-react';
+import { X, Save, AlertTriangle, ExternalLink, Loader2, Play, Flag, HelpCircle, RotateCcw, Clock, FileText, Paperclip, MessageSquare } from 'lucide-react';
 import { workflowService } from '../services';
 import type { Order } from '../types';
 
@@ -19,19 +19,45 @@ interface OrderDetails {
 }
 
 // Form field options - these would ideally come from project config
-const TEMPLATE_OPTIONS = ['---', 'Standard', 'Premium', 'Basic', 'Custom'];
-const WALL_THICKNESS_OPTIONS = ['---', '4"', '6"', '8"', '10"', '12"'];
-const STRUCTURE_OPTIONS = ['---', 'Wood Frame', 'Steel Frame', 'Concrete', 'Masonry', 'Mixed'];
-const DOOR_OPTIONS = ['---', 'Standard', 'Double', 'Sliding', 'French', 'Pocket'];
-const WINDOW_OPTIONS = ['---', 'Single Hung', 'Double Hung', 'Casement', 'Sliding', 'Fixed'];
-const LABEL_DIMENSION_OPTIONS = ['---', 'Imperial', 'Metric', 'Both'];
-const FINAL_FILES_OPTIONS = ['---', 'PDF', 'DWG', 'PNG', 'Multiple'];
-const PLAN_ROTATION_OPTIONS = ['---', '0°', '90°', '180°', '270°'];
-const AREA_OPTIONS = ['---', 'Calculated', 'As Provided', 'To Verify'];
-const NORTH_OPTIONS = ['---', 'Top', 'Right', 'Bottom', 'Left', 'As Shown'];
-const SITE_PLAN_OPTIONS = ['---', 'Included', 'Not Included', 'Separate'];
-const PENDING_REASONS = ['---', 'Wrong sketch', 'Missing info', 'Unclear instructions', 'Bad quality source', 'Other'];
-const FLAG_TYPES = ['quality', 'missing_info', 'wrong_specs', 'unclear_instructions', 'file_issue', 'other'];
+const TEMPLATE_OPTIONS = ['---', 'Yes', 'No'];
+
+const WALL_THICKNESS_OPTIONS = ['---', 'Yes', 'No'];
+
+const STRUCTURE_OPTIONS = ['---', 'Yes', 'No'];
+
+const DOOR_OPTIONS = ['---', 'Yes', 'No'];
+
+const WINDOW_OPTIONS = ['---', 'Yes', 'No'];
+
+const LABEL_DIMENSION_OPTIONS = ['---', 'Yes', 'No'];
+
+const FINAL_FILES_OPTIONS = ['---', 'Yes', 'No'];
+
+const PLAN_ROTATION_OPTIONS = ['---', 'Yes', 'No'];
+
+const AREA_OPTIONS = ['---', 'Yes', 'No'];
+
+const NORTH_OPTIONS = ['---', 'Yes', 'No'];
+
+const SITE_PLAN_OPTIONS = ['---', 'Yes', 'No'];
+
+const PENDING_REASONS = [
+  '--- Select Reason ---',
+  'Missing Client Information',
+  'Incomplete Address',
+  'Wrong Template',
+  'Missing Dimensions',
+  'Missing Site Plan',
+  'Missing North Direction',
+  'Missing Structure Details',
+  'Client Instructions Not Clear',
+  'Mail Order Not Workable',
+  'Need Supervisor Clarification',
+  'Need QA/Checker Review',
+  'Other Issue'
+];
+
+const FLAG_TYPES = ['Yes', 'No'];
 
 export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWorkFormProps) {
   const [mode, setMode] = useState<'draw' | 'pending'>('draw');
@@ -39,7 +65,7 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  
+
   // Additional features state
   const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -55,7 +81,7 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
   // Form fields
   const [formData, setFormData] = useState({
     template: '---',
-    address: order.client_reference || '',
+    address: '',
     wall_thickness: '---',
     structure: '---',
     door: '---',
@@ -111,15 +137,12 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
 
   const handleToggleTimer = async () => {
     try {
-      if (timerRunning) {
-        await workflowService.stopTimer(order.id);
-        setTimerRunning(false);
-      } else {
+      if (!timerRunning) {
         await workflowService.startTimer(order.id);
         setTimerRunning(true);
       }
     } catch (e: any) {
-      setError(e.response?.data?.message || 'Failed to toggle timer');
+      setError(e.response?.data?.message || 'Failed to start timer');
     }
   };
 
@@ -172,13 +195,64 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
       setHelpQuestion('');
       loadOrderDetails();
     } catch (e: any) {
-      setError(e.response?.data?.message || 'Failed to submit help request');
+      setError(e.response?.data?.message || 'Failed to submit work. Please try again.');
+      // Allow retry on error - don't disable the form permanently
+      console.error('Submission error:', e);
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleSubmitDraw = async () => {
+    // Validation: Check if at least essential fields are filled
+    const essentialFields = [
+      { key: 'template', label: 'Template' },
+      { key: 'address', label: 'Address' },
+    ];
+
+    const missingEssential = essentialFields.filter(field => {
+      const value = formData[field.key as keyof typeof formData];
+      return !value || value === '---' || (typeof value === 'string' && value.trim() === '');
+    });
+
+    if (missingEssential.length > 0) {
+      setError(`Please fill essential fields: ${missingEssential.map(f => f.label).join(', ')}`);
+      return;
+    }
+
+    // Warn about missing optional fields but allow submission
+    const optionalFields = [
+      { key: 'wall_thickness', label: 'Wall Thickness' },
+      { key: 'structure', label: 'Structure' },
+      { key: 'door', label: 'Door' },
+      { key: 'window', label: 'Window' },
+      { key: 'label_dimension', label: 'Label / Dimension' },
+      { key: 'final_files', label: 'Final Files' },
+      { key: 'plan_rotation', label: 'Plan Rotation' },
+      { key: 'area', label: 'Area' },
+      { key: 'north', label: 'North' },
+      { key: 'site_plan', label: 'Site Plan' },
+    ];
+
+    const missingOptional = optionalFields.filter(field => {
+      const value = formData[field.key as keyof typeof formData];
+      return !value || value === '---' || (typeof value === 'string' && value.trim() === '');
+    });
+
+    // Additional validation for area
+    if (formData.area === 'Yes' && (!formData.enter_area || formData.enter_area.trim() === '')) {
+      setError('Please enter the area value when Area is set to Yes');
+      return;
+    }
+
+    // Show warning for missing optional fields but allow submission
+    if (missingOptional.length > 0) {
+      const proceed = window.confirm(
+        `Some optional fields are not filled: ${missingOptional.map(f => f.label).join(', ')}. Do you want to proceed with submission?`
+      );
+      if (!proceed) return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
@@ -188,6 +262,7 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
       onComplete();
     } catch (e: any) {
       setError(e.response?.data?.message || 'Failed to submit work');
+      // Allow retry on error - don't disable the form permanently
     } finally {
       setSubmitting(false);
     }
@@ -215,7 +290,7 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div 
+      <div
         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
         onClick={onClose}
       />
@@ -243,14 +318,18 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
               </div>
               <button
                 onClick={handleToggleTimer}
-                className={`p-2 rounded-lg transition-colors ${timerRunning ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-brand-500 hover:bg-brand-500 text-white'}`}
-                title={timerRunning ? 'Pause timer' : 'Start timer'}
+                disabled={timerRunning}
+                className={`p-2 rounded-lg transition-colors ${timerRunning
+                  ? 'bg-slate-300 text-white cursor-not-allowed'
+                  : 'bg-brand-500 hover:bg-brand-600 text-white'
+                  }`}
+                title="Start timer"
               >
-                {timerRunning ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                <Play className="h-5 w-5" />
               </button>
             </div>
           </div>
-          
+
           {/* Action Buttons Row */}
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-200">
             <button
@@ -330,7 +409,7 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
                   {orderDetails?.supervisor_notes || 'No special instructions for this order.'}
                 </p>
               </div>
-              
+
               {/* Help Requests */}
               {orderDetails?.help_requests && orderDetails.help_requests.length > 0 && (
                 <div>
@@ -346,7 +425,7 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
                   </div>
                 </div>
               )}
-              
+
               {/* Issue Flags */}
               {orderDetails?.issue_flags && orderDetails.issue_flags.length > 0 && (
                 <div>
@@ -433,209 +512,209 @@ export default function DrawerWorkForm({ order, onComplete, onClose }: DrawerWor
           {/* Work Form Tab */}
           {activeTab === 'form' && (
             <>
-          {/* Mode Selection */}
-          <div className="bg-slate-50 rounded-xl p-4 mb-6">
-            <div className="flex items-center gap-6">
-              <span className="text-sm font-semibold text-[#8B0000]">Choose:</span>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="mode"
-                  checked={mode === 'draw'}
-                  onChange={() => setMode('draw')}
-                  className="w-4 h-4 text-[#2AA7A0] focus:ring-[#2AA7A0]"
-                />
-                <span className="text-sm text-slate-700">Draw</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="mode"
-                  checked={mode === 'pending'}
-                  onChange={() => setMode('pending')}
-                  className="w-4 h-4 text-[#2AA7A0] focus:ring-[#2AA7A0]"
-                />
-                <span className="text-sm text-slate-700">Pending</span>
-              </label>
-            </div>
-
-            {mode === 'pending' && (
-              <div className="mt-4">
-                <label className="text-sm font-semibold text-[#8B0000]">Reason:</label>
-                <select
-                  value={pendingReason}
-                  onChange={e => setPendingReason(e.target.value)}
-                  className="ml-4 px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/20"
-                  title="Select pending reason"
-                >
-                  {PENDING_REASONS.map(r => (
-                    <option key={r} value={r}>{r}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {mode === 'pending' && pendingReason && pendingReason !== '---' && (
-              <button
-                onClick={handleSubmitPending}
-                disabled={submitting}
-                className="mt-4 px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg transition-colors disabled:opacity-50"
-              >
-                {submitting ? 'Submitting...' : 'Pending'}
-              </button>
-            )}
-          </div>
-
-          {/* Draw Form Fields */}
-          {mode === 'draw' && (
-            <div className="space-y-3">
-              {/* Template */}
-              <FormRow label="Template">
-                <FormSelect
-                  value={formData.template}
-                  onChange={v => handleFieldChange('template', v)}
-                  options={TEMPLATE_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Address */}
-              <FormRow label="Address">
-                <input
-                  type="text"
-                  value={formData.address}
-                  onChange={e => handleFieldChange('address', e.target.value)}
-                  className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/20"
-                  placeholder="Property address"
-                />
-              </FormRow>
-
-              {/* Wall Thickness */}
-              <FormRow label="Wall Thickness">
-                <FormSelect
-                  value={formData.wall_thickness}
-                  onChange={v => handleFieldChange('wall_thickness', v)}
-                  options={WALL_THICKNESS_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Structure */}
-              <FormRow label="Structure">
-                <FormSelect
-                  value={formData.structure}
-                  onChange={v => handleFieldChange('structure', v)}
-                  options={STRUCTURE_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Door */}
-              <FormRow label="Door">
-                <FormSelect
-                  value={formData.door}
-                  onChange={v => handleFieldChange('door', v)}
-                  options={DOOR_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Window */}
-              <FormRow label="Window">
-                <FormSelect
-                  value={formData.window}
-                  onChange={v => handleFieldChange('window', v)}
-                  options={WINDOW_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Label / Dimension */}
-              <FormRow label="Label / Dimension">
-                <FormSelect
-                  value={formData.label_dimension}
-                  onChange={v => handleFieldChange('label_dimension', v)}
-                  options={LABEL_DIMENSION_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Final Files */}
-              <FormRow label="Final Files">
-                <FormSelect
-                  value={formData.final_files}
-                  onChange={v => handleFieldChange('final_files', v)}
-                  options={FINAL_FILES_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Plan Rotation */}
-              <FormRow label="Plan Rotation">
-                <FormSelect
-                  value={formData.plan_rotation}
-                  onChange={v => handleFieldChange('plan_rotation', v)}
-                  options={PLAN_ROTATION_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Area */}
-              <FormRow label="Area">
-                <FormSelect
-                  value={formData.area}
-                  onChange={v => handleFieldChange('area', v)}
-                  options={AREA_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Enter Area */}
-              <FormRow label="Enter Area">
-                <input
-                  type="text"
-                  value={formData.enter_area}
-                  onChange={e => handleFieldChange('enter_area', e.target.value)}
-                  className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/20"
-                  placeholder="please write area with its unit"
-                />
-              </FormRow>
-
-              {/* North */}
-              <FormRow label="North">
-                <FormSelect
-                  value={formData.north}
-                  onChange={v => handleFieldChange('north', v)}
-                  options={NORTH_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Site Plan */}
-              <FormRow label="Site Plan">
-                <FormSelect
-                  value={formData.site_plan}
-                  onChange={v => handleFieldChange('site_plan', v)}
-                  options={SITE_PLAN_OPTIONS}
-                />
-              </FormRow>
-
-              {/* Link */}
-              <FormRow label="Link">
-                <div className="flex-1 flex items-center gap-2">
-                  <input
-                    type="url"
-                    value={formData.link}
-                    onChange={e => handleFieldChange('link', e.target.value)}
-                    className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/20"
-                    placeholder="http://"
-                  />
-                  {formData.link && (
-                    <a
-                      href={formData.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-2 text-[#2AA7A0] hover:bg-[#2AA7A0]/10 rounded-lg"
-                      title="Open link"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                    </a>
-                  )}
+              {/* Mode Selection */}
+              <div className="bg-slate-50 rounded-xl p-4 mb-6">
+                <div className="flex items-center gap-6">
+                  <span className="text-sm font-semibold text-[#8B0000]">Choose:</span>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="mode"
+                      checked={mode === 'draw'}
+                      onChange={() => setMode('draw')}
+                      className="w-4 h-4 text-[#2AA7A0] focus:ring-[#2AA7A0]"
+                    />
+                    <span className="text-sm text-slate-700">Draw</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="mode"
+                      checked={mode === 'pending'}
+                      onChange={() => setMode('pending')}
+                      className="w-4 h-4 text-[#2AA7A0] focus:ring-[#2AA7A0]"
+                    />
+                    <span className="text-sm text-slate-700">Pending</span>
+                  </label>
                 </div>
-              </FormRow>
-            </div>
-          )}
-          </>
+
+                {mode === 'pending' && (
+                  <div className="mt-4">
+                    <label className="text-sm font-semibold text-[#8B0000]">Reason:</label>
+                    <select
+                      value={pendingReason}
+                      onChange={e => setPendingReason(e.target.value)}
+                      className="ml-4 px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/20"
+                      title="Select pending reason"
+                    >
+                      {PENDING_REASONS.map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {mode === 'pending' && pendingReason && pendingReason !== '---' && (
+                  <button
+                    onClick={handleSubmitPending}
+                    disabled={submitting}
+                    className="mt-4 px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {submitting ? 'Submitting...' : 'Pending'}
+                  </button>
+                )}
+              </div>
+
+              {/* Draw Form Fields */}
+              {mode === 'draw' && (
+                <div className="space-y-3">
+                  {/* Template */}
+                  <FormRow label="Template">
+                    <FormSelect
+                      value={formData.template}
+                      onChange={v => handleFieldChange('template', v)}
+                      options={TEMPLATE_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Address */}
+                  <FormRow label="Address">
+                    <input
+                      type="text"
+                      value={formData.address}
+                      onChange={e => handleFieldChange('address', e.target.value)}
+                      className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/20"
+                      placeholder="Property address"
+                    />
+                  </FormRow>
+
+                  {/* Wall Thickness */}
+                  <FormRow label="Wall Thickness">
+                    <FormSelect
+                      value={formData.wall_thickness}
+                      onChange={v => handleFieldChange('wall_thickness', v)}
+                      options={WALL_THICKNESS_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Structure */}
+                  <FormRow label="Structure">
+                    <FormSelect
+                      value={formData.structure}
+                      onChange={v => handleFieldChange('structure', v)}
+                      options={STRUCTURE_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Door */}
+                  <FormRow label="Door">
+                    <FormSelect
+                      value={formData.door}
+                      onChange={v => handleFieldChange('door', v)}
+                      options={DOOR_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Window */}
+                  <FormRow label="Window">
+                    <FormSelect
+                      value={formData.window}
+                      onChange={v => handleFieldChange('window', v)}
+                      options={WINDOW_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Label / Dimension */}
+                  <FormRow label="Label / Dimension">
+                    <FormSelect
+                      value={formData.label_dimension}
+                      onChange={v => handleFieldChange('label_dimension', v)}
+                      options={LABEL_DIMENSION_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Final Files */}
+                  <FormRow label="Final Files">
+                    <FormSelect
+                      value={formData.final_files}
+                      onChange={v => handleFieldChange('final_files', v)}
+                      options={FINAL_FILES_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Plan Rotation */}
+                  <FormRow label="Plan Rotation">
+                    <FormSelect
+                      value={formData.plan_rotation}
+                      onChange={v => handleFieldChange('plan_rotation', v)}
+                      options={PLAN_ROTATION_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Area */}
+                  <FormRow label="Area">
+                    <FormSelect
+                      value={formData.area}
+                      onChange={v => handleFieldChange('area', v)}
+                      options={AREA_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Enter Area */}
+                  <FormRow label="Enter Area">
+                    <input
+                      type="text"
+                      value={formData.enter_area}
+                      onChange={e => handleFieldChange('enter_area', e.target.value)}
+                      className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/20"
+                      placeholder="please write area with its unit"
+                    />
+                  </FormRow>
+
+                  {/* North */}
+                  <FormRow label="North">
+                    <FormSelect
+                      value={formData.north}
+                      onChange={v => handleFieldChange('north', v)}
+                      options={NORTH_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Site Plan */}
+                  <FormRow label="Site Plan">
+                    <FormSelect
+                      value={formData.site_plan}
+                      onChange={v => handleFieldChange('site_plan', v)}
+                      options={SITE_PLAN_OPTIONS}
+                    />
+                  </FormRow>
+
+                  {/* Link */}
+                  <FormRow label="Link">
+                    <div className="flex-1 flex items-center gap-2">
+                      <input
+                        type="url"
+                        value={formData.link}
+                        onChange={e => handleFieldChange('link', e.target.value)}
+                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/20"
+                        placeholder="http://"
+                      />
+                      {formData.link && (
+                        <a
+                          href={formData.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2 text-[#2AA7A0] hover:bg-[#2AA7A0]/10 rounded-lg"
+                          title="Open link"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                      )}
+                    </div>
+                  </FormRow>
+                </div>
+              )}
+            </>
           )}
 
           {/* Error Message */}

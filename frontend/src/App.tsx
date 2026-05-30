@@ -9,19 +9,26 @@ import Layout from './components/Layout/Layout';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 
+
 // ─── Lazy-loaded page components (code-split per route) ───
 const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'));
+
 const CEODashboard = lazy(() => import('./pages/Dashboard/CEODashboard').catch(() => { window.location.reload(); return import('./pages/Dashboard/CEODashboard'); }));
 const OperationsManagerDashboard = lazy(() => import('./pages/Dashboard/OperationsManagerDashboard'));
 const ProjectManagerDashboard = lazy(() => import('./pages/Dashboard/ProjectManagerDashboard'));
 const WorkerDashboard = lazy(() => import('./pages/Dashboard/WorkerDashboard'));
 const AccountsManagerDashboard = lazy(() => import('./pages/Dashboard/AccountsManagerDashboard'));
+const BatchStatus = lazy(() => import('./pages/Dashboard/BatchStatus'));
+const ColumnAssignment = lazy(() => import('./pages/Dashboard/ColumnAssignment'));
+
 const ProjectManagement = lazy(() => import('./pages/Projects/ProjectManagement'));
 const UserManagement = lazy(() => import('./pages/Users/UserManagement'));
 const InvoiceManagement = lazy(() => import('./pages/Invoices/InvoiceManagement'));
+const OMMonthlyQuantity = lazy(() => import('./pages/Invoices/OMMonthlyQuantity'));
 const WorkQueue = lazy(() => import('./pages/Workflow/WorkQueue'));
 const ImportOrders = lazy(() => import('./pages/Workflow/ImportOrders'));
 const RejectedOrders = lazy(() => import('./pages/Workflow/RejectedOrders'));
+const OrderAssetLinks = lazy(() => import('./pages/Workflow/OrderAssetLinks'));
 const SupervisorAssignment = lazy(() => import('./pages/Workflow/SupervisorAssignment'));
 const PMAssignment = lazy(() => import('./pages/Workflow/PMAssignment'));
 const PMProjectAssignment = lazy(() => import('./pages/Management/PMProjectAssignment'));
@@ -29,6 +36,7 @@ const OMProjectAssignment = lazy(() => import('./pages/Management/OMProjectAssig
 const TransferLog = lazy(() => import('./pages/Management/TransferLog'));
 const QATeamAssignment = lazy(() => import('./pages/Workflow/QATeamAssignment'));
 const LiveQADashboard = lazy(() => import('./pages/LiveQA/LiveQADashboard'));
+const InternalQADashboard = lazy(() => import('./pages/InternalQA/InternalQADashboard'));
 
 // ─── Loading fallback for lazy routes ───
 function PageLoader() {
@@ -86,6 +94,8 @@ function App() {
     }
   }, [isAuthenticated]);
 
+
+
   const getDashboardRoute = () => {
     if (!user) return <Navigate to="/login" />;
 
@@ -99,6 +109,7 @@ function App() {
         return <ProjectManagerDashboard />;
       case 'drawer':
       case 'checker':
+      case 'filler':
       case 'qa':
       case 'designer':
         return <WorkerDashboard />;
@@ -114,140 +125,186 @@ function App() {
   return (
     <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <Layout />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Suspense fallback={<PageLoader />}>{getDashboardRoute()}</Suspense>} />
-          <Route path="dashboard" element={<Suspense fallback={<PageLoader />}>{getDashboardRoute()}</Suspense>} />
-          
-          <Route 
-            path="projects/*" 
-            element={
-              <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager']}>
-                <ProjectManagement />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="users/*" 
-            element={
-              <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager']}>
-                <UserManagement />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="invoices/*" 
-            element={
-              <ProtectedRoute allowedRoles={['ceo', 'director', 'accounts_manager']}>
-                <InvoiceManagement />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="work/*" 
-            element={
-              <ProtectedRoute allowedRoles={['drawer', 'checker', 'qa', 'designer']}>
-                <WorkQueue />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="import/*" 
-            element={
-              <ProtectedRoute allowedRoles={['operations_manager', 'project_manager']}>
-                <ImportOrders />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="rejected/*" 
-            element={
-              <ProtectedRoute allowedRoles={['director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'qa', 'designer']}>
-                <RejectedOrders />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="assign/*" 
-            element={
-              <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager', 'qa']}>
-                <SupervisorAssignment />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="pm-assign/*" 
-            element={
-              <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager']}>
-                <PMAssignment />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="pm-projects/*" 
-            element={
-              <ProtectedRoute allowedRoles={['operations_manager']}>
-                <PMProjectAssignment />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="om-projects/*" 
-            element={
-              <ProtectedRoute allowedRoles={['ceo', 'director']}>
-                <OMProjectAssignment />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="transfer-log/*" 
-            element={
-              <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager']}>
-                <TransferLog />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="qa-team/*" 
-            element={
-              <ProtectedRoute allowedRoles={['qa']}>
-                <QATeamAssignment />
-              </ProtectedRoute>
-            } 
-          />
-          
-          <Route 
-            path="live-qa/*" 
-            element={
-              <ProtectedRoute allowedRoles={['live_qa', 'ceo', 'director']}>
-                <LiveQADashboard />
-              </ProtectedRoute>
-            } 
-          />
-        </Route>
+        <Routes>
+          <Route path="/login" element={<Login />} />
 
-        <Route path="*" element={<Navigate to="/" />} />
-      </Routes>
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Layout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Suspense fallback={<PageLoader />}>{getDashboardRoute()}</Suspense>} />
+            <Route path="dashboard" element={<Suspense fallback={<PageLoader />}>{getDashboardRoute()}</Suspense>} />
+
+            <Route
+              path="projects/*"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager']}>
+                  <ProjectManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="dashboard/assignment-columns/*"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'project_manager', 'operations_manager', 'qa']}>
+                  <Suspense fallback={<PageLoader />}>
+                    <ColumnAssignment />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="users/*"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager']}>
+                  <UserManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="batch-status/*"
+              element={
+                <ProtectedRoute allowedRoles={['operations_manager', 'project_manager', 'qa']}>
+                  <BatchStatus />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="invoices/*"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'accounts_manager']}>
+                  <InvoiceManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="monthly-quantities/*"
+              element={
+                <ProtectedRoute allowedRoles={['operations_manager', 'ceo', 'director']}>
+                  <Suspense fallback={<PageLoader />}>
+                    <OMMonthlyQuantity />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="work/*"
+              element={
+                <ProtectedRoute allowedRoles={['drawer', 'checker', 'filler', 'qa', 'designer']}>
+                  <WorkQueue />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="order-assets/:jobOrderId"
+              element={
+                <ProtectedRoute allowedRoles={['drawer', 'checker', 'filler', 'qa', 'designer']}>
+                  <OrderAssetLinks />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="import/*"
+              element={
+                <ProtectedRoute allowedRoles={['director', 'operations_manager', 'project_manager', 'qa']}>
+                  <ImportOrders />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="rejected/*"
+              element={
+                <ProtectedRoute allowedRoles={['director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer']}>
+                  <RejectedOrders />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="assign/*"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager', 'qa']}>
+                  <SupervisorAssignment />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="pm-assign/*"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager']}>
+                  <PMAssignment />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="pm-projects/*"
+              element={
+                <ProtectedRoute allowedRoles={['operations_manager']}>
+                  <PMProjectAssignment />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="om-projects/*"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director']}>
+                  <OMProjectAssignment />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="transfer-log/*"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager']}>
+                  <TransferLog />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="qa-team/*"
+              element={
+                <ProtectedRoute allowedRoles={['qa']}>
+                  <QATeamAssignment />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="live-qa/*"
+              element={
+                <ProtectedRoute allowedRoles={['live_qa', 'ceo', 'director', 'checker', 'qa']}>
+                  <LiveQADashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="internal-qa/*"
+              element={
+                <ProtectedRoute allowedRoles={['live_qa', 'ceo', 'director', 'operations_manager']}>
+                  <Suspense fallback={<PageLoader />}>
+                    <InternalQADashboard />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+          </Route>
+
+          <Route path="*" element={<Navigate to="/" />} />
+        </Routes>
       </Suspense>
     </ErrorBoundary>
   );

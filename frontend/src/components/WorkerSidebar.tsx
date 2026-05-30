@@ -22,7 +22,7 @@ export default function WorkerSidebar({ workers, selectedWorker, onSelectWorker,
   });
 
   // Group workers by role
-  const roles = ['drawer', 'checker', 'qa', 'designer'];
+  const roles = ['drawer', 'checker', 'filler', 'qa', 'designer'];
   const workersByRole = roles.reduce((acc, role) => {
     acc[role] = filteredWorkers.filter(w => w.role === role);
     return acc;

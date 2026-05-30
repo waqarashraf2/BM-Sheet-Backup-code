@@ -1,13 +1,21 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../store/store';
-import { workflowService, projectService } from '../../services';
+import { columnService, workflowService, projectService } from '../../services';
 import { useSmartPolling } from '../../hooks/useSmartPolling';
 import { useNewOrderHighlight } from '../../hooks/useNewOrderHighlight';
-import type { Order, User } from '../../types';
+import type { Order, ProjectColumn, User } from '../../types';
 import { AnimatedPage, StatusBadge, Button, useToast } from '../../components/ui';
 import { Users, RefreshCw, Pencil, CheckSquare, AlertTriangle, Eye, Clock, Search, X, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+
+type AssignmentTableColumn = {
+  key: string;
+  label: string;
+  width?: string;
+  headerClassName?: string;
+  cellClassName?: string;
+};
 
 function getProjectTime(tz: string): string {
   return new Date().toLocaleString('en-AU', {
@@ -31,6 +39,7 @@ export default function QATeamAssignment() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [drawers, setDrawers] = useState<User[]>([]);
   const [checkers, setCheckers] = useState<User[]>([]);
+  const [projectColumns, setProjectColumns] = useState<ProjectColumn[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -41,19 +50,42 @@ export default function QATeamAssignment() {
 
   const { toast } = useToast();
   const canAccess = user?.role === 'qa';
+  const activeProjectId = useMemo(
+    () => orders.find((order) => order.project_id != null)?.project_id ?? user?.project_id ?? null,
+    [orders, user?.project_id]
+  );
 
   /* ── Project timezone ── */
   const [projectTz, setProjectTz] = useState('Australia/Sydney');
   useEffect(() => {
-    if (user?.project_id) {
+    if (activeProjectId) {
       projectService.list().then(res => {
         const d = res.data?.data || res.data;
         const list = Array.isArray(d) ? d : [];
-        const proj = list.find((p: any) => p.id === user.project_id);
+        const proj = list.find((p: any) => p.id === activeProjectId);
         if (proj?.timezone) setProjectTz(proj.timezone);
-      }).catch(() => {});
+      }).catch(() => { });
     }
-  }, [user?.project_id]);
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      setProjectColumns([]);
+      return;
+    }
+
+    columnService.getAllColumns(activeProjectId)
+      .then((res) => {
+        const cols = res.data?.data ?? [];
+        setProjectColumns(
+          [...cols].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        );
+      })
+      .catch((error) => {
+        console.error(error);
+        setProjectColumns([]);
+      });
+  }, [activeProjectId]);
 
   /* ── Project Time clock ── */
   const [ausTime, setAusTime] = useState(getProjectTime('Australia/Sydney'));
@@ -85,7 +117,7 @@ export default function QATeamAssignment() {
   /* ── Smart Polling: auto-refresh when assignments change ── */
   useSmartPolling({
     scope: 'all',
-    interval: 10_000,
+    interval: 45_000, // Changed from 10_000 to 45_000 (45 seconds)
     onDataChanged: () => loadData(true),
     enabled: canAccess,
   });
@@ -225,6 +257,95 @@ export default function QATeamAssignment() {
         )}
       </td>
     );
+  };
+
+  const defaultPrimaryColumns = useMemo<AssignmentTableColumn[]>(() => [
+    { key: 'order_number', label: 'Order #', width: '7.5%' },
+    { key: 'VARIANT_no', label: 'Variant', width: '9%' },
+    { key: 'address', label: 'Address' },
+    { key: 'priority', label: 'Priority', width: '5.5%', headerClassName: 'text-center', cellClassName: 'px-2 py-2 text-center' },
+    { key: 'received_at', label: 'Received', width: '7%' },
+  ], []);
+
+  const fixedTrailingFields = useMemo(() => new Set([
+    'drawer_name',
+    'checker_name',
+    'drawer_id',
+    'checker_id',
+    'workflow_state',
+    'status',
+  ]), []);
+
+  const dynamicPrimaryColumns = useMemo<AssignmentTableColumn[]>(() => {
+    const hasSavedColumnConfig = projectColumns.length > 0;
+    const visibleColumns = projectColumns
+      .filter((column) => column.visible && !fixedTrailingFields.has(column.field))
+      .map((column) => ({
+        key: column.field,
+        label: column.label || column.name || column.field,
+        width: column.width ? `${column.width}px` : undefined,
+        headerClassName: column.field === 'priority' ? 'text-center' : undefined,
+        cellClassName: column.field === 'priority' ? 'px-2 py-2 text-center' : undefined,
+      }));
+
+    if (!hasSavedColumnConfig) return defaultPrimaryColumns;
+    if (visibleColumns.length === 0) return [];
+
+    return visibleColumns;
+  }, [defaultPrimaryColumns, fixedTrailingFields, projectColumns]);
+
+  const renderPrimaryCell = (order: Order, column: AssignmentTableColumn) => {
+    const value = (order as any)[column.key];
+
+    switch (column.key) {
+      case 'order_number':
+        return (
+          <td className={column.cellClassName || 'px-3 py-2'}>
+            <div className="font-semibold text-slate-900">{order.order_number || '—'}</div>
+            <div className="text-[10px] text-slate-400 truncate max-w-[120px]">{order.client_reference || ''}</div>
+          </td>
+        );
+
+      case 'VARIANT_no':
+        return <td className={column.cellClassName || 'px-2 py-2 text-slate-600 whitespace-nowrap'}>{value || '—'}</td>;
+
+      case 'address':
+        return (
+          <td className={column.cellClassName || 'px-3 py-2 overflow-hidden'}>
+            <div className="text-xs text-slate-700 truncate" title={(value as string) || ''}>{value || '—'}</div>
+          </td>
+        );
+
+      case 'priority':
+        const normalizedPriority = (order.priority || '').toString().toLowerCase();
+        return (
+          <td className={column.cellClassName || 'px-2 py-2 text-center'}>
+            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${normalizedPriority === 'urgent' ? 'bg-rose-100 text-rose-700' :
+                normalizedPriority === 'high' ? 'bg-amber-100 text-amber-700' :
+                  normalizedPriority === 'rush' ? 'bg-purple-100 text-purple-700' :
+                    'bg-slate-100 text-slate-600'
+              }`}>{order.priority?.toUpperCase() || 'NORMAL'}</span>
+          </td>
+        );
+
+      case 'received_at':
+        return (
+          <td className={column.cellClassName || 'px-3 py-2 whitespace-nowrap'}>
+            {order.received_at ? (
+              <>
+                <div className="text-xs text-slate-500">{new Date(order.received_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</div>
+                <div className="text-[10px] text-blue-500 flex items-center gap-0.5">
+                  <Clock className="w-2.5 h-2.5" />
+                  {new Date(order.received_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              </>
+            ) : '—'}
+          </td>
+        );
+
+      default:
+        return <td className={column.cellClassName || 'px-3 py-2 text-slate-600'}>{value == null || value === '' ? '—' : String(value)}</td>;
+    }
   };
 
   return (
@@ -373,11 +494,9 @@ export default function QATeamAssignment() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs" style={{ tableLayout: 'fixed' }}>
                 <colgroup>
-                  <col style={{ width: '7.5%' }} />{/* Order */}
-                  <col style={{ width: '9%' }} />{/* Variant */}
-                  <col />{/* Address — takes remaining space */}
-                  <col style={{ width: '5.5%' }} />{/* Priority */}
-                  <col style={{ width: '7%' }} />{/* Received */}
+                  {dynamicPrimaryColumns.map((column) => (
+                    <col key={column.key} style={column.width ? { width: column.width } : undefined} />
+                  ))}
                   <col style={{ width: '7%' }} />{/* State */}
                   <col style={{ width: '14%' }} />{/* Drawer */}
                   <col style={{ width: '14%' }} />{/* Checker */}
@@ -385,11 +504,14 @@ export default function QATeamAssignment() {
                 </colgroup>
                 <thead>
                   <tr className="bg-brand-700 text-white">
-                    <th className="px-3 py-2 text-left font-semibold">Order #</th>
-                    <th className="px-2 py-2 text-left font-semibold">Variant</th>
-                    <th className="px-3 py-2 text-left font-semibold">Address</th>
-                    <th className="px-2 py-2 text-center font-semibold">Priority</th>
-                    <th className="px-3 py-2 text-left font-semibold">Received</th>
+                    {dynamicPrimaryColumns.map((column) => (
+                      <th
+                        key={column.key}
+                        className={`px-3 py-2 font-semibold ${column.headerClassName || 'text-left'}`}
+                      >
+                        {column.label}
+                      </th>
+                    ))}
                     <th className="px-2 py-2 text-center font-semibold">State</th>
                     <th className="px-3 py-2 text-left font-semibold">
                       <div className="flex items-center gap-1"><Pencil className="w-3 h-3" /> Drawer</div>
@@ -409,40 +531,13 @@ export default function QATeamAssignment() {
                       <motion.tr key={o.id}
                         initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                         transition={{ delay: idx * 0.02 }}
-                        className={`border-b border-slate-100 hover:bg-brand-50/40 transition-colors ${
-                          o.workflow_state === 'PENDING_QA_REVIEW' ? 'bg-amber-50/30' : ''
-                        } ${highlightedIds.has(o.id) ? 'new-order-highlight' : ''}`}>
-                        {/* Order # */}
-                        <td className="px-3 py-2">
-                          <div className="font-semibold text-slate-900">{o.order_number}</div>
-                          <div className="text-[10px] text-slate-400 truncate max-w-[120px]">{o.client_reference || ''}</div>
-                        </td>
-                        {/* Variant */}
-                        <td className="px-2 py-2 text-slate-600 whitespace-nowrap">{(o as any).VARIANT_no || '—'}</td>
-                        {/* Address */}
-                        <td className="px-3 py-2 overflow-hidden">
-                          <div className="text-xs text-slate-700 truncate" title={(o as any).address || ''}>{(o as any).address || '—'}</div>
-                        </td>
-                        {/* Priority */}
-                        <td className="px-2 py-2 text-center">
-                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            o.priority === 'urgent' ? 'bg-rose-100 text-rose-700' :
-                            o.priority === 'high' ? 'bg-amber-100 text-amber-700' :
-                            'bg-slate-100 text-slate-600'
-                          }`}>{o.priority?.toUpperCase() || 'NORMAL'}</span>
-                        </td>
-                        {/* Received */}
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {o.received_at ? (
-                            <>
-                              <div className="text-xs text-slate-500">{new Date(o.received_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</div>
-                              <div className="text-[10px] text-blue-500 flex items-center gap-0.5">
-                                <Clock className="w-2.5 h-2.5" />
-                                {new Date(o.received_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                              </div>
-                            </>
-                          ) : '—'}
-                        </td>
+                        className={`border-b border-slate-100 hover:bg-brand-50/40 transition-colors ${o.workflow_state === 'PENDING_QA_REVIEW' ? 'bg-amber-50/30' : ''
+                          } ${highlightedIds.has(o.id) ? 'new-order-highlight' : ''}`}>
+                        {dynamicPrimaryColumns.map((column) => (
+                          <React.Fragment key={`${o.id}-${column.key}`}>
+                            {renderPrimaryCell(o, column)}
+                          </React.Fragment>
+                        ))}
                         {/* State */}
                         <td className="px-2 py-2 text-center"><StatusBadge status={o.workflow_state} size="sm" /></td>
                         {/* Drawer — inline clickable */}
@@ -451,15 +546,14 @@ export default function QATeamAssignment() {
                         <RoleCell order={o} role="checker" color="bg-purple-600" startTime={(o as any).cassign_time} endTime={(o as any).checker_date} />
                         {/* Status indicator */}
                         <td className="px-2 py-2 text-center">
-                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                            o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
-                            : o.workflow_state?.includes('HOLD') ? 'bg-red-100 text-red-700'
-                            : o.workflow_state?.includes('CHECK') ? 'bg-blue-100 text-blue-700'
-                            : o.workflow_state?.includes('QA') ? 'bg-purple-100 text-purple-700'
-                            : o.workflow_state?.includes('DRAW') ? 'bg-brand-100 text-brand-700'
-                            : o.workflow_state === 'PENDING_QA_REVIEW' ? 'bg-amber-100 text-amber-700'
-                            : 'bg-slate-100 text-slate-600'
-                          }`}>
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
+                              : o.workflow_state?.includes('HOLD') ? 'bg-red-100 text-red-700'
+                                : o.workflow_state?.includes('CHECK') ? 'bg-blue-100 text-blue-700'
+                                  : o.workflow_state?.includes('QA') ? 'bg-purple-100 text-purple-700'
+                                    : o.workflow_state?.includes('DRAW') ? 'bg-brand-100 text-brand-700'
+                                      : o.workflow_state === 'PENDING_QA_REVIEW' ? 'bg-amber-100 text-amber-700'
+                                        : 'bg-slate-100 text-slate-600'
+                            }`}>
                             {(o.workflow_state || 'PENDING').replace(/_/g, ' ')}
                           </span>
                         </td>
@@ -520,12 +614,10 @@ export default function QATeamAssignment() {
                   {assignableWorkers.map(w => (
                     <button key={w.id} onClick={() => handleAssign(assignDropdown.orderId, assignDropdown.role, w.id)}
                       disabled={(w.wip_count || 0) >= (w.wip_limit || 5)}
-                      className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-brand-50 transition-colors text-left ${
-                        (w.wip_count || 0) >= (w.wip_limit || 5) ? 'opacity-40 cursor-not-allowed' : ''
-                      }`}>
-                      <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${
-                        assignDropdown.role === 'drawer' ? 'bg-blue-600' : 'bg-purple-600'
-                      }`}>{w.name.charAt(0)}</div>
+                      className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-brand-50 transition-colors text-left ${(w.wip_count || 0) >= (w.wip_limit || 5) ? 'opacity-40 cursor-not-allowed' : ''
+                        }`}>
+                      <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${assignDropdown.role === 'drawer' ? 'bg-blue-600' : 'bg-purple-600'
+                        }`}>{w.name.charAt(0)}</div>
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-medium text-slate-800 truncate">#{w.id} – {w.name}</div>
                         <div className="text-[10px] text-slate-400">WIP: {w.wip_count || 0}/{w.wip_limit || 5} · Today: {w.today_completed || 0}</div>

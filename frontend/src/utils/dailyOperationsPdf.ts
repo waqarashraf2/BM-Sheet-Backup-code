@@ -61,7 +61,7 @@ function addRoundedRect(
 export async function exportDailyOperationsPdf(
   data: DailyOperationsData,
   filteredProjects: DailyOperationsProject[],
-  selectedDate: string,
+  dateRange: { start: string; end: string }
 ) {
   const { jsPDF, autoTable } = await loadPdfLibs();
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -99,7 +99,7 @@ export async function exportDailyOperationsPdf(
   doc.text('Daily Operations Report', pageW - margin - 6, y + 9, { align: 'right' });
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
-  doc.text(formatDate(selectedDate), pageW - margin - 6, y + 15, { align: 'right' });
+  doc.text(formatDateRange(dateRange.start, dateRange.end), pageW - margin - 6, y + 15, { align: 'right' });
   y += 28;
 
   // ── Summary Cards ───────────────────────────────────
@@ -112,6 +112,26 @@ export async function exportDailyOperationsPdf(
     { label: 'Pending', value: String(data.totals.pending), color: AMBER },
     { label: 'Work Items', value: String(data.totals.total_work_items), color: TEAL_DK },
   ];
+
+function formatDateRange(start: string, end: string): string {
+  const s = new Date(start);
+  const e = new Date(end);
+
+  const sameDay = s.toDateString() === e.toDateString();
+
+  if (sameDay) {
+    return formatDate(start);
+  }
+
+  return `${s.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric'
+  })} → ${e.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  })}`;
+}
 
   cards.forEach((card, i) => {
     const cx = margin + i * (cardW + 4);
@@ -231,7 +251,7 @@ export async function exportDailyOperationsPdf(
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.text(
-      `${project.country} | ${project.department === 'floor_plan' ? 'Floor Plan' : 'Photos Enhancement'} | ${formatDate(selectedDate)}`,
+      `${project.country} | ${project.department === 'floor_plan' ? 'Floor Plan' : 'Photos Enhancement'} | ${formatDateRange(dateRange.start, dateRange.end)}`,
       margin + 5, py + 11
     );
 
@@ -353,7 +373,7 @@ export async function exportDailyOperationsPdf(
     doc.setFontSize(6.5);
     doc.setTextColor(SLATE_500[0], SLATE_500[1], SLATE_500[2]);
     doc.text(
-      `Benchmark Daily Operations — ${formatDate(selectedDate)}`,
+      `Benchmark Daily Operations — ${formatDateRange(dateRange.start, dateRange.end)}`,
       margin,
       pageH - 5
     );
@@ -373,5 +393,7 @@ export async function exportDailyOperationsPdf(
   }
 
   // ── Save ────────────────────────────────────────────
-  doc.save(`Benchmark_Daily_Operations_${selectedDate}.pdf`);
+  doc.save(
+  `Benchmark_Daily_Operations_${dateRange.start}_to_${dateRange.end}.pdf`
+);
 }

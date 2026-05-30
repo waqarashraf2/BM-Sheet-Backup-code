@@ -10,25 +10,30 @@ import {
   LayoutDashboard, FolderKanban, Users, Receipt, ClipboardList,
   Upload, AlertTriangle, UserPlus, ChevronsLeft, ChevronsRight,
   Command, LogOut, UserCheck, UsersRound, Briefcase, Shield, ScrollText,
-  ShieldCheck,
+  ShieldCheck, BarChart3, ShieldAlert,
 } from 'lucide-react';
 import BenchmarkLogo from '../ui/BenchmarkLogo';
 
 const NAV = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['ceo','director','operations_manager','project_manager','drawer','checker','qa','designer','accounts_manager','live_qa'] },
-  { name: 'Projects', href: '/projects', icon: FolderKanban, roles: ['ceo','director','operations_manager','project_manager'] },
-  { name: 'Users', href: '/users', icon: Users, roles: ['ceo','director','operations_manager','project_manager'] },
-  { name: 'Invoices', href: '/invoices', icon: Receipt, roles: ['ceo','director','accounts_manager'] },
-  { name: 'Import Orders', href: '/import', icon: Upload, roles: ['operations_manager','project_manager'] },
-  { name: 'OM Assignments', href: '/om-projects', icon: Shield, roles: ['ceo','director'] },
+
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['ceo', 'director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer', 'accounts_manager', 'live_qa'] },
+  { name: 'Projects', href: '/projects', icon: FolderKanban, roles: ['ceo', 'director', 'operations_manager', 'project_manager'] },
+  { name: 'Users', href: '/users', icon: Users, roles: ['director', 'operations_manager', 'project_manager'] },
+  { name: 'Invoices', href: '/invoices', icon: Receipt, roles: ['ceo', 'director', 'accounts_manager'] },
+  { name: 'Monthly Quantities', href: '/monthly-quantities', icon: BarChart3, roles: ['operations_manager', 'ceo', 'director'] },
+  { name: 'Import Orders', href: '/import', icon: Upload, roles: ['director', 'operations_manager', 'project_manager', 'qa'] },
+  { name: 'OM Assignments', href: '/om-projects', icon: Shield, roles: ['director'] },
   { name: 'PM Assignments', href: '/pm-projects', icon: Briefcase, roles: ['operations_manager'] },
-  { name: 'Operational Log', href: '/transfer-log', icon: ScrollText, roles: ['ceo','director','operations_manager'] },
+  { name: 'Operational Log', href: '/transfer-log', icon: ScrollText, roles: ['ceo', 'director', 'operations_manager'] },
   { name: 'Assign to QA', href: '/pm-assign', icon: UserCheck, roles: ['director'] },
   { name: 'My Team', href: '/qa-team', icon: UsersRound, roles: ['qa'] },
-  { name: 'Assignments', href: '/assign', icon: UserPlus, roles: ['director','operations_manager','project_manager','qa'] },
-  { name: 'Live QA', href: '/live-qa', icon: ShieldCheck, roles: ['live_qa','director','ceo'] },
-  { name: 'Rejected', href: '/rejected', icon: AlertTriangle, roles: ['director','operations_manager','project_manager','drawer','checker','qa','designer'] },
-  { name: 'Work Queue', href: '/work', icon: ClipboardList, roles: ['drawer','checker','qa','designer'] },
+  { name: 'Assignments', href: '/assign', icon: UserPlus, roles: ['director', 'operations_manager', 'project_manager', 'qa'] },
+  { name: 'Live QA', href: '/live-qa', icon: ShieldCheck, roles: ['live_qa', 'director', 'ceo', 'checker', 'qa'] },
+  { name: 'Internal QA', href: '/internal-qa', icon: ShieldAlert, roles: ['live_qa', 'ceo', 'director', 'operations_manager'] },
+  { name: 'Rejected', href: '/rejected', icon: AlertTriangle, roles: ['director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer'] },
+  { name: 'Work Queue', href: '/work', icon: ClipboardList, roles: ['drawer', 'checker', 'filler', 'qa', 'designer'] },
+  { name: 'Batch Status', href: '/batch-status', icon: ClipboardList, roles: ['operations_manager', 'project_manager'] },
+  { name: 'Column Assignment', href: '/dashboard/assignment-columns', icon: FolderKanban, roles: ['director'] },
 ];
 
 export default function Sidebar() {
@@ -52,7 +57,18 @@ export default function Sidebar() {
     navigate('/login');
   };
 
-  const items = NAV.filter(i => user?.role && i.roles.includes(user.role));
+
+  const items = NAV.filter((item) => {
+    if (!user?.role || !item.roles.includes(user.role)) {
+      return false;
+    }
+
+    if (item.href === '/live-qa' && (user.role === 'checker' || user.role === 'qa')) {
+      return Number(user.project_id) === 16;
+    }
+
+    return true;
+  });
 
   return (
     <motion.aside
@@ -109,7 +125,7 @@ export default function Sidebar() {
       <nav className={`flex-1 py-4 space-y-0.5 overflow-y-auto overflow-x-hidden custom-scrollbar ${collapsed ? 'px-2' : 'px-3'}`}>
         <AnimatePresence>
           {!collapsed && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -120,8 +136,9 @@ export default function Sidebar() {
               </span>
             </motion.div>
           )}
+
         </AnimatePresence>
-        
+
         {items.map((item, index) => {
           const active = location.pathname === item.href || location.pathname.startsWith(item.href + '/');
           const Icon = item.icon;
@@ -138,8 +155,8 @@ export default function Sidebar() {
                 className={`
                   group flex items-center gap-3 rounded-lg transition-all duration-150 relative
                   ${collapsed ? 'justify-center p-2.5' : 'px-3 py-2'}
-                  ${active 
-                    ? 'bg-brand-primary text-white shadow-sm' 
+                  ${active
+                    ? 'bg-brand-primary text-white shadow-sm'
                     : 'text-ink-secondary hover:text-ink-primary hover:bg-surface-secondary'
                   }
                 `}
@@ -152,11 +169,10 @@ export default function Sidebar() {
                     transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                   />
                 )}
-                
-                <Icon className={`h-[18px] w-[18px] shrink-0 transition-colors ${
-                  active ? 'text-white' : 'text-ink-tertiary group-hover:text-ink-secondary'
-                }`} />
-                
+
+                <Icon className={`h-[18px] w-[18px] shrink-0 transition-colors ${active ? 'text-white' : 'text-ink-tertiary group-hover:text-ink-secondary'
+                  }`} />
+
                 <AnimatePresence>
                   {!collapsed && (
                     <motion.span
@@ -202,7 +218,7 @@ export default function Sidebar() {
               </div>
               <div className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-status-success animate-pulse" />
-                <button 
+                <button
                   onClick={handleLogout}
                   className="p-1.5 rounded-md text-ink-tertiary hover:text-ink-secondary hover:bg-surface-tertiary opacity-0 group-hover:opacity-100 transition-all"
                   title="Sign out"
@@ -222,7 +238,7 @@ export default function Sidebar() {
             </div>
           </div>
         )}
-        
+
         {/* Collapse Toggle */}
         <button
           onClick={() => setCollapsed(!collapsed)}
@@ -231,7 +247,7 @@ export default function Sidebar() {
           {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
           <AnimatePresence>
             {!collapsed && (
-              <motion.span 
+              <motion.span
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}

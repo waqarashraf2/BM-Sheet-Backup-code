@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import type { Order } from '../types';
+import type { WorkItem } from '../types';
 import { REJECTION_CODES } from '../types';
 import { workflowService } from '../services';
 import { Button, Textarea, Select } from './ui';
 import { Eye, Clock, X, Flag, HelpCircle, CheckCircle2, Circle, Send, MessageSquare, History } from 'lucide-react';
+import { getLatestStageArea } from '../utils/workItemArea';
 
 interface QAWorkFormProps {
   order: Order;
@@ -19,6 +21,7 @@ interface OrderDetails {
   issue_flags: any[];
   current_time_seconds: number;
   timer_running: boolean;
+  work_items?: WorkItem[];
 }
 
 interface ChecklistItem {
@@ -38,6 +41,7 @@ const DEFAULT_CHECKLIST: ChecklistItem[] = [
 ];
 
 export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormProps) {
+  const metadata = (order.metadata || {}) as Record<string, string>;
   const [details, setDetails] = useState<OrderDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -54,6 +58,15 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const [flagSeverity, setFlagSeverity] = useState('medium');
   const [showHelp, setShowHelp] = useState(false);
   const [helpQuestion, setHelpQuestion] = useState('');
+  const [editableArea, setEditableArea] = useState(String(metadata.enter_area ?? metadata.area ?? ''));
+
+  // PH_2_LAYER image counts
+  const isPh2Layer = order.workflow_type === 'PH_2_LAYER';
+  const [totalImages, setTotalImages] = useState('');
+  const [normalImages, setNormalImages] = useState('');
+  const [hdrImages, setHdrImages] = useState('');
+  const [editImages, setEditImages] = useState('');
+  const [finalImages, setFinalImages] = useState('');
 
   // Timer
   const [elapsed, setElapsed] = useState(0);
@@ -62,7 +75,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
 
   useEffect(() => {
     loadDetails();
-    workflowService.startTimer(order.id).catch(() => {});
+    workflowService.startTimer(order.id).catch(() => { });
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [order.id]);
 
@@ -79,6 +92,32 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
     try {
       const res = await workflowService.orderFullDetails(order.id);
       setDetails(res.data);
+
+      const checkerArea = getLatestStageArea(res.data.work_items ?? res.data.order?.work_items, 'CHECK');
+      if (checkerArea) {
+        setEditableArea(checkerArea);
+      }
+
+      // For PH_2_LAYER, load image counts from designer's work_items comments
+      if (isPh2Layer) {
+        const workItems = res.data.work_items ?? res.data.order?.work_items ?? [];
+        const designerWorkItem = workItems.find((item: any) => item.stage === 'DESIGN');
+
+        if (designerWorkItem && designerWorkItem.comments) {
+          const comments = designerWorkItem.comments;
+          // Parse: "Images — Total: 255, HDR: 200, Edit: 240, Normal: 50, Final: 255"
+          const extractNumber = (pattern: string) => {
+            const match = comments.match(new RegExp(pattern + ':\\s*(\\d+)', 'i'));
+            return match ? match[1] : '';
+          };
+
+          setTotalImages(extractNumber('Total'));
+          setHdrImages(extractNumber('HDR'));
+          setEditImages(extractNumber('Edit'));
+          setNormalImages(extractNumber('Normal'));
+          setFinalImages(extractNumber('Final'));
+        }
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -94,16 +133,64 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
     } catch (e) { console.error(e); }
   };
 
-  const allChecked = checklist.every(c => c.checked);
-  const checkedCount = checklist.filter(c => c.checked).length;
+  const visibleChecklist = isPh2Layer ? [] : checklist;
+  const allChecked = isPh2Layer ? true : checklist.every(c => c.checked);
+  const checkedCount = isPh2Layer ? visibleChecklist.length : checklist.filter(c => c.checked).length;
 
   const handleApprove = async () => {
-    if (!allChecked) return;
+    if (!isPh2Layer && !allChecked) return;
+    if (isPh2Layer && !(totalImages || normalImages || hdrImages || editImages || finalImages)) return;
     setSubmitting(true);
     try {
-      const checklistSummary = checklist.map(c => `✓ ${c.label}`).join('\n');
-      const comment = `QA Approved\n\nChecklist:\n${checklistSummary}${notes ? `\n\nNotes: ${notes}` : ''}`;
+      const checklistSummary = !isPh2Layer ? checklist.map(c => `✓ ${c.label}`).join('\n') : '';
+      const areaSummary = editableArea.trim() ? `\nArea: ${editableArea.trim()}` : '';
+      const imageCountSummary = isPh2Layer && (totalImages || normalImages || hdrImages || editImages || finalImages)
+        ? `\nPhoto Selections — Total: ${totalImages || 0}, Normal: ${normalImages || 0}, HDR: ${hdrImages || 0}, Edited: ${editImages || 0}, Final: ${finalImages || 0}`
+        : '';
+      const comment = `QA Approved${checklistSummary ? `\n\nChecklist:\n${checklistSummary}` : ''}${areaSummary}${imageCountSummary}${notes ? `\n\nNotes: ${notes}` : ''}`;
       await workflowService.submitWork(order.id, comment);
+
+      if (isPh2Layer && order.project_id === 17) {
+        const parseOptionalCount = (value: string): number | null => {
+          const trimmed = value.trim();
+          if (trimmed === '') return null;
+          if (!/^\d+$/.test(trimmed)) return null;
+          return Number(trimmed);
+        };
+
+        const parsedTotalImages = parseOptionalCount(totalImages);
+        const parsedNormalImages = parseOptionalCount(normalImages);
+        const parsedHdrImages = parseOptionalCount(hdrImages);
+        const parsedEditImages = parseOptionalCount(editImages);
+        const parsedFinalImages = parseOptionalCount(finalImages);
+
+        const derivedTotalRawFiles = parsedTotalImages
+          ?? ((parsedNormalImages ?? 0) + (parsedHdrImages ?? 0));
+
+        const hasCountPayload = [
+          derivedTotalRawFiles,
+          parsedHdrImages,
+          parsedNormalImages,
+          parsedFinalImages,
+          parsedEditImages,
+        ].some((value) => value !== null);
+
+        if (hasCountPayload) {
+          try {
+            await workflowService.updateInstruction(order.id, {
+              project_id: order.project_id,
+              total_raw_files: derivedTotalRawFiles,
+              hdr_images_count: parsedHdrImages,
+              single_images_count: parsedNormalImages,
+              final_images_count: parsedFinalImages,
+              edited_images_count: parsedEditImages,
+            });
+          } catch (syncError) {
+            console.warn('QA submit succeeded, but image count sync failed.', syncError);
+          }
+        }
+      }
+
       onComplete();
     } catch (e) { console.error(e); }
     finally { setSubmitting(false); }
@@ -148,8 +235,6 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
     return h > 0 ? `${h}h ${m % 60}m ${s % 60}s` : `${m}m ${s % 60}s`;
   };
 
-  const metadata = (order.metadata || {}) as Record<string, string>;
-
   return (
     <div className="fixed inset-0 z-50 flex">
       {/* Backdrop */}
@@ -172,9 +257,8 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
             {/* Timer */}
             <button
               onClick={toggleTimer}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                timerRunning ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
-              }`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${timerRunning ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                }`}
             >
               <Clock className="h-3.5 w-3.5" />
               {formatTime(elapsed)}
@@ -199,12 +283,14 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
           >
             <HelpCircle className="h-3.5 w-3.5" /> Request Help
           </button>
-          <div className="ml-auto flex items-center gap-1.5">
-            <span className="text-xs text-slate-500">Checklist:</span>
-            <span className={`text-xs font-semibold ${allChecked ? 'text-emerald-600' : 'text-amber-600'}`}>
-              {checkedCount}/{checklist.length}
-            </span>
-          </div>
+          {!isPh2Layer && (
+            <div className="ml-auto flex items-center gap-1.5">
+              <span className="text-xs text-slate-500">Checklist:</span>
+              <span className={`text-xs font-semibold ${allChecked ? 'text-emerald-600' : 'text-amber-600'}`}>
+                {checkedCount}/{checklist.length}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Flag Panel */}
@@ -288,11 +374,10 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                activeTab === tab.id
-                  ? 'border-brand-500 text-brand-700'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${activeTab === tab.id
+                ? 'border-brand-500 text-brand-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
             >
               <tab.icon className="h-3.5 w-3.5" />
               {tab.label}
@@ -313,15 +398,55 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
               {/* Checklist Tab */}
               {activeTab === 'checklist' && (
                 <div className="space-y-3">
-                  {checklist.map((item) => (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <label htmlFor="qa-area" className="mb-1.5 block text-xs font-semibold text-slate-700">
+                      Area
+                    </label>
+                    <input
+                      id="qa-area"
+                      type="text"
+                      value={editableArea}
+                      onChange={e => setEditableArea(e.target.value)}
+                      placeholder="Please write area with its unit"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                    />
+                  </div>
+                  {/* PH_2_LAYER Photo Selections */}
+                  {isPh2Layer && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <label className="mb-2 block text-xs font-semibold text-slate-700">Photo Selections</label>
+                      <div className="grid grid-cols-3 gap-3 md:grid-cols-5">
+                        {[
+                          { label: 'Total', value: totalImages, setter: setTotalImages },
+                          { label: 'Normal', value: normalImages, setter: setNormalImages },
+                          { label: 'HDR', value: hdrImages, setter: setHdrImages },
+                          { label: 'Edited', value: editImages, setter: setEditImages },
+                          { label: 'Final', value: finalImages, setter: setFinalImages },
+                        ].map(field => (
+                          <div key={field.label}>
+                            <label className="block text-xs text-slate-500 mb-1">{field.label}</label>
+                            <input
+                              type="number"
+                              min="0"
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                              placeholder="0"
+                              value={field.value}
+                              onChange={e => field.setter(e.target.value)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {!isPh2Layer && checklist.map((item) => (
                     <button
                       key={item.id}
                       onClick={() => toggleCheck(item.id)}
-                      className={`w-full flex items-start gap-3 p-4 rounded-xl border transition-all text-left ${
-                        item.checked
-                          ? 'border-emerald-200 bg-emerald-50/50'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
+                      className={`w-full flex items-start gap-3 p-4 rounded-xl border transition-all text-left ${item.checked
+                        ? 'border-emerald-200 bg-emerald-50/50'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                        }`}
                     >
                       {item.checked ? (
                         <CheckCircle2 className="h-5 w-5 text-emerald-600 mt-0.5 flex-shrink-0" />
@@ -467,18 +592,18 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
               variant="danger"
               onClick={() => setShowReject(true)}
               icon={<X className="h-4 w-4" />}
-              className="flex-1"
-            >
+              className="flex-1" >
+
               Reject
             </Button>
             <Button
               onClick={handleApprove}
               loading={submitting}
-              disabled={!allChecked}
+              disabled={isPh2Layer ? !(totalImages || normalImages || hdrImages || editImages || finalImages) : !allChecked}
               icon={<Send className="h-4 w-4" />}
               className="flex-[2] bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500/30"
             >
-              {allChecked ? 'Approve & Deliver' : `Complete Checklist (${checkedCount}/${checklist.length})`}
+              {isPh2Layer ? 'Approve & Deliver' : allChecked ? 'Approve & Deliver' : `Complete Checklist (${checkedCount}/${checklist.length})`}
             </Button>
           </div>
         )}

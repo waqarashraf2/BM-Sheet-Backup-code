@@ -22,7 +22,7 @@ export default function AccountsManagerDashboard() {
 
   useSmartPolling({
     scope: 'all',
-    interval: 10_000,
+    interval: 45_000, // Changed from 10_000 to 45_000 (45 seconds)
     onDataChanged: loadData,
   });
 

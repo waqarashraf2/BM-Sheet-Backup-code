@@ -1,14 +1,27 @@
-import { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../store/store';
-import { workflowService, projectService, userService } from '../../services';
+import { columnService, pmService, workflowService, projectService, userService } from '../../services';
 import { useSmartPolling } from '../../hooks/useSmartPolling';
 import { useNewOrderHighlight } from '../../hooks/useNewOrderHighlight';
-import type { Order, User } from '../../types';
+import type { Order, ProjectColumn, User } from '../../types';
 import { AnimatedPage, StatusBadge, Button, useToast } from '../../components/ui';
 import { UserCheck, RefreshCw, Users, AlertTriangle, Search, X, Loader2, Eye, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ClockDisplay from '../../components/ClockDisplay';
+
+type AssignmentTableColumn = {
+  key: string;
+  label: string;
+  width?: string;
+  headerClassName?: string;
+  cellClassName?: string;
+};
+
+type PMAssignmentUser = {
+  id: number;
+  managed_projects?: { id: number }[];
+};
 
 export default function PMAssignment() {
   const { user } = useSelector((state: RootState) => state.auth);
@@ -18,6 +31,7 @@ export default function PMAssignment() {
   const [refreshing, setRefreshing] = useState(false);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
+  const [projectColumns, setProjectColumns] = useState<ProjectColumn[]>([]);
 
   /* ── Inline assign dropdown state ── */
   const [assignDropdown, setAssignDropdown] = useState<{ orderId: number; anchorRect?: DOMRect } | null>(null);
@@ -38,13 +52,37 @@ export default function PMAssignment() {
 
   useEffect(() => {
     if (!canAccess) return;
-    projectService.list().then(res => {
-      const d = res.data?.data || res.data;
-      const list = Array.isArray(d) ? d : [];
-      setProjects(list);
-      if (list.length > 0) setSelectedProject(list[0].id);
-    }).catch(() => {});
-  }, [canAccess]);
+
+    const loadProjects = async () => {
+      try {
+        const res = await projectService.list();
+        const d = res.data?.data || res.data;
+        const list = Array.isArray(d) ? d : [];
+
+        if (user?.role === 'project_manager' && user.id) {
+          const pmRes = await pmService.list();
+          const pmList = Array.isArray(pmRes.data) ? pmRes.data : [];
+          const currentPm = pmList.find((pm: PMAssignmentUser) => pm.id === user.id);
+          const assignedProjectIds = new Set((currentPm?.managed_projects || []).map((project: { id: number }) => project.id));
+          const allowedProjects = list.filter((project: any) => assignedProjectIds.has(project.id));
+
+          setProjects(allowedProjects);
+          setSelectedProject((prev) => {
+            if (prev && allowedProjects.some((project: any) => project.id === prev)) return prev;
+            return allowedProjects[0]?.id ?? null;
+          });
+          return;
+        }
+
+        setProjects(list);
+        setSelectedProject((prev) => prev ?? list[0]?.id ?? null);
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    loadProjects();
+  }, [canAccess, user?.id, user?.role]);
 
   useEffect(() => {
     if (selectedProject) {
@@ -53,11 +91,30 @@ export default function PMAssignment() {
     }
   }, [selectedProject]);
 
+  useEffect(() => {
+    if (!selectedProject) {
+      setProjectColumns([]);
+      return;
+    }
+
+    columnService.getAllColumns(selectedProject)
+      .then((res) => {
+        const cols = res.data?.data ?? [];
+        setProjectColumns(
+          [...cols].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        );
+      })
+      .catch((error) => {
+        console.error(error);
+        setProjectColumns([]);
+      });
+  }, [selectedProject]);
+
   /* ── Smart Polling: auto-refresh when orders change ── */
   useSmartPolling({
     projectIds: selectedProject ? [selectedProject] : [],
     scope: 'orders',
-    interval: 10_000,
+    interval: 45_000, // Changed from 10_000 to 45_000 (45 seconds)
     onDataChanged: () => loadOrders(true),
     enabled: !!selectedProject,
   });
@@ -150,6 +207,93 @@ export default function PMAssignment() {
     );
   };
 
+  const defaultPrimaryColumns = useMemo<AssignmentTableColumn[]>(() => [
+    { key: 'order_number', label: 'Order #', width: '8%' },
+    { key: 'VARIANT_no', label: 'Variant', width: '10%' },
+    { key: 'address', label: 'Address' },
+    { key: 'priority', label: 'Priority', width: '7%', headerClassName: 'text-center', cellClassName: 'px-2 py-2 text-center' },
+    { key: 'received_at', label: 'Received', width: '8%' },
+  ], []);
+
+  const fixedTrailingFields = useMemo(() => new Set([
+    'qa_name',
+    'qa_supervisor_id',
+    'workflow_state',
+    'status',
+  ]), []);
+
+  const dynamicPrimaryColumns = useMemo<AssignmentTableColumn[]>(() => {
+    const hasSavedColumnConfig = projectColumns.length > 0;
+    const visibleColumns = projectColumns
+      .filter((column) => column.visible && !fixedTrailingFields.has(column.field))
+      .map((column) => ({
+        key: column.field,
+        label: column.label || column.name || column.field,
+        width: column.width ? `${column.width}px` : undefined,
+        headerClassName: column.field === 'priority' ? 'text-center' : undefined,
+        cellClassName: column.field === 'priority' ? 'px-2 py-2 text-center' : undefined,
+      }));
+
+    if (!hasSavedColumnConfig) return defaultPrimaryColumns;
+    if (visibleColumns.length === 0) return [];
+
+    return visibleColumns;
+  }, [defaultPrimaryColumns, fixedTrailingFields, projectColumns]);
+
+  const renderPrimaryCell = (order: Order, column: AssignmentTableColumn) => {
+    const value = (order as any)[column.key];
+
+    switch (column.key) {
+      case 'order_number':
+        return (
+          <td className={column.cellClassName || 'px-3 py-2'}>
+            <div className="font-semibold text-slate-900">{order.order_number || '—'}</div>
+            <div className="text-[10px] text-slate-400 truncate max-w-[120px]">{order.client_reference || ''}</div>
+          </td>
+        );
+
+      case 'VARIANT_no':
+        return <td className={column.cellClassName || 'px-2 py-2 text-slate-600 whitespace-nowrap'}>{value || '—'}</td>;
+
+      case 'address':
+        return (
+          <td className={column.cellClassName || 'px-3 py-2 overflow-hidden'}>
+            <div className="text-xs text-slate-700 truncate" title={(value as string) || ''}>{value || '—'}</div>
+          </td>
+        );
+
+      case 'priority':
+        const normalizedPriority = (order.priority || '').toString().toLowerCase();
+        return (
+          <td className={column.cellClassName || 'px-2 py-2 text-center'}>
+            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${normalizedPriority === 'urgent' ? 'bg-rose-100 text-rose-700' :
+                normalizedPriority === 'high' ? 'bg-amber-100 text-amber-700' :
+                  normalizedPriority === 'rush' ? 'bg-purple-100 text-purple-700' :
+                    'bg-slate-100 text-slate-600'
+              }`}>{order.priority?.toUpperCase() || 'NORMAL'}</span>
+          </td>
+        );
+
+      case 'received_at':
+        return (
+          <td className={column.cellClassName || 'px-3 py-2 text-slate-500 whitespace-nowrap'}>
+            {order.received_at ? (
+              <>
+                <div>{new Date(order.received_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</div>
+                <div className="text-[10px] text-blue-500 flex items-center gap-0.5">
+                  <Clock className="w-2.5 h-2.5" />
+                  {new Date(order.received_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              </>
+            ) : '—'}
+          </td>
+        );
+
+      default:
+        return <td className={column.cellClassName || 'px-3 py-2 text-slate-600'}>{value == null || value === '' ? '—' : String(value)}</td>;
+    }
+  };
+
   if (!canAccess) {
     return (
       <AnimatedPage>
@@ -235,21 +379,22 @@ export default function PMAssignment() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs" style={{ tableLayout: 'fixed' }}>
                 <colgroup>
-                  <col style={{ width: '8%' }} />{/* Order */}
-                  <col style={{ width: '10%' }} />{/* Variant */}
-                  <col />{/* Address — takes remaining space */}
-                  <col style={{ width: '7%' }} />{/* Priority */}
-                  <col style={{ width: '8%' }} />{/* Received */}
+                  {dynamicPrimaryColumns.map((column) => (
+                    <col key={column.key} style={column.width ? { width: column.width } : undefined} />
+                  ))}
                   <col style={{ width: '9%' }} />{/* State */}
                   <col style={{ width: '15%' }} />{/* QA Supervisor */}
                 </colgroup>
                 <thead>
                   <tr className="bg-brand-700 text-white">
-                    <th className="px-3 py-2 text-left font-semibold">Order #</th>
-                    <th className="px-2 py-2 text-left font-semibold">Variant</th>
-                    <th className="px-3 py-2 text-left font-semibold">Address</th>
-                    <th className="px-2 py-2 text-center font-semibold">Priority</th>
-                    <th className="px-3 py-2 text-left font-semibold">Received</th>
+                    {dynamicPrimaryColumns.map((column) => (
+                      <th
+                        key={column.key}
+                        className={`px-3 py-2 font-semibold ${column.headerClassName || 'text-left'}`}
+                      >
+                        {column.label}
+                      </th>
+                    ))}
                     <th className="px-2 py-2 text-center font-semibold">State</th>
                     <th className="px-3 py-2 text-left font-semibold">
                       <div className="flex items-center gap-1">
@@ -265,37 +410,11 @@ export default function PMAssignment() {
                         initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                         transition={{ delay: idx * 0.02 }}
                         className={`border-b border-slate-100 hover:bg-brand-50/40 transition-colors ${highlightedIds.has(o.id) ? 'new-order-highlight' : ''}`}>
-                        {/* Order # */}
-                        <td className="px-3 py-2">
-                          <div className="font-semibold text-slate-900">{o.order_number}</div>
-                          <div className="text-[10px] text-slate-400 truncate max-w-[120px]">{o.client_reference || ''}</div>
-                        </td>
-                        {/* Variant */}
-                        <td className="px-2 py-2 text-slate-600 whitespace-nowrap">{(o as any).VARIANT_no || '—'}</td>
-                        {/* Address */}
-                        <td className="px-3 py-2 overflow-hidden">
-                          <div className="text-xs text-slate-700 truncate" title={(o as any).address || ''}>{(o as any).address || '—'}</div>
-                        </td>
-                        {/* Priority */}
-                        <td className="px-2 py-2 text-center">
-                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            o.priority === 'urgent' ? 'bg-rose-100 text-rose-700' :
-                            o.priority === 'high' ? 'bg-amber-100 text-amber-700' :
-                            'bg-slate-100 text-slate-600'
-                          }`}>{o.priority?.toUpperCase() || 'NORMAL'}</span>
-                        </td>
-                        {/* Received (date + time) */}
-                        <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
-                          {o.received_at ? (
-                            <>
-                              <div>{new Date(o.received_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</div>
-                              <div className="text-[10px] text-blue-500 flex items-center gap-0.5">
-                                <Clock className="w-2.5 h-2.5" />
-                                {new Date(o.received_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                              </div>
-                            </>
-                          ) : '—'}
-                        </td>
+                        {dynamicPrimaryColumns.map((column) => (
+                          <React.Fragment key={`${o.id}-${column.key}`}>
+                            {renderPrimaryCell(o, column)}
+                          </React.Fragment>
+                        ))}
                         {/* State */}
                         <td className="px-2 py-2 text-center"><StatusBadge status={o.workflow_state} size="sm" /></td>
                         {/* QA Supervisor — inline clickable */}

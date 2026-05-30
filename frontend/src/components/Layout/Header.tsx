@@ -18,7 +18,7 @@ const PAGES = [
   { name: 'Work Queue', path: '/work', keywords: 'work queue order task' },
   { name: 'Import Orders', path: '/import', keywords: 'import csv upload' },
   { name: 'Assignments', path: '/assign', keywords: 'assign supervisor team' },
-  { name: 'Rejected Orders', path: '/rejected', keywords: 'rejected rework quality', roles: ['director','operations_manager','drawer','checker','qa','designer'] },
+  { name: 'Rejected Orders', path: '/rejected', keywords: 'rejected rework quality', roles: ['director','operations_manager','drawer','checker','filler','qa','designer'] },
 ];
 
 export default function Header() {

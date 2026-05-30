@@ -17,14 +17,14 @@ export default function UserManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRole, setSelectedRole] = useState('all');
   const [selectedProjectId, setSelectedProjectId] = useState('all');
-  const [filterProjects, setFilterProjects] = useState<{id: number; name: string}[]>([]);
+  const [filterProjects, setFilterProjects] = useState<{ id: number; name: string }[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [formData, setFormData] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
-  const [formTeams, setFormTeams] = useState<{id: number; name: string}[]>([]);
+  const [formTeams, setFormTeams] = useState<{ id: number; name: string }[]>([]);
   const [loadingTeams, setLoadingTeams] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -37,7 +37,7 @@ export default function UserManagement() {
     projectService.list().then(res => {
       const d = res.data?.data || res.data;
       setFilterProjects(Array.isArray(d) ? d : []);
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const loadUsers = useCallback(async () => {
@@ -56,7 +56,7 @@ export default function UserManagement() {
 
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
-  const canManage = ['ceo', 'director', 'operations_manager', 'project_manager'].includes(currentUser?.role || '');
+  const canManage = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa'].includes(currentUser?.role || '');
 
   // Role options filtered by logged-in user's role
   const myRole = currentUser?.role || '';
@@ -66,13 +66,15 @@ export default function UserManagement() {
     { value: 'operations_manager', label: 'Ops Manager' },
     { value: 'project_manager', label: 'Project Manager' },
     { value: 'accounts_manager', label: 'Accounts' },
+    { value: 'live_qa', label: 'Live QA' },
     { value: 'drawer', label: 'Drawer' },
     { value: 'checker', label: 'Checker' },
+    { value: 'filler', label: 'File Uploader' },
     { value: 'qa', label: 'QA' },
     { value: 'designer', label: 'Designer' },
   ];
   const hiddenRoles: Record<string, string[]> = {
-    ceo: ['ceo', 'project_manager', 'accounts_manager', 'drawer', 'checker', 'qa', 'designer'],
+    ceo: ['ceo', 'project_manager', 'accounts_manager', 'drawer', 'checker', 'filler', 'qa', 'designer'],
     operations_manager: ['ceo', 'director', 'operations_manager', 'accounts_manager'],
     project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager'],
   };
@@ -85,9 +87,14 @@ export default function UserManagement() {
     try {
       setLoadingTeams(true);
       const res = await projectService.teams(Number(pid));
+      console.log('[Teams] raw response for project', pid, res.data);
       const t = res.data?.data || res.data;
+      console.log('[Teams] parsed teams:', t);
       setFormTeams(Array.isArray(t) ? t : []);
-    } catch { setFormTeams([]); }
+    } catch (e: any) {
+      console.error('[Teams] fetch failed for project', pid, e?.response?.status, e?.response?.data || e?.message);
+      setFormTeams([]);
+    }
     finally { setLoadingTeams(false); }
   }, []);
 
@@ -148,7 +155,7 @@ export default function UserManagement() {
           { label: 'Total', value: users.length, icon: UsersIcon, bg: 'bg-slate-100', color: 'text-slate-600' },
           { label: 'Active', value: users.filter(u => u.is_active).length, icon: UserCheck, bg: 'bg-brand-50', color: 'text-brand-600' },
           { label: 'Managers', value: users.filter(u => ['ceo', 'director', 'operations_manager'].includes(u.role)).length, icon: Shield, bg: 'bg-brand-50', color: 'text-brand-600' },
-          { label: 'Production', value: users.filter(u => ['drawer', 'checker', 'qa', 'designer'].includes(u.role)).length, icon: Activity, bg: 'bg-blue-50', color: 'text-blue-600' },
+          { label: 'Production', value: users.filter(u => ['drawer', 'checker', 'filler', 'qa', 'designer'].includes(u.role)).length, icon: Activity, bg: 'bg-blue-50', color: 'text-blue-600' },
         ]).map((s, i) => (
           <div key={i} className="bg-white rounded-xl border border-slate-200/60 p-4 flex items-center gap-3">
             <div className={`w-10 h-10 rounded-lg ${s.bg} flex items-center justify-center`}><s.icon className={`w-5 h-5 ${s.color}`} /></div>
@@ -177,44 +184,49 @@ export default function UserManagement() {
         <DataTable
           data={filtered} loading={loading}
           columns={[
-            { key: 'name', label: 'User', sortable: true, render: (u) => (
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <div className="w-9 h-9 rounded-lg bg-[#2AA7A0] flex items-center justify-center text-white font-bold text-sm">{u.name.charAt(0)}</div>
-                  <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${
-                    !u.is_active ? 'bg-slate-400' : u.is_online ? 'bg-green-500' : 'bg-amber-500'
-                  }`} title={!u.is_active ? 'Inactive' : u.is_online ? 'Online' : 'Offline'} />
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-900 flex items-center gap-2">
-                    {u.name}
-                    {!u.is_active && <span className="text-[10px] text-rose-500 font-medium bg-rose-50 px-1.5 py-0.5 rounded">Inactive</span>}
+            {
+              key: 'name', label: 'User', sortable: true, render: (u) => (
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <div className="w-9 h-9 rounded-lg bg-[#2AA7A0] flex items-center justify-center text-white font-bold text-sm">{u.name.charAt(0)}</div>
+                    <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${!u.is_active ? 'bg-slate-400' : u.is_online ? 'bg-green-500' : 'bg-amber-500'
+                      }`} title={!u.is_active ? 'Inactive' : u.is_online ? 'Online' : 'Offline'} />
                   </div>
-                  <div className="text-xs text-slate-400">{u.email}</div>
+                  <div>
+                    <div className="font-semibold text-slate-900 flex items-center gap-2">
+                      {u.name}
+                      {!u.is_active && <span className="text-[10px] text-rose-500 font-medium bg-rose-50 px-1.5 py-0.5 rounded">Inactive</span>}
+                    </div>
+                    <div className="text-xs text-slate-400">{u.email}</div>
+                  </div>
                 </div>
-              </div>
-            )},
+              )
+            },
             { key: 'role', label: 'Role', render: (u) => <StatusBadge status={u.role} /> },
             { key: 'project', label: 'Project', render: (u) => <span className="text-slate-600">{u.project?.name || '—'}</span> },
             { key: 'team', label: 'Team', render: (u) => <span className="text-slate-500">{u.team?.name || '—'}</span> },
             { key: 'department', label: 'Department', render: (u) => <span className="text-slate-500 capitalize">{u.department?.replace('_', ' ') || '—'}</span> },
-            { key: 'activity', label: 'Last Active', render: (u) => (
-              <div>
-                <span className="text-xs text-slate-400">{u.last_activity ? new Date(u.last_activity).toLocaleDateString() : 'Never'}</span>
-                {u.last_activity && (
-                  <div className="text-[10px] text-slate-300">{new Date(u.last_activity).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</div>
-                )}
-              </div>
-            )},
-            { key: 'actions', label: '', render: (u) => canManage ? (
-              <div className="flex items-center gap-1 justify-end">
-                <Button variant="ghost" size="xs" onClick={() => handleToggleActive(u)} title={u.is_active ? 'Deactivate' : 'Activate'}>
-                  {u.is_active ? <UserX className="w-3.5 h-3.5 text-amber-500" /> : <UserCheck className="w-3.5 h-3.5 text-brand-500" />}
-                </Button>
-                <Button variant="ghost" size="xs" onClick={() => openEdit(u)}><Edit className="w-3.5 h-3.5" /></Button>
-                <Button variant="ghost" size="xs" onClick={() => setDeleteConfirm(u.id)}><Trash2 className="w-3.5 h-3.5 text-rose-500" /></Button>
-              </div>
-            ) : null },
+            {
+              key: 'activity', label: 'Last Active', render: (u) => (
+                <div>
+                  <span className="text-xs text-slate-400">{u.last_activity ? new Date(u.last_activity).toLocaleDateString() : 'Never'}</span>
+                  {u.last_activity && (
+                    <div className="text-[10px] text-slate-300">{new Date(u.last_activity).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</div>
+                  )}
+                </div>
+              )
+            },
+            {
+              key: 'actions', label: '', render: (u) => canManage ? (
+                <div className="flex items-center gap-1 justify-end">
+                  <Button variant="ghost" size="xs" onClick={() => handleToggleActive(u)} title={u.is_active ? 'Deactivate' : 'Activate'}>
+                    {u.is_active ? <UserX className="w-3.5 h-3.5 text-amber-500" /> : <UserCheck className="w-3.5 h-3.5 text-brand-500" />}
+                  </Button>
+                  <Button variant="ghost" size="xs" onClick={() => openEdit(u)}><Edit className="w-3.5 h-3.5" /></Button>
+                  <Button variant="ghost" size="xs" onClick={() => setDeleteConfirm(u.id)}><Trash2 className="w-3.5 h-3.5 text-rose-500" /></Button>
+                </div>
+              ) : null
+            },
           ]}
           emptyIcon={UsersIcon}
           emptyTitle="No users found"
@@ -241,10 +253,10 @@ export default function UserManagement() {
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                 <UserIcon className="h-4 w-4 text-slate-400" />
               </div>
-              <input 
-                type="text" 
-                value={formData.name} 
-                onChange={e => setFormData({ ...formData, name: e.target.value })} 
+              <input
+                type="text"
+                value={formData.name}
+                onChange={e => setFormData({ ...formData, name: e.target.value })}
                 placeholder="e.g. John Smith"
                 className="w-full pl-10 pr-4 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200"
               />
@@ -258,10 +270,10 @@ export default function UserManagement() {
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                 <Mail className="h-4 w-4 text-slate-400" />
               </div>
-              <input 
-                type="email" 
-                value={formData.email} 
-                onChange={e => setFormData({ ...formData, email: e.target.value })} 
+              <input
+                type="email"
+                value={formData.email}
+                onChange={e => setFormData({ ...formData, email: e.target.value })}
                 placeholder="e.g. john@benchmark.com"
                 className="w-full pl-10 pr-4 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200"
               />
@@ -278,7 +290,7 @@ export default function UserManagement() {
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                     <Lock className="h-4 w-4 text-amber-500" />
                   </div>
-                  <input 
+                  <input
                     type="text"
                     value={(editingUser as any).plain_password}
                     readOnly
@@ -296,10 +308,10 @@ export default function UserManagement() {
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                   <Lock className="h-4 w-4 text-slate-400" />
                 </div>
-                <input 
-                  type={showPassword ? 'text' : 'password'} 
-                  value={formData.password} 
-                  onChange={e => setFormData({ ...formData, password: e.target.value })} 
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={formData.password}
+                  onChange={e => setFormData({ ...formData, password: e.target.value })}
                   placeholder={editingUser ? 'Leave blank to keep' : 'Min 8 characters'}
                   className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200"
                 />
@@ -314,10 +326,10 @@ export default function UserManagement() {
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                   <Lock className="h-4 w-4 text-slate-400" />
                 </div>
-                <input 
-                  type={showConfirmPassword ? 'text' : 'password'} 
-                  value={formData.password_confirmation} 
-                  onChange={e => setFormData({ ...formData, password_confirmation: e.target.value })} 
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  value={formData.password_confirmation}
+                  onChange={e => setFormData({ ...formData, password_confirmation: e.target.value })}
                   placeholder="Re-enter password"
                   className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200"
                 />
@@ -342,9 +354,9 @@ export default function UserManagement() {
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                   <Shield className="h-4 w-4 text-slate-400" />
                 </div>
-                <select 
-                  value={formData.role} 
-                  onChange={e => setFormData({ ...formData, role: e.target.value })} 
+                <select
+                  value={formData.role}
+                  onChange={e => setFormData({ ...formData, role: e.target.value })}
                   aria-label="User role"
                   className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
                 >
@@ -361,9 +373,9 @@ export default function UserManagement() {
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                   <Globe className="h-4 w-4 text-slate-400" />
                 </div>
-                <select 
-                  value={formData.project_id} 
-                  onChange={e => { const v = e.target.value; setFormData({ ...formData, project_id: v, team_id: '' }); loadTeamsForProject(v); }} 
+                <select
+                  value={formData.project_id}
+                  onChange={e => { const v = e.target.value; setFormData({ ...formData, project_id: v, team_id: '' }); loadTeamsForProject(v); }}
                   aria-label="User project"
                   className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
                 >
@@ -385,9 +397,9 @@ export default function UserManagement() {
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                   <UsersRound className="h-4 w-4 text-slate-400" />
                 </div>
-                <select 
-                  value={formData.team_id} 
-                  onChange={e => setFormData({ ...formData, team_id: e.target.value })} 
+                <select
+                  value={formData.team_id}
+                  onChange={e => setFormData({ ...formData, team_id: e.target.value })}
                   aria-label="User team"
                   disabled={loadingTeams}
                   className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer disabled:opacity-50"
@@ -413,9 +425,9 @@ export default function UserManagement() {
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                   <Building className="h-4 w-4 text-slate-400" />
                 </div>
-                <select 
-                  value={formData.department} 
-                  onChange={e => setFormData({ ...formData, department: e.target.value })} 
+                <select
+                  value={formData.department}
+                  onChange={e => setFormData({ ...formData, department: e.target.value })}
                   aria-label="User department"
                   className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
                 >
@@ -433,15 +445,16 @@ export default function UserManagement() {
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                   <Layers className="h-4 w-4 text-slate-400" />
                 </div>
-                <select 
-                  value={formData.layer} 
-                  onChange={e => setFormData({ ...formData, layer: e.target.value })} 
+                <select
+                  value={formData.layer}
+                  onChange={e => setFormData({ ...formData, layer: e.target.value })}
                   aria-label="User layer"
                   className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
                 >
                   <option value="">None</option>
                   <option value="drawer">Drawer</option>
                   <option value="checker">Checker</option>
+                  <option value="filler">Filler</option>
                   <option value="qa">QA</option>
                   <option value="designer">Designer</option>
                 </select>

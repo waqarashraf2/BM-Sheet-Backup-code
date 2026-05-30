@@ -17,7 +17,7 @@ export default function WorkQueue() {
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
 
   const isManager = ['ceo', 'director', 'operations_manager', 'project_manager'].includes(user?.role || '');
-  const isWorker = ['drawer', 'checker', 'qa', 'designer'].includes(user?.role || '');
+  const isWorker = ['drawer', 'checker', 'filler', 'qa', 'designer'].includes(user?.role || '');
 
   /* ── Countdown tick (every 30s) ── */
   const [, setCountdownTick] = useState(0);

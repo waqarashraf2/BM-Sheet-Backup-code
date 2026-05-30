@@ -5,6 +5,7 @@
 export const FP_STATES = [
   'RECEIVED', 'PENDING_QA_REVIEW', 'QUEUED_DRAW', 'IN_DRAW', 'SUBMITTED_DRAW',
   'QUEUED_CHECK', 'IN_CHECK', 'REJECTED_BY_CHECK', 'SUBMITTED_CHECK',
+  'QUEUED_FILLER', 'IN_FILLER', 'SUBMITTED_FILLER',
   'QUEUED_QA', 'IN_QA', 'REJECTED_BY_QA', 'APPROVED_QA',
   'DELIVERED', 'ON_HOLD', 'CANCELLED',
 ] as const;
@@ -24,12 +25,58 @@ export type InvoiceStatus = typeof INVOICE_STATUSES[number];
 export const REJECTION_CODES = ['quality', 'incomplete', 'wrong_specs', 'rework', 'formatting', 'missing_info'] as const;
 export type RejectionCode = typeof REJECTION_CODES[number];
 
-export const ROLES = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'checker', 'drawer', 'designer', 'admin', 'accounts_manager', 'live_qa'] as const;
+export const ROLES = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'checker', 'filler', 'drawer', 'designer', 'admin', 'accounts_manager', 'live_qa'] as const;
 export type UserRole = typeof ROLES[number];
 
-export const PRODUCTION_ROLES: UserRole[] = ['drawer', 'checker', 'qa', 'designer'];
+export const PRODUCTION_ROLES: UserRole[] = ['drawer', 'checker', 'filler', 'qa', 'designer'];
 export const MANAGEMENT_ROLES: UserRole[] = ['ceo', 'director', 'operations_manager', 'project_manager', 'admin'];
 export const QA_OVERSIGHT_ROLES: UserRole[] = ['live_qa', 'ceo', 'director'];
+
+
+
+
+
+// ─────────────────────────────────────────
+// Project Column Type (FULL)
+// ─────────────────────────────────────────
+export type ProjectColumn = {
+  id?: number;
+  project_id: number;
+
+  // naming fix → support both backend + frontend
+  name: string;        // DB column
+  label?: string;      // UI fallback (optional)
+
+  field: string;       // key used in data
+
+  visible: boolean;    // show/hide
+  sortable: boolean;   // sorting enable/disable
+
+  width?: number;      // column width (optional)
+  order: number;       // display order
+
+
+};
+
+// ─────────────────────────────────────────
+// Responses
+// ─────────────────────────────────────────
+export type ProjectColumnsResponse = {
+  success: boolean;
+  data: ProjectColumn[];
+};
+
+export type SaveProjectColumnsInput = {
+  project_id?: number; // optional for "all projects"
+
+  columns: ProjectColumn[];
+};
+
+export type SaveProjectColumnsResponse = {
+  success: boolean;
+  message: string;
+  data: ProjectColumn[];
+};
 
 // ═══════════════════════════════════════════
 // CORE ENTITIES
@@ -158,6 +205,7 @@ export interface Order {
   started_at: string | null;
   completed_at: string | null;
   delivered_at: string | null;
+  assigned_at?: string | null;
   due_date: string | null;
   due_in: string | null;
   metadata: Record<string, unknown> | null;
@@ -198,6 +246,24 @@ export interface WorkItem {
   assignedUser?: User;
 }
 
+// Batch Items 
+
+export interface BatchItem {
+  batch_no: number;
+  received_time: string;
+  plans: number;
+  done: number;
+  pending: number;
+  fixing: number;
+}
+
+export interface BatchStatusResponse {
+  success: boolean;
+  data: BatchItem[];
+}
+
+
+
 export interface MonthLock {
   id: number;
   project_id: number;
@@ -221,9 +287,22 @@ export interface ProductionCounts {
   computed_at: string;
 }
 
+export interface InvoiceItem {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  total: number;
+}
+
 export interface Invoice {
   id: number;
   invoice_number: string;
+  date: string | null;
+  attn: string | null;
+  client_name: string | null;
+  client_phone_email: string | null;
+  billing_period: string | null;
+  invoice_items: InvoiceItem[] | null;
   project_id: number;
   month: string;
   year: string;
@@ -246,12 +325,53 @@ export interface Invoice {
 }
 
 export interface InvoiceInput {
-  invoice_number: string;
+  invoice_number?: string;
   project_id: number;
   month: string;
   year: string;
+  date?: string;
+  attn?: string;
+  client_name?: string;
+  client_phone_email?: string;
+  billing_period?: string;
+  invoice_items?: InvoiceItem[];
   service_counts?: Record<string, number>;
   total_amount?: number;
+}
+
+export interface InvoiceMonthlyQuantity {
+  id: number;
+  project_id: number;
+  year: number;
+  month: number;
+  // System quantities (auto-computed from orders)
+  system_qty_total: number | null;
+  system_qty_delivered: number | null;
+  system_qty_completed: number | null;
+  system_qty_rework: number | null;
+  system_qty_breakdown: Record<string, unknown> | null;
+  system_computed_at: string | null;
+  system_computed_by: number | null;
+  // Manual quantities (entered by OM)
+  manual_qty_total: number | null;
+  manual_qty_breakdown: Record<string, number> | null;
+  manual_notes: string | null;
+  manual_created_by: number | null;
+  manual_updated_by: number | null;
+  manual_created_at: string | null;
+  manual_updated_at: string | null;
+  // Lock
+  is_quantity_locked: boolean;
+  quantity_locked_by: number | null;
+  quantity_locked_at: string | null;
+  // Resolved final qty used for invoicing
+  final_qty: number | null;
+  // Relations
+  manualCreatedBy?: User;
+  manualUpdatedBy?: User;
+  quantityLockedBy?: User;
+  systemComputedBy?: User;
+  invoice?: { id: number; invoice_number: string; status: string } | null;
 }
 
 // ═══════════════════════════════════════════
@@ -364,6 +484,8 @@ export interface TeamOutput {
   department: string;
   staff_count: number;
   active_staff: number;
+  received_today?: number;
+  in_progress?: number;
   delivered_today: number;
   pending: number;
   efficiency: number;
@@ -419,6 +541,8 @@ export interface ProjectSummary {
   code: string;
   name: string;
   workflow_type: WorkflowType;
+  received_today?: number;
+  in_progress?: number;
   pending: number;
   delivered_today: number;
 }
@@ -458,6 +582,89 @@ export interface WorkerDashboardData {
   wip_count: number;
 }
 
+export interface DashboardTeamMember {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  team_id?: number | null;
+  is_active?: boolean;
+  is_absent?: boolean;
+  is_online?: boolean;
+  assigned_work?: number;
+  pending_work?: number;
+  wip_count?: number;
+  completed_today?: number;
+  completed_week?: number;
+  completed_month?: number;
+}
+
+export interface DashboardTeamRoleMember {
+  id: number;
+  name: string;
+  total_done?: number;
+  wip?: number;
+}
+
+export interface DashboardTeamPerformance {
+  id: number;
+  name: string;
+  project_id?: number;
+  project_code?: string;
+  qa_lead?: string;
+  staff_count?: number;
+  active_staff?: number;
+  absent_staff?: number;
+  delivered_today?: number;
+  pending?: number;
+  today_completed?: number;
+  efficiency?: number;
+  is_active?: boolean;
+  qa_count?: number;
+  checker_count?: number;
+  drawer_count?: number;
+  designer_count?: number;
+  raw_done?: number;
+  check_done?: number;
+  qa_done?: number;
+  drawer_total_done?: number;
+  checker_total_done?: number;
+  qa_total_done?: number;
+  total_done?: number;
+  delivered?: number;
+  drawer_names?: string;
+  checker_names?: string;
+  qa_names?: string;
+  total_delivered_orders?: number;
+  users?: DashboardTeamMember[];
+  drawers?: DashboardTeamRoleMember[];
+  checkers?: DashboardTeamRoleMember[];
+  qas?: DashboardTeamRoleMember[];
+}
+
+export interface DashboardQaSummaryMember {
+  id: number;
+  name: string;
+  email?: string;
+  team_id?: number;
+  done_count?: number;
+  has_uploads?: boolean;
+  is_active?: boolean;
+  wip_count?: number;
+}
+
+export interface DashboardQaSummary {
+  date_range?: {
+    filter_type?: string;
+    from?: string;
+    to?: string;
+  };
+  total_qa_staff?: number;
+  qa_with_uploads?: number;
+  total_qa_done?: number;
+  qa_members?: DashboardQaSummaryMember[];
+}
+
 export interface OpsDashboardData {
   projects: OpsProjectItem[];
   total_active_staff?: number;
@@ -479,19 +686,7 @@ export interface OpsDashboardData {
     by_role: Record<string, number>;
   }>;
   absentees?: Array<{ id: number; name: string; role: string; project_name?: string }>;
-  team_performance?: Array<{
-    id: number;
-    name: string;
-    project_code: string;
-    qa_lead: string;
-    staff_count: number;
-    active_staff: number;
-    absent_staff: number;
-    delivered_today: number;
-    pending: number;
-    today_completed: number;
-    efficiency: number;
-  }>;
+  team_performance?: DashboardTeamPerformance[];
   workers?: Array<{
     id: number;
     name: string;
@@ -521,6 +716,7 @@ export interface OpsDashboardData {
     email: string;
     projects: Array<{ id: number; code: string; name: string }>;
   }>;
+  qa_summary?: DashboardQaSummary;
 }
 
 export interface OpsProjectItem {
@@ -614,18 +810,7 @@ export interface PMDashboardData {
     received_at: string;
     client_reference: string | null;
   }>;
-  team_performance: Array<{
-    id: number;
-    name: string;
-    project_code: string;
-    qa_lead: string;
-    staff_count: number;
-    active_staff: number;
-    today_completed: number;
-    delivered_today: number;
-    pending: number;
-    efficiency: number;
-  }>;
+  team_performance: DashboardTeamPerformance[];
   department_roles: string[];
 }
 
@@ -683,12 +868,19 @@ export interface DailyOperationsTotals {
   pending: number;
   total_work_items: number;
 }
-
+interface DailyOperationsDay {
+  date: string;
+  view_mode: string;
+  projects?: DailyOperationsProject[];
+  by_country?: any[];
+  totals?: any;
+}
 export interface DailyOperationsData {
   date: string;
   totals: DailyOperationsTotals;
   by_country: DailyOperationsCountry[];
   projects: DailyOperationsProject[];
+  days?: DailyOperationsDay[];
 }
 
 // ═══════════════════════════════════════════
@@ -729,6 +921,20 @@ export interface QueueInfo {
 export interface AssignmentOrder {
   id: number;
   order_number: string;
+  it_datetime?: string | null;
+  total_raw_files?: number | null;
+  hdr_images_count?: number | null;
+  single_images_count?: number | null;
+  final_images_count?: number | null;
+  edited_images_count?: number | null;
+  instruction?: string | null;
+  instructions?: string | null;
+  supervisor_notes?: string | null;
+  metadata?: Record<string, unknown> | null;
+  area?: string | number | null;
+  date?: string | null;
+  code: string;
+  plan_type: string | null;
   project_id: number;
   client_reference: string | null;
   address: string | null;
@@ -740,6 +946,8 @@ export interface AssignmentOrder {
   drawer_name: string | null;
   checker_id: number | null;
   checker_name: string | null;
+  file_uploader_id?: number | null;
+  file_uploader_name?: string | null;
   qa_id: number | null;
   qa_name: string | null;
   dassign_time: string | null;
@@ -765,12 +973,14 @@ export interface AssignmentDateStat {
   label: string;
   day_label: string;
   high: number;
+  priority?: number;
   regular: number;
   total: number;
   drawer_done: number;
   checker_done: number;
   qa_done: number;
   amender_done: number;
+  filler_done?: number;
   delivered: number;
 }
 
@@ -788,6 +998,7 @@ export interface AssignmentDashboardData {
   counts: {
     today_total: number;
     pending: number;
+    pending_by_drawer: number;
     completed: number;
     amends: number;
     assigned: number;

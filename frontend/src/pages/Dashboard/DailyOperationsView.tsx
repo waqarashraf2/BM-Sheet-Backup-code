@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { dashboardService, liveQAService } from '../../services';
 import type { DailyOperationsData, DailyOperationsProject } from '../../types';
 import { DailyOpsSkeleton } from '../../components/ui';
-import { 
-  Calendar, ChevronDown, ChevronRight, ChevronLeft, Users, Package, 
+import {
+  Calendar, ChevronDown, ChevronRight, Users, Package,
   TrendingUp, AlertCircle, Layers, ClipboardCheck, RefreshCw, Download,
   FileText, X, Loader2, CheckCircle
 } from 'lucide-react';
@@ -25,7 +25,7 @@ interface MistakeTeam {
 
 const LAYER_LABELS: Record<string, string> = {
   DRAW: 'Drawer',
-  CHECK: 'Checker', 
+  CHECK: 'Checker',
   DESIGN: 'Designer',
   QA: 'QA',
 };
@@ -41,8 +41,13 @@ export default function DailyOperationsView() {
   const [data, setData] = useState<DailyOperationsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [dateInput, setDateInput] = useState(new Date().toISOString().split('T')[0]);
+  const [dateFrom, setDateFrom] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+  const [dateTo, setDateTo] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+  // const [dateInput, setDateInput] = useState(new Date().toISOString().split('T')[0]);
   const [expandedProjects, setExpandedProjects] = useState<Set<number>>(new Set());
   const [filterCountry, setFilterCountry] = useState<string>('all');
   const [filterDept, setFilterDept] = useState<string>('all');
@@ -86,22 +91,22 @@ export default function DailyOperationsView() {
   };
 
   // Debounce date changes to prevent API spam
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSelectedDate(dateInput);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [dateInput]);
+  // useEffect(() => {
+  //   const timer = setTimeout(() => {
+  //     setSelectedDate(dateInput);
+  //   }, 500);
+  //   return () => clearTimeout(timer);
+  // }, [dateInput]);
 
   useEffect(() => {
     loadData();
-  }, [selectedDate, viewMode]);
+  }, [dateFrom, dateTo, viewMode]);
 
   const loadData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await dashboardService.dailyOperations(selectedDate, viewMode);
+      const res = await dashboardService.dailyOperations(dateFrom, dateTo, viewMode);
       setData(res.data);
     } catch (e: any) {
       console.error('Failed to load daily operations:', e);
@@ -143,7 +148,7 @@ export default function DailyOperationsView() {
         .join('; ');
       const workerCount = Object.values(p.layers || {})
         .reduce((sum, layer) => sum + (layer?.workers || []).length, 0);
-      
+
       return [
         p.code,
         p.name,
@@ -159,7 +164,7 @@ export default function DailyOperationsView() {
     });
 
     const csvContent = [
-      `Daily Operations Report - ${formatDate(selectedDate)}`,
+      `Daily Operations Report - ${formatDate(dateFrom)} → ${formatDate(dateTo)}`,
       '',
       headers.join(','),
       ...rows.map(row => row.join(',')),
@@ -175,36 +180,121 @@ export default function DailyOperationsView() {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `daily-operations-${selectedDate}.csv`;
+    link.download = `daily-operations-${dateFrom}-to-${dateTo}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   };
 
-  const changeDate = (days: number) => {
-    const date = new Date(dateInput);
-    date.setDate(date.getDate() + days);
-    const newDate = date.toISOString().split('T')[0];
-    const today = new Date().toISOString().split('T')[0];
-    // Don't allow future dates
-    if (newDate > today) return;
-    setDateInput(newDate);
-  };
+  // const changeDate = (days: number) => {
+  //   const date = new Date(dateInput);
+  //   date.setDate(date.getDate() + days);
+  //   const newDate = date.toISOString().split('T')[0];
+  //   const today = new Date().toISOString().split('T')[0];
+  //   // Don't allow future dates
+  //   if (newDate > today) return;
+  //   setDateInput(newDate);
+  // };
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
+    return date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
     });
   };
 
-  const filteredProjects = data?.projects?.filter(p => {
-    if (filterCountry !== 'all' && p.country !== filterCountry) return false;
-    if (filterDept !== 'all' && p.department !== filterDept) return false;
+
+
+const allProjects: DailyOperationsProject[] = React.useMemo(() => {
+  let projects: DailyOperationsProject[] = [];
+
+  if (Array.isArray(data?.days)) {
+    projects = data.days.flatMap(day =>
+      Array.isArray(day.projects) ? day.projects : []
+    );
+  } else if (Array.isArray(data?.projects)) {
+    projects = data.projects;
+  }
+
+  // ✅ GROUP BY PROJECT ID
+  const grouped: Record<number, DailyOperationsProject> = {};
+
+  projects.forEach((p) => {
+    if (!grouped[p.id]) {
+      // clone first instance
+      grouped[p.id] = JSON.parse(JSON.stringify(p));
+    } else {
+      const existing = grouped[p.id];
+
+      // ✅ SUM MAIN FIELDS
+      existing.received += p.received;
+      existing.delivered += p.delivered;
+      existing.pending += p.pending;
+
+      // ✅ MERGE LAYERS
+      Object.entries(p.layers || {}).forEach(([stage, layer]) => {
+        if (!existing.layers[stage]) {
+          existing.layers[stage] = layer;
+        } else {
+          existing.layers[stage].total += layer.total;
+
+          // merge workers
+          const workerMap: Record<number, any> = {};
+
+          existing.layers[stage].workers.forEach((w: any) => {
+            workerMap[w.id] = { ...w };
+          });
+
+          (layer.workers || []).forEach((w: any) => {
+            if (!workerMap[w.id]) {
+              workerMap[w.id] = { ...w };
+            } else {
+              workerMap[w.id].completed += w.completed;
+            }
+          });
+
+          existing.layers[stage].workers = Object.values(workerMap);
+        }
+      });
+
+      // ✅ MERGE QA CHECKLIST
+      if (p.qa_checklist && existing.qa_checklist) {
+        existing.qa_checklist.total_orders += p.qa_checklist.total_orders;
+        existing.qa_checklist.total_items += p.qa_checklist.total_items;
+        existing.qa_checklist.completed_items += p.qa_checklist.completed_items;
+        existing.qa_checklist.mistake_count += p.qa_checklist.mistake_count;
+
+        // recompute %
+        existing.qa_checklist.compliance_rate =
+          existing.qa_checklist.total_items > 0
+            ? Math.round(
+                (existing.qa_checklist.completed_items /
+                  existing.qa_checklist.total_items) *
+                  100
+              )
+            : 0;
+      }
+    }
+  });
+
+  return Object.values(grouped);
+}, [data]);
+
+  // Apply filters safely
+  const filteredProjects = allProjects.filter(p => {
+    if (!p) return false;
+
+    const country = p.country ?? '';
+    const dept = p.department ?? '';
+
+    if (filterCountry !== 'all' && country !== filterCountry) return false;
+    if (filterDept !== 'all' && dept !== filterDept) return false;
+
     return true;
-  }) || [];
+  });
+
 
   const countries = data ? [...new Set((data.projects || []).map(p => p.country))] : [];
   const departments = data ? [...new Set((data.projects || []).map(p => p.department))] : [];
@@ -219,8 +309,8 @@ export default function DailyOperationsView() {
         <AlertCircle className="w-12 h-12 mx-auto mb-4 text-rose-500" />
         <p className="text-slate-900 font-medium mb-2">Failed to load daily operations</p>
         <p className="text-sm text-slate-500 mb-4">{error}</p>
-        <button 
-          onClick={loadData} 
+        <button
+          onClick={loadData}
           className="px-4 py-2 bg-[#2AA7A0] text-white rounded-lg hover:bg-[#238B85] transition-colors"
         >
           Retry
@@ -249,30 +339,41 @@ export default function DailyOperationsView() {
           <Calendar className="w-5 h-5 text-[#2AA7A0]" />
           <h2 className="text-lg font-semibold text-slate-900">Daily Operations</h2>
           <span className="text-sm text-slate-500">
-            {formatDate(selectedDate)}
+            {formatDate(dateFrom)} → {formatDate(dateTo)}
           </span>
         </div>
-        
+
         <div className="flex items-center gap-2">
-          <button
+          {/* <button
             onClick={() => changeDate(-1)}
             className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
             title="Previous day"
             aria-label="Previous day"
           >
             <ChevronLeft className="w-4 h-4 text-slate-600" />
-          </button>
+          </button> */}
           <label htmlFor="date-picker" className="sr-only">Select date for daily operations</label>
-          <input
-            id="date-picker"
-            type="date"
-            value={dateInput}
-            max={new Date().toISOString().split('T')[0]}
-            onChange={(e) => setDateInput(e.target.value)}
-            className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#2AA7A0]/20 focus:border-[#2AA7A0]"
-            aria-label="Date picker for daily operations"
-          />
-          <button
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={dateFrom}
+              max={dateTo}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg"
+            />
+
+            <span className="text-xs text-slate-400">to</span>
+
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom}
+              max={new Date().toISOString().split('T')[0]}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg"
+            />
+          </div>
+          {/* <button
             onClick={() => changeDate(1)}
             className="p-2 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title="Next day"
@@ -280,7 +381,7 @@ export default function DailyOperationsView() {
             disabled={dateInput >= new Date().toISOString().split('T')[0]}
           >
             <ChevronRight className="w-4 h-4 text-slate-600" />
-          </button>
+          </button> */}
           <button
             onClick={loadData}
             className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
@@ -394,7 +495,38 @@ export default function DailyOperationsView() {
             Export CSV
           </button>
           <button
-            onClick={() => data && exportDailyOperationsPdf(data, filteredProjects, selectedDate)}
+onClick={() => {
+  if (!data) return;
+
+  const aggregatedTotals = filteredProjects.reduce(
+    (acc, p) => {
+      acc.projects += 1;
+      acc.received += p.received;
+      acc.delivered += p.delivered;
+      acc.pending += p.pending;
+      acc.total_work_items += Object.values(p.layers || {})
+        .reduce((sum, l) => sum + l.total, 0);
+
+      return acc;
+    },
+    {
+      projects: 0,
+      received: 0,
+      delivered: 0,
+      pending: 0,
+      total_work_items: 0,
+    }
+  );
+
+  exportDailyOperationsPdf(
+    {
+      ...data,
+      totals: aggregatedTotals // ✅ THIS LINE FIXES EVERYTHING
+    },
+    filteredProjects,
+    { start: dateFrom, end: dateTo }
+  );
+}}
             disabled={!data || filteredProjects.length === 0}
             className="flex items-center gap-2 text-xs px-3 py-1.5 bg-[#C45C26] text-white rounded-lg hover:bg-[#A84E20] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title="Export to PDF"
@@ -425,9 +557,9 @@ export default function DailyOperationsView() {
           </div>
         ) : (
           filteredProjects.map(project => (
-            <ProjectRow 
-              key={project.id} 
-              project={project} 
+            <ProjectRow
+              key={project.id}
+              project={project}
               expanded={expandedProjects.has(project.id)}
               onToggle={() => toggleProject(project.id)}
               onOpenSummary={(layer: string) => openChecklistSummary(project.id, project.name, layer)}
@@ -558,11 +690,10 @@ function ChecklistSummaryModal({
               <button
                 key={opt.value}
                 onClick={() => onLayerChange(opt.value)}
-                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                  modal.layer === opt.value
+                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-colors ${modal.layer === opt.value
                     ? `${opt.color} text-white shadow-sm`
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
+                  }`}
               >
                 {opt.label}
               </button>
@@ -688,18 +819,16 @@ function ChecklistSummaryModal({
                               const val = (w.items || {})[c] || 0;
                               return (
                                 <td key={c} className="px-2 py-1.5 text-center border-r border-slate-100">
-                                  <span className={`font-semibold ${
-                                    val === 0 ? 'text-slate-400' : val <= 2 ? 'text-amber-600' : 'text-rose-600 font-bold'
-                                  }`}>
+                                  <span className={`font-semibold ${val === 0 ? 'text-slate-400' : val <= 2 ? 'text-amber-600' : 'text-rose-600 font-bold'
+                                    }`}>
                                     {val}
                                   </span>
                                 </td>
                               );
                             })}
                             <td className="px-3 py-1.5 text-center">
-                              <span className={`inline-flex items-center justify-center min-w-[26px] h-5 rounded text-xs font-bold ${
-                                w.mistake_total === 0 ? 'text-slate-400' : 'text-white bg-rose-500 px-1.5'
-                              }`}>
+                              <span className={`inline-flex items-center justify-center min-w-[26px] h-5 rounded text-xs font-bold ${w.mistake_total === 0 ? 'text-slate-400' : 'text-white bg-rose-500 px-1.5'
+                                }`}>
                                 {w.mistake_total}
                               </span>
                             </td>
@@ -750,13 +879,13 @@ function ChecklistSummaryModal({
     </div>
   );
 }
-function ProjectRow({ 
-  project, 
-  expanded, 
+function ProjectRow({
+  project,
+  expanded,
   onToggle,
   onOpenSummary,
-}: { 
-  project: DailyOperationsProject; 
+}: {
+  project: DailyOperationsProject;
   expanded: boolean;
   onToggle: () => void;
   onOpenSummary: (layer: string) => void;
@@ -861,36 +990,36 @@ function ProjectRow({
 
               {/* QA Checklist compliance */}
               {project.qa_checklist && (
-              <div className="bg-slate-50 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <ClipboardCheck className="w-4 h-4 text-[#2AA7A0]" />
-                  <span className="text-sm font-medium text-slate-900">QA Checklist Compliance</span>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
-                  <div>
-                    <div className="text-lg font-bold text-slate-900">{project.qa_checklist.total_orders}</div>
-                    <div className="text-xs text-slate-500">Orders QA'd</div>
+                <div className="bg-slate-50 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <ClipboardCheck className="w-4 h-4 text-[#2AA7A0]" />
+                    <span className="text-sm font-medium text-slate-900">QA Checklist Compliance</span>
                   </div>
-                  <div>
-                    <div className="text-lg font-bold text-slate-900">{project.qa_checklist.total_items}</div>
-                    <div className="text-xs text-slate-500">Checklist Items</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold text-brand-600">{project.qa_checklist.completed_items}</div>
-                    <div className="text-xs text-slate-500">Completed</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold text-rose-600">{project.qa_checklist.mistake_count}</div>
-                    <div className="text-xs text-slate-500">Mistakes Found</div>
-                  </div>
-                  <div>
-                    <div className={`text-lg font-bold ${project.qa_checklist.compliance_rate >= 95 ? 'text-brand-600' : project.qa_checklist.compliance_rate >= 80 ? 'text-amber-600' : 'text-rose-600'}`}>
-                      {project.qa_checklist.compliance_rate}%
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+                    <div>
+                      <div className="text-lg font-bold text-slate-900">{project.qa_checklist.total_orders}</div>
+                      <div className="text-xs text-slate-500">Orders QA'd</div>
                     </div>
-                    <div className="text-xs text-slate-500">Compliance</div>
+                    <div>
+                      <div className="text-lg font-bold text-slate-900">{project.qa_checklist.total_items}</div>
+                      <div className="text-xs text-slate-500">Checklist Items</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-brand-600">{project.qa_checklist.completed_items}</div>
+                      <div className="text-xs text-slate-500">Completed</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-rose-600">{project.qa_checklist.mistake_count}</div>
+                      <div className="text-xs text-slate-500">Mistakes Found</div>
+                    </div>
+                    <div>
+                      <div className={`text-lg font-bold ${project.qa_checklist.compliance_rate >= 95 ? 'text-brand-600' : project.qa_checklist.compliance_rate >= 80 ? 'text-amber-600' : 'text-rose-600'}`}>
+                        {project.qa_checklist.compliance_rate}%
+                      </div>
+                      <div className="text-xs text-slate-500">Compliance</div>
+                    </div>
                   </div>
                 </div>
-              </div>
               )}
 
               {/* Checklist Summary Buttons */}
