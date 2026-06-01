@@ -784,6 +784,15 @@ if ($request->query('date')) {
 
         // 7. CAPACITY vs DEMAND
         $totalDailyCapacity = $allStaff->filter(fn($u) => !$u->is_absent && $u->is_active)->sum('daily_target');
+        // Fallback: when daily_target is not configured (all zeros), estimate from 30-day historical avg output
+        if ($totalDailyCapacity === 0) {
+            $thirtyDayDeliveries = Order::queryAcrossProjects($allProjectIds->toArray(), function($q) {
+                $q->where('workflow_state', 'DELIVERED')
+                  ->where('delivered_at', '>=', now()->subDays(30)->startOfDay())
+                  ->selectRaw('COUNT(*) as cnt');
+            })->sum('cnt');
+            $totalDailyCapacity = (int) round($thirtyDayDeliveries / 30);
+        }
         $capacityDemand = [
             'daily_capacity' => (int) $totalDailyCapacity,
             'today_received' => $wm->received_today,
