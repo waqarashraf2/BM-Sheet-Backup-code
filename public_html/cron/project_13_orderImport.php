@@ -6,27 +6,27 @@
  * Imports PENDING floor-plan orders from the Captur3d external-supplier portal
  * into project_13_orders (Metro FP, project_id = 13).
  *
- * Portal URL: /external_supplier/floorplan_orders?filter=pending
- * Auth: HTTP Basic Auth (hard-coded, same across all Captur3d scripts)
+ * Portal URL: /external_supplier/floorplan_orders.json?filter=pending
+ * Auth: Session-based JSON login (reads CAPTUR3D_EMAIL / CAPTUR3D_PASSWORD from .env)
  *
  * Safe design:
- *   - INSERT IGNORE on order_number (unique key) — never overwrites existing rows
+ *   - INSERT IGNORE on order_number (unique key) -- never overwrites existing rows
  *   - No update/delete operations
  *   - Reads DB credentials from Laravel .env at runtime
  */
 
-define('SCRIPT_NAME', 'project_13_orderImport');
-define('PROJECT_ID',  13);
-define('DB_TABLE',    'project_13_orders');
-define('PORTAL_BASE', 'https://es-portal.captur3d.io');
-define('PORTAL_PATH', '/external_supplier/floorplan_orders');
-define('PORTAL_FILTER', 'filter=pending');
-define('PORTAL_USER', 'order@benchmarkstudio.biz');
-define('PORTAL_PASS', 'OgLilaA@yqE1&Rfc');
-define('MAX_PAGES',   10);
-define('ENV_PATH',    '/home/crmbenchmarkstud/laravel-backend/.env');
+define('SCRIPT_NAME',    'project_13_orderImport');
+define('PROJECT_ID',     13);
+define('DB_TABLE',       'project_13_orders');
+define('PORTAL_BASE',    'https://es-portal.captur3d.io');
+define('PORTAL_PATH',    '/external_supplier/floorplan_orders');
+define('PORTAL_FILTER',  'pending');
+define('PORTAL_LOGIN',   'https://es-portal.captur3d.io/external_supplier/login');
+define('COOKIE_FILE',    '/tmp/bms_portal_p13.txt');
+define('MAX_PAGES',      15);
+define('ENV_PATH',       '/home/crmbenchmarkstud/laravel-backend/.env');
 
-// ─── Load .env ────────────────────────────────────────────────────────────────
+// -- Load .env ----------------------------------------------------------------
 function loadEnv(string $path): array
 {
     $env = [];
@@ -44,7 +44,6 @@ function loadEnv(string $path): array
         }
         $k = trim(substr($line, 0, $pos));
         $v = trim(substr($line, $pos + 1));
-        // Strip surrounding quotes
         if (strlen($v) >= 2 && (($v[0] === '"' && $v[-1] === '"') || ($v[0] === "'" && $v[-1] === "'"))) {
             $v = substr($v, 1, -1);
         }
@@ -53,7 +52,7 @@ function loadEnv(string $path): array
     return $env;
 }
 
-// ─── DB connection ────────────────────────────────────────────────────────────
+// -- DB connection ------------------------------------------------------------
 function dbConnect(array $env): PDO
 {
     $host = $env['DB_HOST']     ?? '127.0.0.1';
@@ -70,7 +69,7 @@ function dbConnect(array $env): PDO
     ]);
 }
 
-// ─── Check column existence ───────────────────────────────────────────────────
+// -- Check column existence ---------------------------------------------------
 function columnExists(PDO $pdo, string $table, string $column): bool
 {
     $stmt = $pdo->prepare("SHOW COLUMNS FROM `{$table}` LIKE :col");
@@ -78,27 +77,73 @@ function columnExists(PDO $pdo, string $table, string $column): bool
     return $stmt->rowCount() > 0;
 }
 
-// ─── parseDueIn ───────────────────────────────────────────────────────────────
-function parseDueIn(string $raw): string
+// -- Portal session login -----------------------------------------------------
+function portalLogin(array $env): bool
 {
-    $dt  = new DateTime('now', new DateTimeZone('Asia/Karachi'));
-    $low = strtolower(trim($raw));
+    // Step 1: GET login page to capture CSRF token
+    $ch = curl_init(PORTAL_LOGIN);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_COOKIEJAR      => COOKIE_FILE,
+        CURLOPT_COOKIEFILE     => COOKIE_FILE,
+        CURLOPT_USERAGENT      => 'BenchmarkCron/1.0',
+    ]);
+    $html = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
 
-    if (preg_match('/(\d+)/', $low, $m)) {
-        $v = (int) $m[1];
-        if ($v > 0) {
-            if (str_contains($low, 'day'))    { $dt->modify("+{$v} days"); }
-            elseif (str_contains($low, 'hour'))   { $dt->modify("+{$v} hours"); }
-            elseif (str_contains($low, 'minute')) { $dt->modify("+{$v} minutes"); }
-            else                                   { $dt->modify("+{$v} hours"); }
-        }
+    if (!$html || $code !== 200) {
+        error_log(SCRIPT_NAME . ": Login page fetch failed (HTTP {$code})");
+        return false;
     }
 
-    return $dt->format('Y-m-d H:i:s');
+    if (!preg_match('/name="csrf-token"\s+content="([^"]+)"/', $html, $matches)) {
+        error_log(SCRIPT_NAME . ': CSRF token not found in login page');
+        return false;
+    }
+    $csrf = $matches[1];
+
+    // Step 2: POST JSON credentials
+    $email    = $env['CAPTUR3D_EMAIL']    ?? '';
+    $password = $env['CAPTUR3D_PASSWORD'] ?? '';
+    $payload  = json_encode(['external_supplier_user' => ['email' => $email, 'password' => $password]]);
+
+    $ch = curl_init(PORTAL_LOGIN);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => $payload,
+        CURLOPT_HTTPHEADER     => [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            "X-CSRF-Token: {$csrf}",
+            'Origin: https://es-portal.captur3d.io',
+            'Referer: ' . PORTAL_LOGIN,
+        ],
+        CURLOPT_COOKIEJAR      => COOKIE_FILE,
+        CURLOPT_COOKIEFILE     => COOKIE_FILE,
+        CURLOPT_USERAGENT      => 'BenchmarkCron/1.0',
+    ]);
+    $body = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code !== 200 || str_contains((string) $body, '"errors"')) {
+        error_log(SCRIPT_NAME . ": Login POST failed (HTTP {$code}): {$body}");
+        return false;
+    }
+
+    return true;
 }
 
-// ─── HTTP fetch (Basic Auth) ──────────────────────────────────────────────────
-function fetchPage(string $url): ?string
+// -- Fetch one JSON page ------------------------------------------------------
+function fetchOrdersJson(string $url): ?array
 {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -106,119 +151,84 @@ function fetchPage(string $url): ?string
         CURLOPT_TIMEOUT        => 30,
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
-        CURLOPT_USERPWD        => PORTAL_USER . ':' . PORTAL_PASS,
+        CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+        CURLOPT_COOKIEFILE     => COOKIE_FILE,
         CURLOPT_USERAGENT      => 'BenchmarkCron/1.0',
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS      => 3,
     ]);
     $body = curl_exec($ch);
     $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err  = $body === false ? curl_error($ch) : null;
     curl_close($ch);
 
-    if ($err || $code !== 200) {
-        error_log(SCRIPT_NAME . ": HTTP {$code} fetching {$url}" . ($err ? " — {$err}" : ''));
+    if ($code !== 200 || !$body) {
+        error_log(SCRIPT_NAME . ": JSON fetch HTTP {$code} for {$url}");
         return null;
     }
-    return $body;
+
+    $decoded = json_decode($body, true);
+    return $decoded['data'] ?? null;
 }
 
-// ─── Parse HTML table into records ───────────────────────────────────────────
-function parseOrders(string $html, bool $hasProcessOrderCol, ?string $processOrderValue = null): array
+// -- Map JSON order to DB record ----------------------------------------------
+function mapOrder(array $o, bool $hasProcessOrderCol, ?string $processOrderValue): array
 {
-    $records = [];
-
-    libxml_use_internal_errors(true);
-    $dom = new DOMDocument();
-    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
-    libxml_clear_errors();
-    $xpath = new DOMXPath($dom);
-
-    $rows = $xpath->query('//table//tr');
-    if (!$rows || $rows->length < 2) {
-        return [];
-    }
-
-    // Extract headers from first row
-    $headers = [];
-    foreach ($rows->item(0)->getElementsByTagName('th') as $th) {
-        $headers[] = trim($th->textContent);
-    }
-    if (empty($headers)) {
-        return [];
-    }
-
     $nowPK = new DateTime('now', new DateTimeZone('Asia/Karachi'));
 
-    for ($i = 1; $i < $rows->length; $i++) {
-        $cells = $rows->item($i)->getElementsByTagName('td');
-        if ($cells->length === 0) {
-            continue;
-        }
+    $priorityMap = ['low' => 'low', 'high' => 'high', 'urgent' => 'urgent'];
+    $priority    = $priorityMap[strtolower($o['priority'] ?? '')] ?? 'normal';
 
-        $row = [];
-        foreach ($cells as $idx => $cell) {
-            if (isset($headers[$idx])) {
-                $row[$headers[$idx]] = trim($cell->textContent);
-            }
-        }
+    $receivedAt = parseIsoTs($o['orderedAt'] ?? '');
+    $dueIn      = parseIsoTs($o['deliveryDeadline'] ?? $o['targetDeadline'] ?? '');
 
-        $orderId = trim($row['Order ID'] ?? '');
-        if ($orderId === '') {
-            continue;
-        }
+    $record = [
+        'order_number'     => '#' . $o['id'],
+        'client_reference' => '#' . $o['id'],
+        'project_id'       => PROJECT_ID,
+        'address'          => $o['propertyAddress'] ?? null,
+        'priority'         => $priority,
+        'current_layer'    => 'drawer',
+        'status'           => 'pending',
+        'workflow_state'   => 'RECEIVED',
+        'workflow_type'    => 'FP_3_LAYER',
+        'received_at'      => $receivedAt,
+        'due_in'           => $dueIn,
+        'VARIANT_no'       => $o['orderableSummary']['combinationType'] ?? null,
+        'metadata'         => json_encode([
+            'combinationType'   => $o['orderableSummary']['combinationType']  ?? null,
+            'estimatedSquareFt' => $o['orderableSummary']['estimatedSquareFt'] ?? null,
+            'providerName'      => $o['providerName']                          ?? null,
+            'orderedAt'         => $o['orderedAt']                             ?? null,
+        ], JSON_UNESCAPED_UNICODE),
+        'import_source'    => 'cron',
+        'year'             => (int) $nowPK->format('Y'),
+        'month'            => (int) $nowPK->format('m'),
+        'date'             => $nowPK->format('d-m-Y'),
+        'created_at'       => $nowPK->format('Y-m-d H:i:s'),
+        'updated_at'       => $nowPK->format('Y-m-d H:i:s'),
+    ];
 
-        $address     = $row['Address'] ?? '';
-        $priorityRaw = strtolower(trim($row['Priority'] ?? 'normal'));
-        $priority    = in_array($priorityRaw, ['low', 'normal', 'high', 'urgent'], true)
-            ? $priorityRaw : 'normal';
-
-        $dueInRaw    = trim($row['Due in'] ?? $row['Due In'] ?? '');
-        $dueIn       = parseDueIn($dueInRaw);
-
-        // Floorplan-specific columns
-        $elapsed         = trim($row['Elapsed time since order'] ?? '');
-        $portalOrderDate = $row['Order Date'] ?? null;
-
-        $metadata = json_encode([
-            'due_in'               => $dueInRaw,
-            'elapsed'              => $elapsed,
-            'portal_order_date_raw'=> $portalOrderDate ? trim($portalOrderDate) : null,
-        ], JSON_UNESCAPED_UNICODE);
-
-        $record = [
-            'order_number'    => $orderId,
-            'client_reference'=> $orderId,
-            'project_id'      => PROJECT_ID,
-            'address'         => $address,
-            'priority'        => $priority,
-            'current_layer'   => 'drawer',
-            'status'          => 'pending',
-            'workflow_state'  => 'RECEIVED',
-            'workflow_type'   => 'FP_3_LAYER',
-            'received_at'     => $nowPK->format('Y-m-d H:i:s'),
-            'due_in'          => $dueIn,
-            'VARIANT_no'      => null,
-            'metadata'        => $metadata,
-            'import_source'   => 'cron',
-            'year'            => (int) $nowPK->format('Y'),
-            'month'           => (int) $nowPK->format('m'),
-            'date'            => $nowPK->format('d-m-Y'),
-            'created_at'      => $nowPK->format('Y-m-d H:i:s'),
-            'updated_at'      => $nowPK->format('Y-m-d H:i:s'),
-        ];
-
-        if ($hasProcessOrderCol) {
-            $record['process_order'] = $processOrderValue;
-        }
-
-        $records[] = $record;
+    if ($hasProcessOrderCol) {
+        $record['process_order'] = $processOrderValue;
     }
 
-    return $records;
+    return $record;
 }
 
-// ─── Bulk INSERT IGNORE ───────────────────────────────────────────────────────
+// -- ISO timestamp -> PKT datetime string -------------------------------------
+function parseIsoTs(string $raw): string
+{
+    if ($raw === '') {
+        return (new DateTime('now', new DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
+    }
+    try {
+        $dt = new DateTime($raw);
+        $dt->setTimezone(new DateTimeZone('Asia/Karachi'));
+        return $dt->format('Y-m-d H:i:s');
+    } catch (Exception $e) {
+        return (new DateTime('now', new DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
+    }
+}
+
+// -- Bulk INSERT IGNORE -------------------------------------------------------
 function insertIgnore(PDO $pdo, string $table, array $records): int
 {
     if (empty($records)) {
@@ -241,40 +251,52 @@ function insertIgnore(PDO $pdo, string $table, array $records): int
     return $inserted;
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// -- Main ---------------------------------------------------------------------
 try {
     $env = loadEnv(ENV_PATH);
     $pdo = dbConnect($env);
 
     $hasProcessOrderCol = columnExists($pdo, DB_TABLE, 'process_order');
 
+    if (!portalLogin($env)) {
+        error_log(SCRIPT_NAME . ': portal login failed -- aborting');
+        exit(1);
+    }
+
     $totalInserted = 0;
-    $baseUrl       = PORTAL_BASE . PORTAL_PATH . '?' . PORTAL_FILTER;
+    $baseUrl       = PORTAL_BASE . PORTAL_PATH . '.json?filter=' . PORTAL_FILTER;
 
     for ($page = 1; $page <= MAX_PAGES; $page++) {
         $url  = $baseUrl . '&page=' . $page;
-        $html = fetchPage($url);
+        $data = fetchOrdersJson($url);
 
-        if ($html === null) {
+        if ($data === null) {
             break;
         }
 
-        $records = parseOrders($html, $hasProcessOrderCol, null);
-
-        if (empty($records)) {
-            // No rows on this page — done
+        $orders = $data['orders'] ?? [];
+        if (empty($orders)) {
             break;
         }
 
-        $inserted       = insertIgnore($pdo, DB_TABLE, $records);
-        $totalInserted += $inserted;
+        $records = array_map(fn($o) => mapOrder($o, $hasProcessOrderCol, null), $orders);
+        $totalInserted += insertIgnore($pdo, DB_TABLE, $records);
 
-        usleep(300000); // 0.3s between pages to be gentle on portal
+        $totalPages = (int) ($data['meta']['totalPages'] ?? 1);
+        if ($page >= $totalPages) {
+            break;
+        }
+
+        usleep(300000); // 0.3s between pages
     }
 
-    error_log(SCRIPT_NAME . ": completed — {$totalInserted} new record(s) inserted into " . DB_TABLE);
+    if (file_exists(COOKIE_FILE)) {
+        @unlink(COOKIE_FILE);
+    }
+
+    error_log(SCRIPT_NAME . ": completed -- {$totalInserted} new record(s) inserted into " . DB_TABLE);
 
 } catch (Throwable $e) {
-    error_log(SCRIPT_NAME . ": FATAL — " . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+    error_log(SCRIPT_NAME . ': FATAL -- ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
     exit(1);
 }
