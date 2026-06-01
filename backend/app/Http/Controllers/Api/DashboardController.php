@@ -105,6 +105,9 @@ if ($request->query('date')) {
         $shiftEndUtc = $shiftEndPkt->copy()->setTimezone('UTC');
         $shiftStartLocal = $shiftStartPkt->format('Y-m-d H:i:s');
         $shiftEndLocal = $shiftEndPkt->format('Y-m-d H:i:s');
+        // UTC strings for TIMESTAMP column comparisons (DB session is UTC)
+        $shiftStartUtcStr = $shiftStartUtc->format('Y-m-d H:i:s');
+        $shiftEndUtcStr   = $shiftEndUtc->format('Y-m-d H:i:s');
 
         /*
         |--------------------------------------------------------------------------
@@ -154,8 +157,8 @@ if ($request->query('date')) {
                     ELSE NULL
                 END as batch_remaining_minutes
             ", $batchNowParam)
-            ->where('received_at', '>=', $shiftStartLocal)
-            ->where('received_at', '<', $shiftEndLocal);
+            ->where('received_at', '>=', $shiftStartUtcStr)
+            ->where('received_at', '<', $shiftEndUtcStr);
 
         if ($projectId) {
             $query->where('project_id', $projectId);
@@ -169,8 +172,8 @@ if ($request->query('date')) {
         |--------------------------------------------------------------------------
         */
         $statusWindowQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->where('received_at', '>=', $shiftStartLocal)
-            ->where('received_at', '<', $shiftEndLocal);
+            ->where('received_at', '>=', $shiftStartUtcStr)
+            ->where('received_at', '<', $shiftEndUtcStr);
 
         if ($projectId) {
             $statusWindowQuery->where('project_id', $projectId);
@@ -191,8 +194,8 @@ if ($request->query('date')) {
             ->map(function ($items, $batchNo) {
                 $minReceived = \Carbon\Carbon::parse(
                     $items->min('received_at'),
-                    'Asia/Karachi'
-                );
+                    'UTC'
+                )->setTimezone('Asia/Karachi');
 
                 $activeOrders = $items->filter(
                     fn($o) =>
@@ -262,7 +265,7 @@ if ($request->query('date')) {
         | Plans Remaining (Include pending orders from the last 5 days)
         |--------------------------------------------------------------------------
         */
-        $plansRemainingStartLocal = $shiftStartPkt
+        $plansRemainingStartLocal = $shiftStartUtc
             ->copy()
             ->subDays(2)
             ->format('Y-m-d H:i:s');
@@ -270,7 +273,7 @@ if ($request->query('date')) {
         $plansRemainingQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
             ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, {$batchNowSql}, {$batchDueInExpr}), 0) as remaining_hour_bucket", $batchNowParam)
             ->where('received_at', '>=', $plansRemainingStartLocal)
-            ->where('received_at', '<', $shiftEndLocal)
+            ->where('received_at', '<', $shiftEndUtcStr)
             ->whereNotNull('due_in')
             ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER']);
 
@@ -295,14 +298,14 @@ if ($request->query('date')) {
         | Hourly Received Orders
         |--------------------------------------------------------------------------
         */
-        $last24h = $shiftStartLocal;
+        $last24h = $shiftStartUtcStr;
 
         $doneOrdersLast24h = collect(
             DB::table(DB::raw("({$rawUnion}) as orders"))
                 ->where('workflow_state', 'DELIVERED')
                 ->whereNotNull('completed_at')
                 ->where('completed_at', '>=', $last24h)
-                ->where('completed_at', '<', $shiftEndLocal)
+                ->where('completed_at', '<', $shiftEndUtcStr)
                 ->when(
                     $projectId,
                     fn($q) => $q->where('project_id', $projectId)
@@ -331,8 +334,8 @@ if ($request->query('date')) {
                 ->filter(function ($o) use ($slot) {
                     $hour = \Carbon\Carbon::parse(
                         $o->completed_at,
-                        'Asia/Karachi'
-                    )->hour;
+                        'UTC'
+                    )->setTimezone('Asia/Karachi')->hour;
 
                     return $hour >= $slot['start']
                         && $hour < $slot['end'];
