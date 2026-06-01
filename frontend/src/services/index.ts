@@ -235,6 +235,14 @@ export const workflowService = {
   qaTeamMembers: () =>
     api.get<{ drawers: User[]; checkers: User[]; total: number }>('/workflow/qa-team-members'),
 
+  // Checker: Get orders assigned to current checker for drawer distribution
+  checkerOrders: () =>
+    api.get<{ orders: Order[]; in_draw: number; in_check: number }>('/workflow/checker-orders'),
+
+  // Checker: Get drawers on the checker's team for assignment
+  checkerTeamMembers: () =>
+    api.get<{ drawers: User[]; total: number }>('/workflow/checker-team-members'),
+
   // Management: Queue health
   queueHealth: (projectId: number) =>
     api.get<QueueHealth>(`/workflow/${projectId}/queue-health`),

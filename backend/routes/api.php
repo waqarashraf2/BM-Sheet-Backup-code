@@ -123,6 +123,10 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
         // QA Supervisor: Orders assigned to them for team distribution
         Route::get('/qa-orders', [WorkflowController::class, 'qaOrders']);
         Route::get('/qa-team-members', [WorkflowController::class, 'qaTeamMembers']);
+
+        // Checker: Orders assigned to them + their team drawers
+        Route::get('/checker-orders', [WorkflowController::class, 'checkerOrders']);
+        Route::get('/checker-team-members', [WorkflowController::class, 'checkerTeamMembers']);
     });
 
 
@@ -194,10 +198,14 @@ Route::prefix('assignments')->group(function () {
         Route::post('/projects/{id}/teams', [ProjectController::class, 'createTeam']);
         Route::delete('/projects/{projectId}/teams/{teamId}', [ProjectController::class, 'deleteTeam']);
         Route::post('/workflow/orders/{id}/reassign', [WorkflowController::class, 'reassignOrder']);
-        Route::post('/workflow/orders/{id}/assign-to-drawer', [WorkflowController::class, 'assignToDrawer']);
         Route::post('/workflow/orders/{id}/assign-role', [WorkflowController::class, 'assignRole']);
         Route::get('/workflow/{projectId}/orders', [WorkflowController::class, 'projectOrders']);
         Route::get('/workflow/{projectId}/staffing', [WorkflowController::class, 'staffing']);
+    });
+
+    // Assign-to-drawer: management + QA supervisor + checker (controller enforces per-role guards)
+    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,checker')->group(function () {
+        Route::post('/workflow/orders/{id}/assign-to-drawer', [WorkflowController::class, 'assignToDrawer']);
     });
 
     // ═══════════════════════════════════════════
@@ -514,3 +522,4 @@ Route::prefix('sync')->group(function () {
     Route::post('/batch', [SyncController::class, 'syncBatch']);
     Route::get('/status', [SyncController::class, 'status']);
 });
+

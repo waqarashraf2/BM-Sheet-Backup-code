@@ -27,6 +27,7 @@ const NAV = [
   { name: 'Operational Log', href: '/transfer-log', icon: ScrollText, roles: ['ceo', 'director', 'operations_manager'] },
   { name: 'Assign to QA', href: '/pm-assign', icon: UserCheck, roles: ['director'] },
   { name: 'My Team', href: '/qa-team', icon: UsersRound, roles: ['qa'] },
+  { name: 'My Team', href: '/checker-team', icon: UsersRound, roles: ['checker'] },
   { name: 'Assignments', href: '/assign', icon: UserPlus, roles: ['director', 'operations_manager', 'project_manager', 'qa'] },
   { name: 'Live QA', href: '/live-qa', icon: ShieldCheck, roles: ['live_qa', 'director', 'ceo', 'checker', 'qa'] },
   { name: 'Internal QA', href: '/internal-qa', icon: ShieldAlert, roles: ['live_qa', 'ceo', 'director', 'operations_manager'] },

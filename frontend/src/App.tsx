@@ -35,6 +35,7 @@ const PMProjectAssignment = lazy(() => import('./pages/Management/PMProjectAssig
 const OMProjectAssignment = lazy(() => import('./pages/Management/OMProjectAssignment'));
 const TransferLog = lazy(() => import('./pages/Management/TransferLog'));
 const QATeamAssignment = lazy(() => import('./pages/Workflow/QATeamAssignment'));
+const CheckerTeamAssignment = lazy(() => import('./pages/Workflow/CheckerTeamAssignment'));
 const LiveQADashboard = lazy(() => import('./pages/LiveQA/LiveQADashboard'));
 const InternalQADashboard = lazy(() => import('./pages/InternalQA/InternalQADashboard'));
 
@@ -278,6 +279,17 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['qa']}>
                   <QATeamAssignment />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="checker-team/*"
+              element={
+                <ProtectedRoute allowedRoles={['checker']}>
+                  <Suspense fallback={<PageLoader />}>
+                    <CheckerTeamAssignment />
+                  </Suspense>
                 </ProtectedRoute>
               }
             />

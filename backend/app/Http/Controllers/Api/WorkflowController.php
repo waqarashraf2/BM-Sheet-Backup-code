@@ -2717,9 +2717,12 @@ public function startTimer(Request $request, int $id)
         // QA supervisor can assign, or management
         $isQASupervisor = $actor->role === 'qa' && $order->qa_supervisor_id === $actor->id;
         $isManagement = in_array($actor->role, ['operations_manager', 'director', 'ceo']);
+        // Checker can assign drawers ONLY to orders they are the assigned checker on.
+        // Use loose int cast to avoid string/int type mismatch from the DB.
+        $isAssignedChecker = $actor->role === 'checker' && (int)$order->checker_id === (int)$actor->id;
         
-        if (!$isQASupervisor && !$isManagement) {
-            return response()->json(['message' => 'Only the assigned QA supervisor or management can assign to drawers.'], 403);
+        if (!$isQASupervisor && !$isManagement && !$isAssignedChecker) {
+            return response()->json(['message' => 'Only the assigned QA supervisor, management, or the assigned checker can assign to drawers.'], 403);
         }
 
         // Verify drawer user role
@@ -2730,6 +2733,16 @@ public function startTimer(Request $request, int $id)
         // Verify order state
         if (!in_array($order->workflow_state, ['PENDING_QA_REVIEW', 'QUEUED_DRAW', 'REJECTED_BY_CHECK'])) {
             return response()->json(['message' => 'Order cannot be assigned to drawer from its current state.'], 422);
+        }
+
+        // Checker may only assign from QUEUED_DRAW or REJECTED_BY_CHECK (not PENDING_QA_REVIEW — that belongs to QA)
+        if ($isAssignedChecker && $order->workflow_state === 'PENDING_QA_REVIEW') {
+            return response()->json(['message' => 'Checkers cannot assign drawers while order is pending QA review.'], 422);
+        }
+
+        // Checker may only assign drawers from the same project
+        if ($isAssignedChecker && (int)$drawerUser->project_id !== (int)$actor->project_id) {
+            return response()->json(['message' => 'You can only assign drawers from your project.'], 422);
         }
 
         DB::transaction(function () use ($order, $drawerUser, $actor) {
@@ -2848,6 +2861,68 @@ public function qaTeamMembers(Request $request)
         'total' => $members->count(),
     ]);
 }
+
+    /**
+     * GET /workflow/checker-orders
+     * Checker gets all orders where they are the assigned checker,
+     * so they can distribute drawing work to their team drawers.
+     */
+    public function checkerOrders(Request $request)
+    {
+        $user = $request->user();
+
+        if ($user->role !== 'checker') {
+            return response()->json(['message' => 'Only checkers can access this endpoint.'], 403);
+        }
+
+        $orders = collect();
+        if ($user->project_id) {
+            $orders = Order::forProject($user->project_id)
+                ->where('checker_id', $user->id)
+                ->whereNotIn('workflow_state', ['APPROVED_QA', 'DELIVERED', 'CANCELLED'])
+                ->with(['project', 'team', 'assignedUser'])
+                ->orderBy('created_at', 'asc')
+                ->get();
+        }
+
+        return response()->json([
+            'orders'   => $orders,
+            'in_draw'  => $orders->whereIn('workflow_state', ['QUEUED_DRAW', 'IN_DRAW'])->count(),
+            'in_check' => $orders->whereIn('workflow_state', ['QUEUED_CHECK', 'IN_CHECK'])->count(),
+        ]);
+    }
+
+    /**
+     * GET /workflow/checker-team-members
+     * Checker gets drawers from their own team for assignment.
+     */
+    public function checkerTeamMembers(Request $request)
+    {
+        $user = $request->user();
+
+        if ($user->role !== 'checker') {
+            return response()->json(['message' => 'Only checkers can access this endpoint.'], 403);
+        }
+
+        // Return ALL active drawers in the project (not just own team).
+        // Own-team drawers come first so the UI can highlight them.
+        $drawers = \App\Models\User::where('project_id', $user->project_id)
+            ->where('role', 'drawer')
+            ->where('is_active', true)
+            ->select(['id', 'name', 'email', 'role', 'team_id', 'wip_count', 'wip_limit', 'today_completed', 'is_absent', 'is_online'])
+            ->orderByRaw('(team_id = ?) DESC, name ASC', [$user->team_id ?? 0])
+            ->get()
+            // Flag which drawers belong to this checker's team so frontend can mark them
+            ->map(function ($drawer) use ($user) {
+                $drawer->is_own_team = $user->team_id !== null && (int)$drawer->team_id === (int)$user->team_id;
+                return $drawer;
+            });
+
+        return response()->json([
+            'drawers' => $drawers,
+            'total'   => $drawers->count(),
+        ]);
+    }
 
     // ═══════════════════════════════════════════
     // HELPERS

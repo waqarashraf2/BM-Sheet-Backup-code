@@ -823,8 +823,8 @@ const ProjectsView: React.FC = () => {
                                                                             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-2.5 py-2">
                                                                                 {[
                                                                                     { label: 'Total Teams', value: teamSummary.totalTeams, tab: 'teams' as TeamDetailTab },
-                                                                                    { label: 'Active', value: teamSummary.activeTeams, tab: 'teams' as TeamDetailTab },
-                                                                                    { label: 'Inactive', value: teamSummary.inactiveTeams, tab: 'teams' as TeamDetailTab },
+                                                                                    { label: 'Online Teams', value: teamSummary.activeTeams, tab: 'teams' as TeamDetailTab, status: 'online' },
+                                                                                    { label: 'Offline Teams', value: teamSummary.inactiveTeams, tab: 'teams' as TeamDetailTab, status: 'offline' },
                                                                                     {
                                                                                         label: 'Unassigned',
                                                                                         value: teamSummary.unassignedDrawers + teamSummary.unassignedCheckers,
@@ -845,6 +845,11 @@ const ProjectsView: React.FC = () => {
                                                                                             onClick={() => setTeamDetailTab(item.tab)}
                                                                                             className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] md:text-xs font-semibold ring-1 transition ${isSelected ? 'bg-white text-slate-950 ring-slate-300 shadow-sm' : 'bg-transparent text-slate-600 ring-transparent hover:bg-white/70 hover:text-slate-900'}`}
                                                                                         >
+                                                                                            {'status' in item && item.status ? (
+                                                                                                <span
+                                                                                                    className={`h-2 w-2 rounded-full ${item.status === 'online' ? 'bg-emerald-500 ring-2 ring-emerald-100' : 'bg-slate-400 ring-2 ring-slate-200'}`}
+                                                                                                />
+                                                                                            ) : null}
                                                                                             <span>{item.label}</span>
                                                                                             <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${isSelected ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 ring-1 ring-slate-200'}`}>
                                                                                                 {item.value}
