@@ -170,7 +170,7 @@ export default function SupervisorAssignment() {
     [queues, selectedQueue]
   );
   const effectiveProjectId = projectId ?? selectedQueueInfo?.projects?.[0]?.id ?? null;
-  const shouldUseAssignmentPagination = effectiveProjectId === 1 || effectiveProjectId === 3 || effectiveProjectId === 16 || effectiveProjectId === 12 || effectiveProjectId === 19 || effectiveProjectId === 46;
+  const shouldUseAssignmentPagination = effectiveProjectId === 1 || effectiveProjectId === 3 || effectiveProjectId === 16 || effectiveProjectId === 12 || effectiveProjectId === 19 || effectiveProjectId === 46 || effectiveProjectId === 2;
   const showClientSummaryCard = projectId === 9 || projectId === 46;
   const showCodeQueues = useMemo(() => ['Canada'], []);
   const hasDrawerAssignment = useCallback((order: AssignmentOrder) => {
@@ -1694,25 +1694,67 @@ export default function SupervisorAssignment() {
   };
 
   const handleMonthExport = async (type: 'csv' | 'pdf') => {
-    if (!exportMonth) {
+    // Check if date range filters are active, otherwise require exportMonth
+    const hasDateRangeFilter = !!(startDate || endDate);
+
+    if (!hasDateRangeFilter && !exportMonth) {
       toast({ title: 'Select month', description: 'Choose a month first.', type: 'error' });
       return;
     }
 
-    const filenameBase = `${selectedQueue || 'orders'}_${exportMonth}`;
+    // Build filename based on available date filters
+    let filenameBase = `${selectedQueue || 'orders'}`;
+    if (hasDateRangeFilter) {
+      if (startDate && endDate) {
+        filenameBase += `_${startDate}_to_${endDate}`;
+      } else if (startDate) {
+        filenameBase += `_from_${startDate}`;
+      } else if (endDate) {
+        filenameBase += `_until_${endDate}`;
+      }
+    } else {
+      filenameBase += `_${exportMonth}`;
+    }
 
     try {
       setExportingType(type);
       const exportOrders = await fetchAllOrdersForExport();
-      const monthFilteredOrders = exportOrders.filter((order) => fmtOrderMonthKey(order) === exportMonth);
 
-      if (monthFilteredOrders.length === 0) {
-        toast({ title: 'No orders found', description: 'No orders are available for the selected month.', type: 'error' });
+      // Filter orders: use date range if provided, otherwise use month filter
+      let filteredOrders: AssignmentOrder[];
+
+      if (hasDateRangeFilter) {
+        // Filter by date range
+        filteredOrders = exportOrders.filter((order) => {
+          const orderDate = getOrderDisplayDateSource(order);
+          if (!orderDate) return false;
+
+          // Parse order date to YYYY-MM-DD format for comparison
+          const parsed = parseDisplayDateValue(orderDate);
+          if (!parsed) return false;
+
+          const orderDateStr = `${parsed.year}-${parsed.month}-${parsed.day}`;
+
+          if (startDate && orderDateStr < startDate) return false;
+          if (endDate && orderDateStr > endDate) return false;
+
+          return true;
+        });
+      } else {
+        // Fall back to month-based filtering if no date range is set
+        filteredOrders = exportOrders.filter((order) => fmtOrderMonthKey(order) === exportMonth);
+      }
+
+      if (filteredOrders.length === 0) {
+        const message = hasDateRangeFilter
+          ? `No orders are available for the selected date range (${startDate || 'start'} to ${endDate || 'end'}).`
+          : 'No orders are available for the selected month.';
+        toast({ title: 'No orders found', description: message, type: 'error' });
         return;
       }
 
       const headers = exportColumns.map((column) => column.label);
-      const rows = monthFilteredOrders.map((order) => exportColumns.map((column) => getExportValue(order, column.key)));
+      const rows = filteredOrders.map((order) => exportColumns.map((column) => getExportValue(order, column.key)));
 
       if (type === 'csv') {
         const csv = [
@@ -1729,7 +1771,10 @@ export default function SupervisorAssignment() {
         doc.setFontSize(14);
         doc.text(`Orders Export - ${projectLabel || selectedQueue}`, 14, 14);
         doc.setFontSize(9);
-        doc.text(`Month: ${exportMonth}`, 14, 20);
+        const dateRangeLabel = hasDateRangeFilter
+          ? `Date Range: ${startDate || 'start'} to ${endDate || 'end'}`
+          : `Month: ${exportMonth}`;
+        doc.text(dateRangeLabel, 14, 20);
 
         autoTable(doc, {
           startY: 26,
@@ -1743,7 +1788,9 @@ export default function SupervisorAssignment() {
         doc.save(`${filenameBase}.pdf`);
       }
 
-      toast({ title: `Month ${type.toUpperCase()} ready`, description: `${monthFilteredOrders.length} orders exported.`, type: 'success' });
+      const exportTypeLabel = type === 'csv' ? 'CSV' : 'PDF';
+      const timeframeLabel = hasDateRangeFilter ? 'date range' : 'month';
+      toast({ title: `${exportTypeLabel} ready`, description: `${filteredOrders.length} orders exported for the selected ${timeframeLabel}.`, type: 'success' });
     } catch (error) {
       console.error(error);
       toast({ title: 'Export failed', description: `Could not export ${type.toUpperCase()}.`, type: 'error' });
