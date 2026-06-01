@@ -37,12 +37,17 @@ class DashboardController extends Controller
     {
         static $cache = null;
         if ($cache === null) {
+            // Business day: 05:00 PKT → 05:00 PKT next day = 00:00 UTC → 00:00 UTC next day
+            // (5 AM PKT aligns exactly with midnight UTC, so UTC DATE() comparisons work correctly)
             $now = now('Asia/Karachi');
             $start = $now->copy()->startOfDay()->addHours(5); // 05:00 PKT today
             if ($now->lt($start)) {
                 $start->subDay(); // before 05:00 → still in previous business day
             }
-            $cache = [$start, $start->copy()->addDay()];
+            // Convert to UTC so comparisons work against UTC-stored TIMESTAMP columns
+            $startUtc = $start->copy()->utc();
+            $endUtc   = $start->copy()->addDay()->utc();
+            $cache = [$startUtc, $endUtc];
         }
         return $cache;
     }
