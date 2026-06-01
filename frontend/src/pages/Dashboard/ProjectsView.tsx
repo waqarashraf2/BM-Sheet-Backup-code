@@ -167,12 +167,22 @@ interface ProjectBreakdownResponse {
     teams?: TeamBreakdown[];
 }
 
+interface ProjectTeamUser {
+    id: number;
+    name: string;
+    role?: string;
+    team_id?: number;
+    is_active?: boolean;
+    is_absent?: boolean;
+}
+
 interface ProjectTeam {
     id: number;
     name: string;
     drawer_count?: number;
     checker_count?: number;
     is_active?: boolean;
+    users?: ProjectTeamUser[];
 }
 
 type TeamDetailTab = 'teams' | 'teams-online' | 'teams-offline' | 'unassigned' | 'batch';
@@ -482,10 +492,33 @@ const ProjectsView: React.FC = () => {
 
         let teams: TeamBreakdown[];
 
+        const makeWorkers = (ptUsers: ProjectTeamUser[] | undefined, roleFilter: string): TeamWorkerStat[] =>
+            (ptUsers ?? [])
+                .filter((u) => (u.role || '').toLowerCase() === roleFilter)
+                .map((u) => ({ id: u.id, name: u.name, total_done: 0, total_done_selected_date: 0, wip: 0 }));
+
+        const mergeWorkers = (bdWorkers: TeamWorkerStat[] | undefined, ptUsers: ProjectTeamUser[] | undefined, roleFilter: string): TeamWorkerStat[] => {
+            const existing = new Set((bdWorkers ?? []).map((w) => w.id));
+            const extra = (ptUsers ?? [])
+                .filter((u) => (u.role || '').toLowerCase() === roleFilter && !existing.has(u.id))
+                .map((u) => ({ id: u.id, name: u.name, total_done: 0, total_done_selected_date: 0, wip: 0 }));
+            return [...(bdWorkers ?? []), ...extra];
+        };
+
         if (projectTeams.length > 0) {
             // Merge: use breakdown data where available, fill zeros for the rest
-            teams = projectTeams.map((pt) =>
-                breakdownMap.get(pt.id) ?? {
+            teams = projectTeams.map((pt) => {
+                const bd = breakdownMap.get(pt.id);
+                if (bd) {
+                    // Supplement breakdown workers with any missing team members
+                    return {
+                        ...bd,
+                        drawers: mergeWorkers(bd.drawers, pt.users, 'drawer'),
+                        checkers: mergeWorkers(bd.checkers, pt.users, 'checker'),
+                        qas: mergeWorkers(bd.qas, pt.users, 'qa'),
+                    };
+                }
+                return {
                     team_id: pt.id,
                     team_name: pt.name,
                     drawer_done: 0,
@@ -493,11 +526,11 @@ const ProjectsView: React.FC = () => {
                     qa_done: 0,
                     total_done: 0,
                     total_done_selected_date: 0,
-                    drawers: [],
-                    checkers: [],
-                    qas: [],
-                } as TeamBreakdown
-            );
+                    drawers: makeWorkers(pt.users, 'drawer'),
+                    checkers: makeWorkers(pt.users, 'checker'),
+                    qas: makeWorkers(pt.users, 'qa'),
+                } as TeamBreakdown;
+            });
         } else {
             teams = Array.from(breakdownMap.values());
         }
