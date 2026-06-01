@@ -848,7 +848,7 @@ const ProjectsView: React.FC = () => {
                                                                                         <button
                                                                                             key={item.label}
                                                                                             type="button"
-                                                                                            onClick={() => setTeamDetailTab(item.tab)}
+                                                                                            onClick={() => { setTeamDetailTab(item.tab); if (item.tab === 'unassigned' && unassignedTeam) setExpandedTeam(Number(unassignedTeam.team_id)); }}
                                                                                             className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] md:text-xs font-semibold ring-1 transition ${isSelected ? 'bg-white text-slate-950 ring-slate-300 shadow-sm' : 'bg-transparent text-slate-600 ring-transparent hover:bg-white/70 hover:text-slate-900'}`}
                                                                                         >
                                                                                             {'status' in item && item.status ? (
