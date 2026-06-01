@@ -3593,14 +3593,19 @@ $userCounts = User::whereIn('project_id', $projectIds)
             ->where('is_active', true)
             ->pluck('id');
 
-        // Staff: must be in PM's project, have a worker role, AND belong to an active team
-        // This prevents showing users who have project_id set but no team or wrong team
-        $allStaff = User::whereIn('project_id', $projectIds)
+        // Staff: must be in PM's project, have a worker role.
+        // Team filter is applied only when pmTeamIds is non-empty AND the user has a team_id set
+        // (some photo projects have designers with no team_id assigned yet — include them too)
+        $staffQuery = User::whereIn('project_id', $projectIds)
             ->where('is_active', true)
-            ->whereIn('role', $departmentRoles)
-            ->whereNotNull('team_id')
-            ->whereIn('team_id', $pmTeamIds)
-            ->get();
+            ->whereIn('role', $departmentRoles);
+        if ($pmTeamIds->isNotEmpty()) {
+            $staffQuery->where(function ($q) use ($pmTeamIds) {
+                $q->whereNull('team_id')
+                  ->orWhereIn('team_id', $pmTeamIds);
+            });
+        }
+        $allStaff = $staffQuery->get();
         $allStaffIds = $allStaff->pluck('id');
         $todayCompletions = WorkItem::whereDate('completed_at', today())
             ->where('status', 'completed')
