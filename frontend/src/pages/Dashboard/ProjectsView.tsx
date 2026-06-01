@@ -175,7 +175,7 @@ interface ProjectTeam {
     is_active?: boolean;
 }
 
-type TeamDetailTab = 'teams' | 'unassigned' | 'batch';
+type TeamDetailTab = 'teams' | 'teams-online' | 'teams-offline' | 'unassigned' | 'batch';
 
 interface BatchStatusItem {
     batch_no: string | number;
@@ -493,15 +493,17 @@ const ProjectsView: React.FC = () => {
         }) ?? null;
     }, [breakdown, selectedProject?.project_id]);
 
+    const onlineTeamIds = useMemo(() => new Set(
+        (selectedProject?.online_users ?? [])
+            .filter((user) => {
+                const role = (user.role || '').toLowerCase();
+                return ['drawer', 'checker'].includes(role) && Boolean(user.team_id) && (user.is_online ?? user.is_active ?? true);
+            })
+            .map((user) => Number(user.team_id))
+    ), [selectedProject?.online_users]);
+
     const teamSummary = useMemo(() => {
-        const onlineProductionTeamIds = new Set(
-            (selectedProject?.online_users ?? [])
-                .filter((user) => {
-                    const role = (user.role || '').toLowerCase();
-                    return ['drawer', 'checker'].includes(role) && Boolean(user.team_id) && (user.is_online ?? user.is_active ?? true);
-                })
-                .map((user) => Number(user.team_id))
-        );
+        const onlineProductionTeamIds = onlineTeamIds;
 
         const teamsWithUsers = projectTeams.length > 0
             ? projectTeams.filter((team) => Number(team.drawer_count ?? 0) + Number(team.checker_count ?? 0) > 0)
@@ -517,7 +519,7 @@ const ProjectsView: React.FC = () => {
             unassignedDrawers: unassignedTeam?.drawers?.length ?? 0,
             unassignedCheckers: unassignedTeam?.checkers?.length ?? 0,
         };
-    }, [projectTeams, selectedProject?.online_users, unassignedTeam, visibleTeams.length]);
+    }, [projectTeams, onlineTeamIds, unassignedTeam, visibleTeams.length]);
 
     const getProjectOnlineUsers = (project: ProjectStats) => (
         Array.isArray(project.online_users) ? project.online_users : []
@@ -701,6 +703,10 @@ const ProjectsView: React.FC = () => {
                                         const projectOnlineCount = project.online_staff ?? onlineUsers.length;
                                         const teamsForDisplay = teamDetailTab === 'unassigned' && unassignedTeam
                                             ? [unassignedTeam]
+                                            : teamDetailTab === 'teams-online'
+                                            ? visibleTeams.filter(t => onlineTeamIds.has(Number(t.team_id)))
+                                            : teamDetailTab === 'teams-offline'
+                                            ? visibleTeams.filter(t => !onlineTeamIds.has(Number(t.team_id)))
                                             : visibleTeams;
                                         const batchTotals = batchStatus?.total_orders;
 
@@ -823,8 +829,8 @@ const ProjectsView: React.FC = () => {
                                                                             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-2.5 py-2">
                                                                                 {[
                                                                                     { label: 'Total Teams', value: teamSummary.totalTeams, tab: 'teams' as TeamDetailTab },
-                                                                                    { label: 'Online Teams', value: teamSummary.activeTeams, tab: 'teams' as TeamDetailTab, status: 'online' },
-                                                                                    { label: 'Offline Teams', value: teamSummary.inactiveTeams, tab: 'teams' as TeamDetailTab, status: 'offline' },
+                                                                                    { label: 'Online Teams', value: teamSummary.activeTeams, tab: 'teams-online' as TeamDetailTab, status: 'online' },
+                                                                                    { label: 'Offline Teams', value: teamSummary.inactiveTeams, tab: 'teams-offline' as TeamDetailTab, status: 'offline' },
                                                                                     {
                                                                                         label: 'Unassigned',
                                                                                         value: teamSummary.unassignedDrawers + teamSummary.unassignedCheckers,
