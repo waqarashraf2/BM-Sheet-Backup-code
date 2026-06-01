@@ -142,6 +142,31 @@ function portalLogin(array $env): bool
     return true;
 }
 
+// -- Fetch VARIANT_no from order detail page ----------------------------------
+function fetchVariantName(int $orderId): ?string
+{
+    $url = PORTAL_BASE . '/external_supplier/orders/' . $orderId . '.json';
+    $ch  = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 15,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+        CURLOPT_COOKIEFILE     => COOKIE_FILE,
+        CURLOPT_USERAGENT      => 'BenchmarkCron/1.0',
+    ]);
+    $body = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code !== 200 || !$body) {
+        return null;
+    }
+    $data = json_decode($body, true);
+    return $data['data']['orderable']['variantName'] ?? null;
+}
+
 // -- Fetch one JSON page ------------------------------------------------------
 function fetchOrdersJson(string $url): ?array
 {
@@ -191,7 +216,7 @@ function mapOrder(array $o, bool $hasProcessOrderCol, ?string $processOrderValue
         'workflow_type'    => 'FP_3_LAYER',
         'received_at'      => $receivedAt,
         'due_in'           => $dueIn,
-        'VARIANT_no'       => $o['orderableSummary']['combinationType'] ?? null,
+        'VARIANT_no'       => null,
         'metadata'         => json_encode([
             'combinationType'   => $o['orderableSummary']['combinationType']  ?? null,
             'estimatedSquareFt' => $o['orderableSummary']['estimatedSquareFt'] ?? null,
@@ -264,6 +289,7 @@ try {
     }
 
     $totalInserted = 0;
+    $allOrderIds   = [];   // track all order IDs from this run for VARIANT backfill
     $baseUrl       = PORTAL_BASE . PORTAL_PATH . '.json?filter=' . PORTAL_FILTER;
 
     for ($page = 1; $page <= MAX_PAGES; $page++) {
@@ -279,6 +305,10 @@ try {
             break;
         }
 
+        foreach ($orders as $o) {
+            $allOrderIds[] = (int) $o['id'];
+        }
+
         $records = array_map(fn($o) => mapOrder($o, $hasProcessOrderCol, null), $orders);
         $totalInserted += insertIgnore($pdo, DB_TABLE, $records);
 
@@ -290,11 +320,38 @@ try {
         usleep(300000); // 0.3s between pages
     }
 
+    // -- Backfill VARIANT_no for records that have no variant set yet ----------
+    // This covers newly inserted records and any previously null records in this
+    // run's dataset. The detail page returns orderable.variantName ("VARIANT-XXXX").
+    $backfilled = 0;
+    if (!empty($allOrderIds)) {
+        $in   = implode(',', array_map('intval', $allOrderIds));
+        $stmt = $pdo->query(
+            "SELECT id, order_number FROM `" . DB_TABLE . "`
+             WHERE order_number IN (" . implode(',', array_map(fn($id) => "'#$id'", $allOrderIds)) . ")
+               AND VARIANT_no IS NULL"
+        );
+        $nullRows = $stmt->fetchAll();
+
+        foreach ($nullRows as $row) {
+            $orderId = (int) ltrim($row['order_number'], '#');
+            $variant = fetchVariantName($orderId);
+            if ($variant !== null) {
+                $upd = $pdo->prepare(
+                    "UPDATE `" . DB_TABLE . "` SET VARIANT_no = ?, updated_at = ? WHERE id = ?"
+                );
+                $upd->execute([$variant, (new DateTime())->format('Y-m-d H:i:s'), $row['id']]);
+                $backfilled++;
+            }
+            usleep(150000); // 0.15s between detail API calls
+        }
+    }
+
     if (file_exists(COOKIE_FILE)) {
         @unlink(COOKIE_FILE);
     }
 
-    error_log(SCRIPT_NAME . ": completed -- {$totalInserted} new record(s) inserted into " . DB_TABLE);
+    error_log(SCRIPT_NAME . ": completed -- {$totalInserted} new record(s) inserted, {$backfilled} VARIANT_no backfilled in " . DB_TABLE);
 
 } catch (Throwable $e) {
     error_log(SCRIPT_NAME . ': FATAL -- ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
