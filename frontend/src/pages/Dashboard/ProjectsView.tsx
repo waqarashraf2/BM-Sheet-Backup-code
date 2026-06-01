@@ -466,23 +466,27 @@ const ProjectsView: React.FC = () => {
             });
     }, [breakdown]);
 
-    const visibleTeams = useMemo(() => {
+    const allTeams = useMemo(() => {
         if (selectedProject?.project_id !== teamBreakdownProjectId || !Array.isArray(breakdown?.teams)) return [];
 
         return breakdown.teams
             .filter((team) => {
                 const teamName = (team.team_name || '').trim().toLowerCase();
-                if (Number(team.team_id) === 0 || teamName === 'unassigned team') return false;
-
-                const drawerDone = Number(team.drawer_done ?? 0);
-                const checkerDone = Number(team.checker_done ?? 0);
-                const qaDone = Number(team.qa_done ?? 0);
-                const roleDone = Number(team.total_done_selected_date ?? team.total_done ?? team.total_role_done ?? 0);
-                return drawerDone + checkerDone + qaDone + roleDone > 0;
+                return Number(team.team_id) !== 0 && teamName !== 'unassigned team';
             })
             .slice()
             .sort((a, b) => Number(b.total_done_selected_date ?? b.total_done ?? 0) - Number(a.total_done_selected_date ?? a.total_done ?? 0));
-    }, [breakdown, selectedProject?.project_id]);
+    }, [breakdown, selectedProject?.project_id, teamBreakdownProjectId]);
+
+    const visibleTeams = useMemo(() => {
+        return allTeams.filter((team) => {
+            const drawerDone = Number(team.drawer_done ?? 0);
+            const checkerDone = Number(team.checker_done ?? 0);
+            const qaDone = Number(team.qa_done ?? 0);
+            const roleDone = Number(team.total_done_selected_date ?? team.total_done ?? team.total_role_done ?? 0);
+            return drawerDone + checkerDone + qaDone + roleDone > 0;
+        });
+    }, [allTeams]);
 
     const unassignedTeam = useMemo(() => {
         if (selectedProject?.project_id !== teamBreakdownProjectId || !Array.isArray(breakdown?.teams)) return null;
@@ -507,19 +511,19 @@ const ProjectsView: React.FC = () => {
 
         const teamsWithUsers = projectTeams.length > 0
             ? projectTeams.filter((team) => Number(team.drawer_count ?? 0) + Number(team.checker_count ?? 0) > 0)
-            : visibleTeams.filter((team) => (team.drawers?.length ?? 0) + (team.checkers?.length ?? 0) > 0);
-        const configuredTeamIds = new Set((projectTeams.length > 0 ? projectTeams : visibleTeams).map((team) => Number('id' in team ? team.id : team.team_id)));
+            : allTeams.filter((team) => (team.drawers?.length ?? 0) + (team.checkers?.length ?? 0) > 0);
+        const configuredTeamIds = new Set((projectTeams.length > 0 ? projectTeams : allTeams).map((team) => Number('id' in team ? team.id : team.team_id)));
         const activeTeams = Array.from(onlineProductionTeamIds).filter((teamId) => configuredTeamIds.has(teamId)).length;
-        const teamsWithUsersCount = teamsWithUsers.length || (projectTeams.length || visibleTeams.length);
+        const teamsWithUsersCount = teamsWithUsers.length || (projectTeams.length || allTeams.length);
 
         return {
-            totalTeams: projectTeams.length || visibleTeams.length,
+            totalTeams: projectTeams.length || allTeams.length,
             activeTeams,
             inactiveTeams: Math.max(teamsWithUsersCount - activeTeams, 0),
             unassignedDrawers: unassignedTeam?.drawers?.length ?? 0,
             unassignedCheckers: unassignedTeam?.checkers?.length ?? 0,
         };
-    }, [projectTeams, onlineTeamIds, unassignedTeam, visibleTeams.length]);
+    }, [projectTeams, onlineTeamIds, unassignedTeam, allTeams]);
 
     const getProjectOnlineUsers = (project: ProjectStats) => (
         Array.isArray(project.online_users) ? project.online_users : []
@@ -697,16 +701,18 @@ const ProjectsView: React.FC = () => {
                                         const showClientNamesAsProjects =
                                             specialClientProjectIds.includes(project.project_id) && clientNameCounts.length > 0;
                                         const showTeamBreakdown = project.project_id === teamBreakdownProjectId
-                                            && (visibleTeams.length > 0 || Boolean(unassignedTeam) || Boolean(batchStatus) || projectTeams.length > 0);
+                                            && (allTeams.length > 0 || Boolean(unassignedTeam) || Boolean(batchStatus) || projectTeams.length > 0);
                                         const roleCardsToRender = showTeamBreakdown ? [] : visibleRoles;
                                         const onlineUsers = getProjectOnlineUsers(project);
                                         const projectOnlineCount = project.online_staff ?? onlineUsers.length;
                                         const teamsForDisplay = teamDetailTab === 'unassigned' && unassignedTeam
                                             ? [unassignedTeam]
                                             : teamDetailTab === 'teams-online'
-                                            ? visibleTeams.filter(t => onlineTeamIds.has(Number(t.team_id)))
+                                            ? allTeams.filter(t => onlineTeamIds.has(Number(t.team_id)))
                                             : teamDetailTab === 'teams-offline'
-                                            ? visibleTeams.filter(t => !onlineTeamIds.has(Number(t.team_id)))
+                                            ? allTeams.filter(t => !onlineTeamIds.has(Number(t.team_id)))
+                                            : teamDetailTab === 'teams'
+                                            ? allTeams
                                             : visibleTeams;
                                         const batchTotals = batchStatus?.total_orders;
 
