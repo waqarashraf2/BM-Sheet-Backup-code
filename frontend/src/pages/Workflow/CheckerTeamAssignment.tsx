@@ -142,13 +142,21 @@ export default function CheckerTeamAssignment() {
         enabled: canAccess,
     });
 
+    /* ── Relevant drawer IDs (own-team + OM-assigned guests) ── */
+    const _assignedDrawerIds = new Set(
+        orders.filter(o => (o as any).drawer_id).map(o => (o as any).drawer_id as number)
+    );
+    const _relevantDrawerIds = new Set(
+        drawers.filter(d => d.is_own_team || _assignedDrawerIds.has(d.id)).map(d => d.id)
+    );
+
     /* ── Assign drawer ── */
-    // Default: hide absent (show them only when searching). Own-team first, then available others, then absent.
+    // Default: own-team + guests only, hide absent. Searching → show all project drawers.
     const assignableDrawers = useMemo(() => {
         if (!assignDropdown) return [];
         const base = assignSearch
             ? [...drawers]                          // searching → show everyone
-            : drawers.filter(w => !w.is_absent);   // default → hide absent
+            : drawers.filter(w => !w.is_absent && _relevantDrawerIds.has(w.id));  // default → own-team + guests, hide absent
         return base.sort((a, b) => {
             const ownA = a.is_own_team ? 0 : 1;
             const ownB = b.is_own_team ? 0 : 1;
@@ -162,7 +170,7 @@ export default function CheckerTeamAssignment() {
             const q = assignSearch.toLowerCase();
             return w.name.toLowerCase().includes(q) || w.email.toLowerCase().includes(q) || String(w.id).includes(q);
         });
-    }, [assignDropdown, drawers, assignSearch]);
+    }, [assignDropdown, drawers, assignSearch, _relevantDrawerIds]);
 
     const openAssignDropdown = (e: React.MouseEvent, orderId: number) => {
         e.stopPropagation();
@@ -230,9 +238,7 @@ export default function CheckerTeamAssignment() {
 
     /* ── Drawer buckets ── */
     // Drawers who have at least one order assigned in this checker's queue
-    const assignedDrawerIds = new Set(
-        orders.filter(o => (o as any).drawer_id).map(o => (o as any).drawer_id as number)
-    );
+    const assignedDrawerIds = _assignedDrawerIds;
     const ownTeamDrawers  = drawers.filter(d => d.is_own_team);
     const ownTeamPresent  = ownTeamDrawers.filter(d => !d.is_absent);
     const ownTeamAbsent   = ownTeamDrawers.filter(d => d.is_absent);
