@@ -167,6 +167,40 @@ interface ProjectBreakdownResponse {
     teams?: TeamBreakdown[];
 }
 
+interface ProjectTeam {
+    id: number;
+    name: string;
+    drawer_count?: number;
+    checker_count?: number;
+    is_active?: boolean;
+}
+
+type TeamDetailTab = 'teams' | 'unassigned' | 'batch';
+
+interface BatchStatusItem {
+    batch_no: string | number;
+    batch_label?: string;
+    received_time?: string;
+    remaining_time?: string;
+    plans?: number;
+    done?: number;
+    pending?: number;
+    fixing?: number;
+}
+
+interface BatchStatusResponse {
+    success: boolean;
+    total_orders?: {
+        plans?: number;
+        done?: number;
+        pending?: number;
+        drawing_process?: number;
+        untouched_orders?: number;
+        sent_to_fixing?: number;
+    };
+    batches?: BatchStatusItem[];
+}
+
 type RoleCompletionEntry = {
     total_staff?: number;
     active?: number;
@@ -261,6 +295,10 @@ const ProjectsView: React.FC = () => {
     const [selectedProject, setSelectedProject] = useState<ProjectStats | null>(null);
     const [breakdown, setBreakdown] = useState<ProjectBreakdownResponse | null>(null);
     const [loadingBreakdown, setLoadingBreakdown] = useState(false);
+    const [projectTeams, setProjectTeams] = useState<ProjectTeam[]>([]);
+    const [batchStatus, setBatchStatus] = useState<BatchStatusResponse | null>(null);
+    const [loadingBatchStatus, setLoadingBatchStatus] = useState(false);
+    const [teamDetailTab, setTeamDetailTab] = useState<TeamDetailTab>('teams');
 
     const [activeTab] = useState<'received' | 'done'>('received');
     const [expandedTeam, setExpandedTeam] = useState<number | null>(null);
@@ -315,6 +353,11 @@ const ProjectsView: React.FC = () => {
             setSelectedProject(null);
             setBreakdown(null);
             setLoadingBreakdown(false);
+            setProjectTeams([]);
+            setBatchStatus(null);
+            setLoadingBatchStatus(false);
+            setTeamDetailTab('teams');
+            setExpandedTeam(null);
             return;
         }
 
@@ -322,6 +365,11 @@ const ProjectsView: React.FC = () => {
             setSelectedProject(project);
             setBreakdown(null);
             setLoadingBreakdown(true);
+            setProjectTeams([]);
+            setBatchStatus(null);
+            setLoadingBatchStatus(project.project_id === teamBreakdownProjectId);
+            setTeamDetailTab('teams');
+            setExpandedTeam(null);
 
             // Build params based on filter type, including project_id
             const params: Record<string, string> = {
@@ -337,12 +385,20 @@ const ProjectsView: React.FC = () => {
                 if (startDate) params.start_date = startDate;
             }
 
-            const res = await apiClient.get('/dashboard/project-stats', {
-                params
-            });
+            const [statsRes, teamsRes, batchRes] = await Promise.all([
+                apiClient.get('/dashboard/project-stats', { params }),
+                project.project_id === teamBreakdownProjectId
+                    ? apiClient.get<{ data?: ProjectTeam[] }>(`/projects/${project.project_id}/teams`)
+                    : Promise.resolve(null),
+                project.project_id === teamBreakdownProjectId
+                    ? apiClient.get<BatchStatusResponse>('/dashboard/batch-status', {
+                        params: { project_id: project.project_id, date: endDate || selectedDate }
+                    })
+                    : Promise.resolve(null),
+            ]);
 
-            if (res.data.success) {
-                const apiData = res.data as {
+            if (statsRes.data.success) {
+                const apiData = statsRes.data as {
                     selected_project_breakdown?: ProjectBreakdownResponse | null;
                     workers?: Record<string, AssignmentWorkerLike[] | undefined>;
                     role_completions?: Record<string, RoleCompletionEntry | undefined>;
@@ -364,17 +420,32 @@ const ProjectsView: React.FC = () => {
                 }
             }
 
+            if (teamsRes?.data?.data) {
+                setProjectTeams(teamsRes.data.data);
+            }
+
+            if (batchRes?.data) {
+                setBatchStatus(batchRes.data);
+            }
+
         } catch (err) {
             console.error(err);
             setBreakdown(null);
+            setProjectTeams([]);
+            setBatchStatus(null);
         } finally {
             setLoadingBreakdown(false);
+            setLoadingBatchStatus(false);
         }
     };
 
     useEffect(() => {
         setSelectedProject(null);
         setBreakdown(null);
+        setProjectTeams([]);
+        setBatchStatus(null);
+        setTeamDetailTab('teams');
+        setExpandedTeam(null);
     }, [selectedDate, startDate, endDate, dateFilterType]);
 
     const visibleRoles = useMemo(() => {
@@ -413,15 +484,40 @@ const ProjectsView: React.FC = () => {
             .sort((a, b) => Number(b.total_done_selected_date ?? b.total_done ?? 0) - Number(a.total_done_selected_date ?? a.total_done ?? 0));
     }, [breakdown, selectedProject?.project_id]);
 
-    const teamRoleGroups: Array<{
-        key: 'drawers' | 'checkers';
-        label: string;
-        doneKey: 'drawer_done' | 'checker_done';
-        badgeClass: string;
-    }> = [
-        { key: 'drawers', label: 'Drawer', doneKey: 'drawer_done', badgeClass: 'bg-blue-50 text-blue-700' },
-        { key: 'checkers', label: 'Checker', doneKey: 'checker_done', badgeClass: 'bg-violet-50 text-violet-700' },
-    ];
+    const unassignedTeam = useMemo(() => {
+        if (selectedProject?.project_id !== teamBreakdownProjectId || !Array.isArray(breakdown?.teams)) return null;
+
+        return breakdown.teams.find((team) => {
+            const teamName = (team.team_name || '').trim().toLowerCase();
+            return Number(team.team_id) === 0 || teamName === 'unassigned team';
+        }) ?? null;
+    }, [breakdown, selectedProject?.project_id]);
+
+    const teamSummary = useMemo(() => {
+        const onlineProductionTeamIds = new Set(
+            (selectedProject?.online_users ?? [])
+                .filter((user) => {
+                    const role = (user.role || '').toLowerCase();
+                    return ['drawer', 'checker'].includes(role) && Boolean(user.team_id) && (user.is_online ?? user.is_active ?? true);
+                })
+                .map((user) => Number(user.team_id))
+        );
+
+        const teamsWithUsers = projectTeams.length > 0
+            ? projectTeams.filter((team) => Number(team.drawer_count ?? 0) + Number(team.checker_count ?? 0) > 0)
+            : visibleTeams.filter((team) => (team.drawers?.length ?? 0) + (team.checkers?.length ?? 0) > 0);
+        const configuredTeamIds = new Set((projectTeams.length > 0 ? projectTeams : visibleTeams).map((team) => Number('id' in team ? team.id : team.team_id)));
+        const activeTeams = Array.from(onlineProductionTeamIds).filter((teamId) => configuredTeamIds.has(teamId)).length;
+        const teamsWithUsersCount = teamsWithUsers.length || (projectTeams.length || visibleTeams.length);
+
+        return {
+            totalTeams: projectTeams.length || visibleTeams.length,
+            activeTeams,
+            inactiveTeams: Math.max(teamsWithUsersCount - activeTeams, 0),
+            unassignedDrawers: unassignedTeam?.drawers?.length ?? 0,
+            unassignedCheckers: unassignedTeam?.checkers?.length ?? 0,
+        };
+    }, [projectTeams, selectedProject?.online_users, unassignedTeam, visibleTeams.length]);
 
     const getProjectOnlineUsers = (project: ProjectStats) => (
         Array.isArray(project.online_users) ? project.online_users : []
@@ -444,46 +540,6 @@ const ProjectsView: React.FC = () => {
     ) => {
         if (!workers || workers.length === 0) return 0;
         return workers.filter((worker) => worker.is_online || getOnlineUserForWorker(worker, onlineUsers)).length;
-    };
-
-    const renderTeamMembers = (
-        members: TeamWorkerStat[] | undefined,
-        emptyText: string,
-        onlineUsers: OnlineUser[] = []
-    ) => {
-        if (!members || members.length === 0) {
-            return <div className="text-[10px] md:text-[11px] text-slate-400">{emptyText}</div>;
-        }
-
-        return (
-            <div className="space-y-1.5">
-                {members.map((member, index) => {
-                    const done = Number(member.total_done_selected_date ?? member.total_done ?? 0);
-                    const onlineUser = getOnlineUserForWorker(member, onlineUsers);
-                    const isOnline = Boolean(member.is_online || onlineUser);
-
-                    return (
-                        <div
-                            key={`${member.team_id ?? 'team'}-${member.role ?? 'role'}-${member.id ?? member.name}-${index}`}
-                            className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5"
-                        >
-                            <div className="min-w-0">
-                                <div className="flex items-center gap-1.5 truncate text-[10px] md:text-[11px] font-medium text-slate-800">
-                                    <span
-                                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${isOnline ? 'bg-emerald-500 ring-2 ring-emerald-100' : 'bg-slate-300'}`}
-                                        title={isOnline ? 'Active now' : 'Offline'}
-                                    />
-                                    <span className="truncate">{member.name}</span>
-                                </div>
-                            </div>
-                            <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md bg-white px-1.5 py-0.5 text-[9px] md:text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200">
-                                {done}
-                            </span>
-                        </div>
-                    );
-                })}
-            </div>
-        );
     };
 
     /* ================= UI ================= */
@@ -638,10 +694,15 @@ const ProjectsView: React.FC = () => {
                                         const clientNameCounts = project.client_name_counts ?? [];
                                         const showClientNamesAsProjects =
                                             specialClientProjectIds.includes(project.project_id) && clientNameCounts.length > 0;
-                                        const showTeamBreakdown = project.project_id === teamBreakdownProjectId && visibleTeams.length > 0;
+                                        const showTeamBreakdown = project.project_id === teamBreakdownProjectId
+                                            && (visibleTeams.length > 0 || Boolean(unassignedTeam) || Boolean(batchStatus) || projectTeams.length > 0);
                                         const roleCardsToRender = showTeamBreakdown ? [] : visibleRoles;
                                         const onlineUsers = getProjectOnlineUsers(project);
                                         const projectOnlineCount = project.online_staff ?? onlineUsers.length;
+                                        const teamsForDisplay = teamDetailTab === 'unassigned' && unassignedTeam
+                                            ? [unassignedTeam]
+                                            : visibleTeams;
+                                        const batchTotals = batchStatus?.total_orders;
 
                                         return (
                                             <React.Fragment key={project.project_id}>
@@ -758,8 +819,97 @@ const ProjectsView: React.FC = () => {
                                                                     )}
 
                                                                     {showTeamBreakdown && (
-                                                                        <div className="grid grid-cols-1 xl:grid-cols-1 gap-3">
-                                                                            {visibleTeams.map((team) => {
+                                                                        <div className="space-y-3">
+                                                                            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-2.5 py-2">
+                                                                                {[
+                                                                                    { label: 'Total Teams', value: teamSummary.totalTeams, tab: 'teams' as TeamDetailTab },
+                                                                                    { label: 'Active', value: teamSummary.activeTeams, tab: 'teams' as TeamDetailTab },
+                                                                                    { label: 'Inactive', value: teamSummary.inactiveTeams, tab: 'teams' as TeamDetailTab },
+                                                                                    {
+                                                                                        label: 'Unassigned',
+                                                                                        value: teamSummary.unassignedDrawers + teamSummary.unassignedCheckers,
+                                                                                        tab: 'unassigned' as TeamDetailTab,
+                                                                                        suffix: `D ${teamSummary.unassignedDrawers} / C ${teamSummary.unassignedCheckers}`,
+                                                                                    },
+                                                                                    {
+                                                                                        label: 'Batch Status',
+                                                                                        value: batchStatus?.batches?.length ?? 0,
+                                                                                        tab: 'batch' as TeamDetailTab,
+                                                                                    },
+                                                                                ].map((item) => {
+                                                                                    const isSelected = teamDetailTab === item.tab;
+                                                                                    return (
+                                                                                        <button
+                                                                                            key={item.label}
+                                                                                            type="button"
+                                                                                            onClick={() => setTeamDetailTab(item.tab)}
+                                                                                            className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] md:text-xs font-semibold ring-1 transition ${isSelected ? 'bg-white text-slate-950 ring-slate-300 shadow-sm' : 'bg-transparent text-slate-600 ring-transparent hover:bg-white/70 hover:text-slate-900'}`}
+                                                                                        >
+                                                                                            <span>{item.label}</span>
+                                                                                            <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${isSelected ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 ring-1 ring-slate-200'}`}>
+                                                                                                {item.value}
+                                                                                            </span>
+                                                                                            {'suffix' in item && item.suffix ? (
+                                                                                                <span className="text-[10px] font-medium text-slate-500">{item.suffix}</span>
+                                                                                            ) : null}
+                                                                                        </button>
+                                                                                    );
+                                                                                })}
+                                                                            </div>
+
+                                                                            {teamDetailTab === 'batch' ? (
+                                                                                <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                                                                                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
+                                                                                        <h3 className="text-xs md:text-sm font-semibold text-slate-950">Batch Status</h3>
+                                                                                        <div className="flex flex-wrap items-center gap-1.5">
+                                                                                            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">Plans {batchTotals?.plans ?? 0}</span>
+                                                                                            <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Done {batchTotals?.done ?? 0}</span>
+                                                                                            <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Pending {batchTotals?.pending ?? 0}</span>
+                                                                                            <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Fixing {batchTotals?.sent_to_fixing ?? 0}</span>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    {loadingBatchStatus ? (
+                                                                                        <div className="flex items-center justify-center py-8">
+                                                                                            <Loader2 className="h-5 w-5 animate-spin text-[#2AA7A0]" />
+                                                                                        </div>
+                                                                                    ) : (batchStatus?.batches?.length ?? 0) > 0 ? (
+                                                                                        <div className="overflow-x-auto">
+                                                                                            <table className="w-full text-xs md:text-sm">
+                                                                                                <thead className="bg-slate-50">
+                                                                                                    <tr className="border-b border-slate-100">
+                                                                                                        <th className="px-3 py-2 text-left text-[10px] font-semibold text-slate-500">Batch</th>
+                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Received</th>
+                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Remaining</th>
+                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Plans</th>
+                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Done</th>
+                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Pending</th>
+                                                                                                    </tr>
+                                                                                                </thead>
+                                                                                                <tbody className="divide-y divide-slate-50">
+                                                                                                    {batchStatus?.batches?.map((batch) => (
+                                                                                                        <tr key={`batch-${batch.batch_no}`} className="hover:bg-slate-50/70">
+                                                                                                            <td className="px-3 py-2 font-semibold text-slate-900">{batch.batch_label ?? `Batch ${batch.batch_no}`}</td>
+                                                                                                            <td className="px-3 py-2 text-center text-slate-600">{batch.received_time ?? '-'}</td>
+                                                                                                            <td className="px-3 py-2 text-center text-slate-600">{batch.remaining_time ?? '-'}</td>
+                                                                                                            <td className="px-3 py-2 text-center font-semibold text-slate-700">{batch.plans ?? 0}</td>
+                                                                                                            <td className="px-3 py-2 text-center font-semibold text-emerald-700">{batch.done ?? 0}</td>
+                                                                                                            <td className="px-3 py-2 text-center font-semibold text-amber-700">{batch.pending ?? 0}</td>
+                                                                                                        </tr>
+                                                                                                    ))}
+                                                                                                </tbody>
+                                                                                            </table>
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div className="px-3 py-8 text-center text-xs md:text-sm text-slate-400">
+                                                                                            No batch status data available.
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            ) : null}
+
+                                                                            {teamDetailTab !== 'batch' && (
+                                                                                <div className="grid grid-cols-1 xl:grid-cols-1 gap-3">
+                                                                            {teamsForDisplay.map((team) => {
                                                                                 const teamDone = Number(team.total_done_selected_date ?? team.total_done ?? 0);
                                                                                 const teamPending = (team.drawers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0)
                                                                                     + (team.checkers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0);
@@ -810,7 +960,7 @@ const ProjectsView: React.FC = () => {
                                                                                                                 <div key={`dr-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isOn ? '#f0fdfa' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
                                                                                                                     <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
                                                                                                                     <span style={{ fontSize: '11px', fontWeight: '500', color: '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
-                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{assigned} asgn</span>
+                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{assigned} assign</span>
                                                                                                                     <span style={{ fontSize: '11px', fontWeight: '700', color: dn > 0 ? '#0f766e' : '#94a3b8', background: dn > 0 ? '#ccfbf1' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>✓{dn}</span>
                                                                                                                     <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>
                                                                                                                 </div>
@@ -839,7 +989,7 @@ const ProjectsView: React.FC = () => {
                                                                                                                 <div key={`ck-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isOn ? '#faf5ff' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
                                                                                                                     <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
                                                                                                                     <span style={{ fontSize: '11px', fontWeight: '500', color: '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
-                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{dn + wip} asgn</span>
+                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{dn + wip} assign</span>
                                                                                                                     <span style={{ fontSize: '11px', fontWeight: '700', color: dn > 0 ? '#7c3aed' : '#94a3b8', background: dn > 0 ? '#ede9fe' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>✓{dn}</span>
                                                                                                                     <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>
                                                                                                                 </div>
@@ -852,6 +1002,8 @@ const ProjectsView: React.FC = () => {
                                                                                     </div>
                                                                                 );
                                                                             })}
+                                                                                </div>
+                                                                            )}
                                                                         </div>
                                                                     )}
 

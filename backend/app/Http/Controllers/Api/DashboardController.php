@@ -1184,6 +1184,7 @@ if ($request->query('date')) {
             if ($startDate > $endDate) {
                 [$startDate, $endDate] = [$endDate, $startDate];
             }
+            
         } else {
             $startDate = \Carbon\Carbon::parse($date)->toDateString();
             $endDate = $startDate;

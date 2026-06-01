@@ -177,7 +177,7 @@ Route::prefix('assignments')->group(function () {
     Route::middleware('role:ceo,director,operations_manager')->get('/dashboard/operations', [DashboardController::class, 'operations']);
     Route::middleware('role:project_manager')->get('/dashboard/project-manager', [DashboardController::class, 'projectManager']);
     Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa')->get('/dashboard/queues', [DashboardController::class, 'queues']);
-    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa')->get('/dashboard/assignment/{queueName}', [DashboardController::class, 'assignmentDashboard'])->where('queueName', '.*');
+    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,checker')->get('/dashboard/assignment/{queueName}', [DashboardController::class, 'assignmentDashboard'])->where('queueName', '.*');
     Route::middleware('role:drawer,checker,filler,qa,designer')->get('/dashboard/worker', [DashboardController::class, 'worker']);
     Route::middleware('role:ceo,director,operations_manager,project_manager')->get('/dashboard/absentees', [DashboardController::class, 'absentees']);
 
