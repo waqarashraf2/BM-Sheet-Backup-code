@@ -6,7 +6,7 @@ import { useSmartPolling } from '../../hooks/useSmartPolling';
 import { useNewOrderHighlight } from '../../hooks/useNewOrderHighlight';
 import type { Order, ProjectColumn, User } from '../../types';
 import { AnimatedPage, StatusBadge, Button, useToast } from '../../components/ui';
-import { Users, RefreshCw, Pencil, AlertTriangle, Clock, Search, X, Loader2 } from 'lucide-react';
+import { Users, RefreshCw, Pencil, AlertTriangle, Clock, Search, X, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // Backend returns is_own_team flag on each drawer
@@ -49,6 +49,7 @@ export default function CheckerTeamAssignment() {
     const [assignDropdown, setAssignDropdown] = useState<{ orderId: number; anchorRect?: DOMRect } | null>(null);
     const [assignSearch, setAssignSearch] = useState('');
     const [assigning, setAssigning] = useState(false);
+    const [showAllDrawers, setShowAllDrawers] = useState(false);
 
     const { toast } = useToast();
     const canAccess = user?.role === 'checker';
@@ -142,19 +143,25 @@ export default function CheckerTeamAssignment() {
     });
 
     /* ── Assign drawer ── */
-    // Show ALL drawers in dropdown (including absent), own-team first, then search-filtered
+    // Default: hide absent (show them only when searching). Own-team first, then available others, then absent.
     const assignableDrawers = useMemo(() => {
         if (!assignDropdown) return [];
-        // Sort: own-team first, then by name
-        const sorted = [...drawers].sort((a, b) => {
+        const base = assignSearch
+            ? [...drawers]                          // searching → show everyone
+            : drawers.filter(w => !w.is_absent);   // default → hide absent
+        return base.sort((a, b) => {
             const ownA = a.is_own_team ? 0 : 1;
             const ownB = b.is_own_team ? 0 : 1;
             if (ownA !== ownB) return ownA - ownB;
+            const absentA = a.is_absent ? 1 : 0;
+            const absentB = b.is_absent ? 1 : 0;
+            if (absentA !== absentB) return absentA - absentB;
             return a.name.localeCompare(b.name);
+        }).filter(w => {
+            if (!assignSearch) return true;
+            const q = assignSearch.toLowerCase();
+            return w.name.toLowerCase().includes(q) || w.email.toLowerCase().includes(q) || String(w.id).includes(q);
         });
-        if (!assignSearch) return sorted;
-        const q = assignSearch.toLowerCase();
-        return sorted.filter(w => w.name.toLowerCase().includes(q) || w.email.toLowerCase().includes(q) || String(w.id).includes(q));
     }, [assignDropdown, drawers, assignSearch]);
 
     const openAssignDropdown = (e: React.MouseEvent, orderId: number) => {
@@ -219,6 +226,16 @@ export default function CheckerTeamAssignment() {
     const inDraw = orders.filter(o => ['QUEUED_DRAW', 'IN_DRAW'].includes(o.workflow_state));
     const inCheck = orders.filter(o => ['QUEUED_CHECK', 'IN_CHECK'].includes(o.workflow_state));
     const unassigned = orders.filter(o => !(o as any).drawer_id && !(o as any).drawer_name);
+    const assigned = orders.filter(o => (o as any).drawer_id || (o as any).drawer_name);
+
+    /* ── Drawer buckets ── */
+    const ownTeamDrawers = drawers.filter(d => d.is_own_team);
+    const ownTeamPresent = ownTeamDrawers.filter(d => !d.is_absent);
+    const ownTeamAbsent  = ownTeamDrawers.filter(d => d.is_absent);
+    const otherPresent   = drawers.filter(d => !d.is_own_team && !d.is_absent);
+    const otherAbsent    = drawers.filter(d => !d.is_own_team && d.is_absent);
+    const displayedOthers = showAllDrawers ? [...otherPresent, ...otherAbsent] : otherPresent;
+    const hiddenAbsentCount = otherAbsent.length;
 
     /* ── Drawer cell renderer ── */
     const DrawerCell = ({ order }: { order: Order }) => {
@@ -400,7 +417,7 @@ export default function CheckerTeamAssignment() {
                             <Users className="w-4 h-4 text-slate-500" />
                             <span className="text-xs text-slate-500">Team Size</span>
                         </div>
-                        <div className="text-2xl font-bold text-slate-900">{drawers.length}</div>
+                        <div className="text-2xl font-bold text-slate-900">{ownTeamDrawers.length > 0 ? ownTeamDrawers.length : drawers.length}</div>
                     </div>
                 </div>
 
@@ -418,57 +435,197 @@ export default function CheckerTeamAssignment() {
                 </div>
 
                 {/* Team drawers panel */}
-                <div className="bg-white rounded-xl border border-slate-200/60 p-4">
-                    <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
-                        <Pencil className="w-4 h-4 text-blue-500" /> Drawers ({drawers.length})
-                        <span className="ml-auto text-[10px] font-normal text-slate-400">
-                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1" />Own team highlighted
+                <div className="bg-white rounded-xl border border-slate-200/60 overflow-hidden">
+                    {/* Panel header */}
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+                        <div className="flex items-center gap-2">
+                            <Users className="w-4 h-4 text-blue-500" />
+                            <span className="text-sm font-semibold text-slate-900">
+                                {ownTeamDrawers.length > 0 ? 'My Team' : 'Project Drawers'}
+                            </span>
+                            {ownTeamDrawers.length > 0 && (
+                                <span className="text-xs text-slate-400">
+                                    {ownTeamDrawers.length} members
+                                    {ownTeamPresent.length > 0 && (
+                                        <span className="ml-1 text-emerald-600 font-medium">· {ownTeamPresent.length} available</span>
+                                    )}
+                                </span>
+                            )}
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 mr-1" />own team
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-slate-300 mx-1 ml-2" />others
                         </span>
-                    </h3>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-48 overflow-y-auto">
-                        {drawers.map(d => (
-                            <div key={d.id} className={`flex items-center justify-between p-2 rounded-lg ${d.is_own_team ? 'bg-blue-50 border border-blue-100' : 'bg-slate-50'
-                                }`}>
-                                <div className="flex items-center gap-2 min-w-0">
-                                    <div className="relative flex-shrink-0">
-                                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-white text-[10px] font-bold ${d.is_absent ? 'bg-slate-400' : d.is_own_team ? 'bg-blue-600' : 'bg-slate-500'
-                                            }`}>
-                                            {d.name.charAt(0)}
+                    </div>
+
+                    {/* Own-team drawers */}
+                    <div className="p-4">
+                        {drawers.length === 0 ? (
+                            <div className="text-sm text-slate-400 text-center py-4">No drawers found</div>
+                        ) : (
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+                                {[...ownTeamPresent, ...ownTeamAbsent].map(d => {
+                                    const wip = d.wip_count || 0;
+                                    const limit = d.wip_limit || 5;
+                                    const pct = Math.min(100, limit > 0 ? (wip / limit) * 100 : 0);
+                                    const barColor = pct >= 100 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-400' : 'bg-emerald-400';
+                                    return (
+                                        <div key={d.id} className={`p-2.5 rounded-xl border transition-colors ${
+                                            d.is_absent
+                                                ? 'bg-slate-50 border-slate-200 opacity-50'
+                                                : 'bg-blue-50 border-blue-200'
+                                        }`}>
+                                            <div className="flex items-center gap-1.5 mb-2">
+                                                <div className={`w-6 h-6 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${
+                                                    d.is_absent ? 'bg-slate-400' : 'bg-blue-600'
+                                                }`}>{d.name.charAt(0)}</div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-[11px] font-semibold text-slate-900 truncate leading-tight">{d.name}</div>
+                                                    <div className={`text-[9px] font-medium ${
+                                                        d.is_absent ? 'text-red-400' : 'text-emerald-500'
+                                                    }`}>{d.is_absent ? 'Absent' : 'Available'}</div>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-between text-[9px] text-slate-400 mb-1">
+                                                <span>WIP {wip}/{limit}</span>
+                                                <span>✓ {d.today_completed || 0} done</span>
+                                            </div>
+                                            <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                                            </div>
                                         </div>
-                                        {/* Online dot */}
-                                        <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-white ${d.is_online ? 'bg-emerald-400' : 'bg-slate-300'
-                                            }`} />
-                                    </div>
-                                    <div className="min-w-0">
-                                        <div className="text-xs font-medium text-slate-900 truncate">{d.name}</div>
-                                        <div className={`text-[10px] ${d.is_absent ? 'text-red-500' : d.is_online ? 'text-emerald-600' : 'text-slate-400'
-                                            }`}>
-                                            {d.is_absent ? 'Absent' : d.is_online ? 'Online' : 'Offline'}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="text-right flex-shrink-0 ml-1">
-                                    <div className="text-[10px] text-slate-600">WIP: {d.wip_count || 0}/{d.wip_limit || 5}</div>
-                                    <div className="text-[10px] text-slate-400">Done: {d.today_completed || 0}</div>
-                                </div>
+                                    );
+                                })}
+                                {ownTeamDrawers.length === 0 && (
+                                    <div className="col-span-full text-xs text-slate-400 py-1">No own-team members — showing all project drawers below</div>
+                                )}
                             </div>
-                        ))}
-                        {drawers.length === 0 && (
-                            <div className="col-span-full text-sm text-slate-400 text-center py-4">No drawers found</div>
                         )}
                     </div>
+
+                    {/* Other project drawers (collapsible) */}
+                    {otherPresent.length > 0 && (
+                        <div className="border-t border-slate-100">
+                            <button
+                                onClick={() => setShowAllDrawers(v => !v)}
+                                className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 transition-colors"
+                            >
+                                <span className="font-medium">
+                                    {showAllDrawers
+                                        ? 'Hide other project drawers'
+                                        : `Show ${otherPresent.length} other available drawers${hiddenAbsentCount > 0 ? ` (+${hiddenAbsentCount} absent)` : ''}`
+                                    }
+                                </span>
+                                {showAllDrawers ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            </button>
+                            {showAllDrawers && (
+                                <div className="px-4 pb-4">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+                                        {displayedOthers.map(d => {
+                                            const wip = d.wip_count || 0;
+                                            const limit = d.wip_limit || 5;
+                                            const pct = Math.min(100, limit > 0 ? (wip / limit) * 100 : 0);
+                                            const barColor = pct >= 100 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-400' : 'bg-emerald-400';
+                                            return (
+                                                <div key={d.id} className={`p-2.5 rounded-xl border transition-colors ${
+                                                    d.is_absent
+                                                        ? 'bg-slate-50 border-slate-200 opacity-50'
+                                                        : 'bg-white border-slate-200 hover:border-slate-300'
+                                                }`}>
+                                                    <div className="flex items-center gap-1.5 mb-2">
+                                                        <div className={`w-6 h-6 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${
+                                                            d.is_absent ? 'bg-slate-400' : 'bg-slate-500'
+                                                        }`}>{d.name.charAt(0)}</div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="text-[11px] font-semibold text-slate-900 truncate leading-tight">{d.name}</div>
+                                                            <div className={`text-[9px] font-medium ${
+                                                                d.is_absent ? 'text-red-400' : 'text-slate-400'
+                                                            }`}>{d.is_absent ? 'Absent' : 'Available'}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex justify-between text-[9px] text-slate-400 mb-1">
+                                                        <span>WIP {wip}/{limit}</span>
+                                                        <span>✓ {d.today_completed || 0} done</span>
+                                                    </div>
+                                                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
-                {/* Unassigned alert */}
-                {unassigned.length > 0 && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-xs text-amber-700">
-                        <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                        <span><span className="font-semibold">{unassigned.length}</span> order{unassigned.length !== 1 ? 's' : ''} need a drawer assigned</span>
+                {/* Needs Assignment section */}
+                {unassigned.length > 0 && !loading && (
+                    <div className="rounded-xl border-2 border-amber-300 overflow-hidden">
+                        <div className="bg-amber-50 px-4 py-3 flex items-center gap-2 border-b border-amber-200">
+                            <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                            <span className="text-sm font-bold text-amber-800">Needs Assignment</span>
+                            <span className="bg-amber-400 text-white text-xs font-bold px-2 py-0.5 rounded-full">{unassigned.length}</span>
+                            <span className="ml-auto text-xs text-amber-600">Assign a drawer to proceed</span>
+                        </div>
+                        <div className="overflow-x-auto bg-amber-50/30">
+                            <table className="w-full text-xs" style={{ tableLayout: 'fixed' }}>
+                                <colgroup>
+                                    {dynamicPrimaryColumns.map((col) => (
+                                        <col key={col.key} style={col.width ? { width: col.width } : undefined} />
+                                    ))}
+                                    <col style={{ width: '8%' }} />
+                                    <col style={{ width: '16%' }} />
+                                    <col style={{ width: '9%' }} />
+                                </colgroup>
+                                <thead>
+                                    <tr className="bg-amber-100 text-amber-900">
+                                        {dynamicPrimaryColumns.map((col) => (
+                                            <th key={col.key} className={`px-3 py-2 font-semibold ${col.headerClassName || 'text-left'}`}>
+                                                {col.label}
+                                            </th>
+                                        ))}
+                                        <th className="px-2 py-2 text-center font-semibold">State</th>
+                                        <th className="px-3 py-2 text-left font-semibold"><div className="flex items-center gap-1"><Pencil className="w-3 h-3" /> Drawer</div></th>
+                                        <th className="px-2 py-2 text-center font-semibold">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {[...unassigned].sort((a, b) => {
+                                        const pw: Record<string, number> = { rush: 0, urgent: 0, high: 1, normal: 2, low: 3 };
+                                        return (pw[a.priority || 'normal'] ?? 2) - (pw[b.priority || 'normal'] ?? 2);
+                                    }).map((o) => (
+                                        <tr key={`unassigned-${o.id}`} className="border-b border-amber-100 hover:bg-amber-50 transition-colors">
+                                            {dynamicPrimaryColumns.map((col) => (
+                                                <React.Fragment key={`ua-${o.id}-${col.key}`}>
+                                                    {renderPrimaryCell(o, col)}
+                                                </React.Fragment>
+                                            ))}
+                                            <td className="px-2 py-2 text-center"><StatusBadge status={o.workflow_state} size="sm" /></td>
+                                            <DrawerCell order={o} />
+                                            <td className="px-2 py-2 text-center">
+                                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700">
+                                                    {(o.workflow_state || 'PENDING').replace(/_/g, ' ')}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 )}
 
-                {/* Orders table */}
+                {/* In Progress orders table */}
                 <div className="bg-white rounded-xl border border-slate-200/60 overflow-hidden">
+                    {assigned.length > 0 && !loading && (
+                        <div className="px-4 py-2.5 border-b border-slate-100 flex items-center gap-2">
+                            <Pencil className="w-3.5 h-3.5 text-slate-400" />
+                            <span className="text-xs font-semibold text-slate-600">In Progress</span>
+                            <span className="text-xs text-slate-400">({assigned.length} orders)</span>
+                        </div>
+                    )}
                     {loading ? (
                         <div className="flex items-center justify-center py-20">
                             <Loader2 className="w-6 h-6 text-brand-600 animate-spin" />
@@ -501,7 +658,7 @@ export default function CheckerTeamAssignment() {
                                 </thead>
                                 <tbody>
                                     <AnimatePresence>
-                                        {[...orders].sort((a, b) => {
+                                        {[...assigned].sort((a, b) => {
                                             const pw: Record<string, number> = { rush: 0, urgent: 0, high: 1, normal: 2, low: 3 };
                                             return (pw[a.priority || 'normal'] ?? 2) - (pw[b.priority || 'normal'] ?? 2);
                                         }).map((o, idx) => (
@@ -542,6 +699,11 @@ export default function CheckerTeamAssignment() {
                                     <Users className="w-10 h-10 mb-2" />
                                     <div className="text-sm font-medium">No orders assigned to you yet</div>
                                     <div className="text-xs mt-1">Orders will appear here once assigned to your checker queue</div>
+                                </div>
+                            )}
+                            {assigned.length === 0 && orders.length > 0 && !loading && (
+                                <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+                                    <div className="text-sm">All orders are in the Needs Assignment section above</div>
                                 </div>
                             )}
                         </div>
@@ -589,7 +751,7 @@ export default function CheckerTeamAssignment() {
                                 </div>
                             ) : assignableDrawers.length === 0 ? (
                                 <div className="text-center py-6 text-xs text-slate-400">
-                                    No drawers found
+                                    {assignSearch ? 'No drawers found' : 'No available drawers — search to include absent'}
                                 </div>
                             ) : (
                                 <div className="py-1">
