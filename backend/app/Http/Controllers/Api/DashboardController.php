@@ -3698,7 +3698,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 SUM(CASE WHEN workflow_state = 'DELIVERED' AND delivered_at >= ? AND delivered_at < ? THEN 1 ELSE 0 END) as delivered_today,
                 SUM(CASE WHEN workflow_state IN ('IN_DRAW','IN_CHECK','IN_QA','IN_DESIGN') THEN 1 ELSE 0 END) as in_progress,
                 COUNT(*) as total_orders,
-                SUM(CASE WHEN DATE(received_at) = ? THEN 1 ELSE 0 END) as received_today
+                SUM(CASE WHEN received_at >= ? AND received_at < ? THEN 1 ELSE 0 END) as received_today
             ", [$this->businessDayBounds()[0], $this->businessDayBounds()[1], $this->businessDayBounds()[0], $this->businessDayBounds()[1]]);
         });
         $totalPending = $totalStats->sum('pending');
