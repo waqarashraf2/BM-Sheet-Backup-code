@@ -112,6 +112,32 @@ class RoomioImportService
         return $decoded['data'] ?? null;
     }
 
+    // ── Fetch VARIANT_no from detail page ─────────────────────────────────────
+
+    protected function fetchVariantName(int $orderId): ?string
+    {
+        $url = 'https://es-portal.captur3d.io/external_supplier/orders/' . $orderId . '.json';
+        $ch  = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+            CURLOPT_COOKIEFILE     => $this->cookieFile,
+            CURLOPT_USERAGENT      => 'BenchmarkCron/1.0',
+        ]);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($code !== 200 || !$body) {
+            return null;
+        }
+        $data = json_decode($body, true);
+        return $data['data']['orderable']['variantName'] ?? null;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     protected function mapPriority(string $p): string
@@ -154,7 +180,7 @@ class RoomioImportService
             'workflow_type'    => 'FP_3_LAYER',
             'received_at'      => $this->parseIsoTimestamp($order['orderedAt'] ?? ''),
             'due_in'           => $this->parseIsoTimestamp($order['deliveryDeadline'] ?? $order['targetDeadline'] ?? ''),
-            'VARIANT_no'       => $order['orderableSummary']['combinationType'] ?? null,
+            'VARIANT_no'       => null,
             'metadata'         => json_encode([
                 'combinationType' => $order['orderableSummary']['combinationType'] ?? null,
                 'sourceType'      => $order['orderableSummary']['sourceType']      ?? null,
@@ -198,7 +224,9 @@ class RoomioImportService
             }
 
             foreach ($orders as $order) {
-                $allRecords[] = $this->mapJsonOrder($order, $projectId, $processOrderValue);
+                $rec = $this->mapJsonOrder($order, $projectId, $processOrderValue);
+                $rec['_order_id'] = (int) $order['id']; // track for backfill, stripped later
+                $allRecords[] = $rec;
             }
 
             $totalPages = (int) ($data['meta']['totalPages'] ?? 1);
@@ -257,17 +285,41 @@ class RoomioImportService
         foreach ($pendingRecords    as $r) { $orderMap[$r['order_number']] = $r; }
         foreach ($processingRecords as $r) { $orderMap[$r['order_number']] = $r; }
 
-        $allRecords = $this->normalizeRecords(array_values($orderMap), $table);
+        // Extract order IDs (temp key) before passing to normalizeRecords
+        $merged      = array_values($orderMap);
+        $allOrderIds = array_map(fn($r) => $r['_order_id'], $merged);
+        $merged      = array_map(function ($r) { unset($r['_order_id']); return $r; }, $merged);
+
+        $allRecords = $this->normalizeRecords($merged, $table);
 
         $inserted = 0;
         if (!empty($allRecords)) {
             $inserted = (int) DB::table($table)->insertOrIgnore($allRecords);
         }
 
+        // Backfill VARIANT_no for records in this run that still have null variant
+        $backfilled = 0;
+        if (!empty($allOrderIds)) {
+            $inList  = implode(',', array_map(fn($id) => "'#$id'", $allOrderIds));
+            $nullRows = DB::select(
+                "SELECT id, order_number FROM `{$table}` WHERE order_number IN ({$inList}) AND VARIANT_no IS NULL"
+            );
+            foreach ($nullRows as $row) {
+                $orderId = (int) ltrim($row->order_number, '#');
+                $variant = $this->fetchVariantName($orderId);
+                if ($variant !== null) {
+                    DB::table($table)->where('id', $row->id)
+                        ->update(['VARIANT_no' => $variant, 'updated_at' => now()]);
+                    $backfilled++;
+                }
+                usleep(150000);
+            }
+        }
+
         if (file_exists($this->cookieFile)) {
             @unlink($this->cookieFile);
         }
 
-        Log::info("RoomioImportService: finished -- {$inserted} new record(s) inserted into {$table}");
+        Log::info("RoomioImportService: finished -- {$inserted} new record(s) inserted, {$backfilled} VARIANT_no backfilled in {$table}");
     }
 }
