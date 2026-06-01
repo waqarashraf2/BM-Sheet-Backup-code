@@ -2909,7 +2909,7 @@ public function qaTeamMembers(Request $request)
         $drawers = \App\Models\User::where('project_id', $user->project_id)
             ->where('role', 'drawer')
             ->where('is_active', true)
-            ->select(['id', 'name', 'email', 'role', 'team_id', 'wip_count', 'wip_limit', 'today_completed', 'is_absent', 'is_online'])
+            ->select(['id', 'name', 'email', 'role', 'team_id', 'wip_count', 'wip_limit', 'today_completed', 'is_absent'])
             ->orderByRaw('(team_id = ?) DESC, name ASC', [$user->team_id ?? 0])
             ->get()
             // Flag which drawers belong to this checker's team so frontend can mark them
