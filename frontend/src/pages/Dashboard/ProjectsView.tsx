@@ -467,16 +467,46 @@ const ProjectsView: React.FC = () => {
     }, [breakdown]);
 
     const allTeams = useMemo(() => {
-        if (selectedProject?.project_id !== teamBreakdownProjectId || !Array.isArray(breakdown?.teams)) return [];
+        if (selectedProject?.project_id !== teamBreakdownProjectId) return [];
 
-        return breakdown.teams
-            .filter((team) => {
+        // Build a map of breakdown teams by team_id for quick lookup
+        const breakdownMap = new Map<number, TeamBreakdown>();
+        if (Array.isArray(breakdown?.teams)) {
+            for (const team of breakdown.teams) {
                 const teamName = (team.team_name || '').trim().toLowerCase();
-                return Number(team.team_id) !== 0 && teamName !== 'unassigned team';
-            })
-            .slice()
-            .sort((a, b) => Number(b.total_done_selected_date ?? b.total_done ?? 0) - Number(a.total_done_selected_date ?? a.total_done ?? 0));
-    }, [breakdown, selectedProject?.project_id, teamBreakdownProjectId]);
+                if (Number(team.team_id) !== 0 && teamName !== 'unassigned team') {
+                    breakdownMap.set(Number(team.team_id), team);
+                }
+            }
+        }
+
+        let teams: TeamBreakdown[];
+
+        if (projectTeams.length > 0) {
+            // Merge: use breakdown data where available, fill zeros for the rest
+            teams = projectTeams.map((pt) =>
+                breakdownMap.get(pt.id) ?? {
+                    team_id: pt.id,
+                    team_name: pt.name,
+                    drawer_done: 0,
+                    checker_done: 0,
+                    qa_done: 0,
+                    total_done: 0,
+                    total_done_selected_date: 0,
+                    drawers: [],
+                    checkers: [],
+                    qas: [],
+                } as TeamBreakdown
+            );
+        } else {
+            teams = Array.from(breakdownMap.values());
+        }
+
+        return teams.sort((a, b) =>
+            Number(b.total_done_selected_date ?? b.total_done ?? 0) -
+            Number(a.total_done_selected_date ?? a.total_done ?? 0)
+        );
+    }, [breakdown, projectTeams, selectedProject?.project_id, teamBreakdownProjectId]);
 
     const visibleTeams = useMemo(() => {
         return allTeams.filter((team) => {
