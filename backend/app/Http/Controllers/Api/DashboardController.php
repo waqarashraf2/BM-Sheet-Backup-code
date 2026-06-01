@@ -18,7 +18,10 @@ class DashboardController extends Controller
 {
     private const ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS = [
         16 => 2,
+        2  => 5,  // Project 2 (Focal PB) stores due_in as naive UTC; +5h converts to PKT for frontend
     ];
+    // Projects whose due_in column stores naive UTC timestamps (not PKT)
+    private const BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS = [2, 5];
     private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 7, 8, 42, 12, 11, 19];
     private const ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS = [1, 3, 16, 12, 19];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS = [1, 3,];
@@ -56,6 +59,11 @@ if ($request->query('date')) {
         */
         $selectedDatePkt = \Carbon\Carbon::parse($date, 'Asia/Karachi');
         $batchNowPkt = now('Asia/Karachi')->format('Y-m-d H:i:s');
+
+        // Projects that store due_in as naive UTC need UTC_TIMESTAMP() for correct TIMESTAMPDIFF
+        $isUtcDueInProject = $projectId && in_array((int) $projectId, self::BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS);
+        $batchNowSql   = $isUtcDueInProject ? 'UTC_TIMESTAMP()' : '?';
+        $batchNowParam = $isUtcDueInProject ? [] : [$batchNowPkt];
 
         // 29 10 PM
         $shiftStartPkt = $selectedDatePkt->copy()->subDay()->setTime(22, 0, 0);
@@ -117,10 +125,10 @@ if ($request->query('date')) {
             ->selectRaw("
                 orders.*,
                 CASE
-                    WHEN due_in IS NOT NULL THEN GREATEST(TIMESTAMPDIFF(MINUTE, ?, {$batchDueInExpr}), 0)
+                    WHEN due_in IS NOT NULL THEN GREATEST(TIMESTAMPDIFF(MINUTE, {$batchNowSql}, {$batchDueInExpr}), 0)
                     ELSE NULL
                 END as batch_remaining_minutes
-            ", [$batchNowPkt])
+            ", $batchNowParam)
             ->where('received_at', '>=', $shiftStartLocal)
             ->where('received_at', '<', $shiftEndLocal);
 
@@ -235,7 +243,7 @@ if ($request->query('date')) {
             ->format('Y-m-d H:i:s');
 
         $plansRemainingQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, ?, {$batchDueInExpr}), 0) as remaining_hour_bucket", [$batchNowPkt])
+            ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, {$batchNowSql}, {$batchDueInExpr}), 0) as remaining_hour_bucket", $batchNowParam)
             ->where('received_at', '>=', $plansRemainingStartLocal)
             ->where('received_at', '<', $shiftEndLocal)
             ->whereNotNull('due_in')
