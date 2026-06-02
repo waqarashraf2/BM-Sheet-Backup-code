@@ -315,7 +315,13 @@ function rowToRecord(array $row): array
     $dueDateRaw   = $row['Date Due'] ?? '';
     $dueDate      = parseDueDate($dueDateRaw);
     // due_in stores the full Date Due datetime (varchar) for display/sorting
-    $dueIn        = parseDateTime($dueDateRaw) ?: ($dueDateRaw ?: null);
+    // Portal returns UTC; shift +1h to BST so Remaining badge matches London wall-clock.
+    // TODO: revisit at DST changeover (Oct 2026) — set back to 0 when UK is on GMT.
+    $dueIn        = parseDateTime($dueDateRaw);
+    if ($dueIn) {
+        $dueIn = (new DateTime($dueIn))->modify('+1 hour')->format('Y-m-d H:i:s');
+    }
+    $dueIn        = $dueIn ?: ($dueDateRaw ?: null);
 
     // Unmapped fields → extra_col_json (Time Left preserved here)
     $extra = [];
