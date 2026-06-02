@@ -375,7 +375,7 @@ class FocalPb2ScraperService
             'priority'         => $this->resolvePriority($timeLeftRaw),
             'received_at'      => $this->parseDateTime($dateReceived),
             'due_date'         => $this->parseDueDate($dueDateRaw),
-            'due_in'           => $this->parseDueInWithManualOffset($dueDateRaw) ?: ($dueDateRaw ?: null),
+            'due_in'           => $this->parseDueInWithManualOffset($dueDateRaw),
             'import_source'    => 'cron',
             'created_at'       => now(),
             'updated_at'       => now(),
@@ -458,45 +458,90 @@ class FocalPb2ScraperService
 
     private function parseDateTime(?string $raw): ?string
     {
-        if (!$raw) return null;
+        $dt = $this->parsePortalDateTime($raw);
 
-        $raw = str_replace(' Utc', '', trim($raw));
-
-        foreach (['m/d/Y H:i:s', 'm/d/Y'] as $format) {
-            $dt = DateTime::createFromFormat($format, $raw);
-            if ($dt) {
-                return $dt->format('Y-m-d H:i:s');
-            }
+        if (!$dt) {
+            return null;
         }
 
-        return null;
+        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 
     private function parseDueDate(?string $raw): ?string
     {
-        if (!$raw) return null;
+        $dt = $this->parsePortalDateTime($raw);
 
-        foreach (['m/d/Y H:i:s', 'm/d/Y'] as $format) {
-            $dt = DateTime::createFromFormat($format, $raw);
-            if ($dt) {
-                return $dt->format('Y-m-d');
-            }
-        }
-
-        return null;
+        return $dt ? $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d') : null;
     }
 
     private function parseDueInWithManualOffset(?string $raw): ?string
     {
-        $parsed = $this->parseDateTime($raw);
+        $dt = $this->parsePortalDateTime($raw);
 
-        if (!$parsed) {
+        if (!$dt) {
             return null;
         }
 
-        $dt = new DateTime($parsed);
+        // Preserve existing business behavior (+1h target), but normalize to UTC.
         $dt->modify('+1 hour');
 
-        return $dt->format('Y-m-d H:i:s');
+        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+    }
+
+    /**
+     * Parse portal date strings in a timezone-stable way across environments.
+     * If no timezone marker is present, treat source as UTC to avoid server TZ drift.
+     */
+    private function parsePortalDateTime(?string $raw): ?DateTime
+    {
+        if (!$raw) {
+            return null;
+        }
+
+        $raw = trim($raw);
+        if ($raw === '') {
+            return null;
+        }
+
+        $isUtc = preg_match('/\b(utc|z|gmt)\b/i', $raw) === 1;
+        $clean = preg_replace('/\s*(utc|z|gmt)$/i', '', $raw);
+        $clean = trim((string) $clean);
+
+        $sourceTz = new \DateTimeZone('UTC');
+
+        $formats = [
+            'm/d/Y H:i:s',
+            'm/d/Y H:i',
+            'm/d/Y',
+            'd/m/Y H:i:s',
+            'd/m/Y H:i',
+            'd/m/Y',
+            'Y-m-d H:i:s',
+            'Y-m-d H:i',
+            'Y-m-d',
+        ];
+
+        foreach ($formats as $format) {
+            $dt = DateTime::createFromFormat($format, $clean, $sourceTz);
+            if ($dt instanceof DateTime) {
+                return $dt;
+            }
+        }
+
+        // Final fallback for uncommon variants.
+        try {
+            if ($isUtc) {
+                return new DateTime($clean, new \DateTimeZone('UTC'));
+            }
+
+            return new DateTime($clean, $sourceTz);
+        } catch (\Throwable $e) {
+            Log::warning('FocalPb2: Failed to parse portal datetime', [
+                'raw' => $raw,
+                'clean' => $clean,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
     }
 }

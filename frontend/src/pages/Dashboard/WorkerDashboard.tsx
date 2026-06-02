@@ -289,9 +289,9 @@ export default function WorkerDashboard() {
   }, [getPhotoEnhancementClientOrderNumber, isPhotoEnhancementOrder]);
 
   const shouldShowOrderAssetsButton = useCallback((order: Order): boolean => {
-    if (!(isDrawer || isDesigner)) return false;
+    if (!(isDrawer || isDesigner || isChecker)) return false;
     return IMAGE_LINK_PROJECT_IDS.includes(order.project_id);
-  }, [isDesigner, isDrawer]);
+  }, [isChecker, isDesigner, isDrawer]);
 
   const getOrderAssetsLookupValue = useCallback((order: Order): string => {
     if (isPhotoEnhancementOrder(order)) {
