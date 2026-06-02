@@ -374,6 +374,13 @@ public function myCurrent(Request $request)
             );
         }
 
+        // Project 25 (Prestige Photography): same supplier-enhancement API — try assetdetail when explicitly requested.
+        if ($includeExternal && in_array(25, $candidateProjectIds, true)) {
+            $externalLinks = $externalLinks->merge(
+                $this->fetchFocalAssetDetailLinks($jobOrderId, 25)
+            );
+        }
+
         $allLinks = $tableLinks
             ->merge($externalLinks)
             ->unique(fn ($row) => strtolower(trim((string) ($row['url'] ?? ''))))
