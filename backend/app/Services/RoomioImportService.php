@@ -268,6 +268,12 @@ class RoomioImportService
         $projectId = 15;
         $table     = 'project_15_orders';
 
+        // Always start with a clean session — a stale cookie causes the portal
+        // to redirect (302) the login page instead of returning the login form
+        if (file_exists($this->cookieFile)) {
+            @unlink($this->cookieFile);
+        }
+
         Log::info("RoomioImportService: starting for project {$projectId}");
 
         if (!$this->portalLogin()) {
