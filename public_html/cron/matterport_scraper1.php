@@ -309,6 +309,9 @@ function rowToRecord(array $row): array
     $timeLeftRaw  = $row['Time Left'] ?? '';
     $priority     = priorityFromTimeLeft($timeLeftRaw);
     $receivedAt   = parseDateTime($row['Date Received'] ?? '');
+    if ($receivedAt) {
+        $receivedAt = (new DateTime($receivedAt))->modify('+1 hour')->format('Y-m-d H:i:s');
+    }
     $dueDateRaw   = $row['Date Due'] ?? '';
     $dueDate      = parseDueDate($dueDateRaw);
     // due_in stores the full Date Due datetime (varchar) for display/sorting
