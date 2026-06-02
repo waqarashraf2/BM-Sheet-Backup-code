@@ -26,6 +26,7 @@ class FocalCrmService
     protected string $tableName = 'project_1_orders';
     protected string $productFilter = 'Propertyvision';
     protected string $timezone = 'Europe/London';
+    protected string $imagesTable = 'job_detail_1_images';
 
     /**
      * Fetch jobs from FocalCRM API and import PropertyVision jobs
@@ -200,6 +201,19 @@ class FocalCrmService
         if (!empty($records)) {
             [$inserted, $updated, $rowSkipped] = $this->batchInsertOrUpdate($records);
             $skipped += $rowSkipped;
+        }
+
+        foreach ($jobs as $job) {
+            try {
+                if (!empty($job['Id'])) {
+                    $this->storeJobAssets($job);
+                }
+            } catch (Exception $e) {
+                Log::error('Error storing job assets', [
+                    'job_id' => $job['Id'] ?? 'unknown',
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         return [
@@ -487,6 +501,108 @@ class FocalCrmService
     }
 
     /**
+     * Store job image metadata from the job payload only.
+     * This importer does not make any follow-up requests to FocalCRM
+     * that could alter upstream client portal state.
+     */
+    protected function storeJobAssets(array $job): void
+    {
+        $jobOrderId = (string) ($job['Id'] ?? '');
+        if ($jobOrderId === '' || !Schema::hasTable($this->imagesTable)) {
+            return;
+        }
+
+        $images = $this->extractImagesFromJob($job);
+
+        DB::table($this->imagesTable)->where('job_order_id', $jobOrderId)->delete();
+
+        foreach ($images as $image) {
+            try {
+                DB::table($this->imagesTable)->insert([
+                    'images_url' => $image['url'] ?? null,
+                    'file_name' => $image['file_name'] ?? null,
+                    'job_order_id' => $jobOrderId,
+                ]);
+            } catch (Exception $e) {
+                Log::error('Failed to save job image', [
+                    'job_order_id' => $jobOrderId,
+                    'url' => $image['url'] ?? null,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    protected function extractImagesFromJob(array $job): array
+    {
+        $images = [];
+
+        if (!empty($job['Assets']) && is_array($job['Assets'])) {
+            foreach ($job['Assets'] as $asset) {
+                $url = $asset['Url'] ?? $asset['url'] ?? null;
+                $name = $asset['FileName'] ?? $asset['file_name'] ?? basename($url ?? '');
+                if ($url) {
+                    $images[] = ['url' => $url, 'file_name' => $name];
+                }
+            }
+        }
+
+        if (!empty($job['AdditionalLinks']) && is_array($job['AdditionalLinks'])) {
+            foreach ($job['AdditionalLinks'] as $asset) {
+                $url = $asset['Href'] ?? $asset['href'] ?? null;
+                $name = $asset['Description'] ?? $asset['description'] ?? basename($url ?? '');
+                if ($url) {
+                    $images[] = ['url' => $url, 'file_name' => $name];
+                }
+            }
+        }
+
+        if (!empty($job['RawPhotoAssets']) && is_array($job['RawPhotoAssets'])) {
+            foreach ($job['RawPhotoAssets'] as $asset) {
+                $url = $asset['Url'] ?? $asset['url'] ?? null;
+                $name = $asset['FileName'] ?? $asset['file_name'] ?? basename($url ?? '');
+                if ($url) {
+                    $images[] = ['url' => $url, 'file_name' => $name];
+                }
+            }
+        }
+
+        if (!empty($job['Images']) && is_array($job['Images'])) {
+            foreach ($job['Images'] as $asset) {
+                $url = $asset['Url'] ?? $asset['url'] ?? $asset['URL'] ?? null;
+                $name = $asset['FileName'] ?? $asset['file_name'] ?? basename($url ?? '');
+                if ($url) {
+                    $images[] = ['url' => $url, 'file_name' => $name];
+                }
+            }
+        }
+
+        if (!empty($job['Photos']) && is_array($job['Photos'])) {
+            foreach ($job['Photos'] as $asset) {
+                $url = $asset['Url'] ?? $asset['url'] ?? $asset['URL'] ?? null;
+                $name = $asset['FileName'] ?? $asset['file_name'] ?? basename($url ?? '');
+                if ($url) {
+                    $images[] = ['url' => $url, 'file_name' => $name];
+                }
+            }
+        }
+
+        if (!empty($job['DownloadUrls']) && is_array($job['DownloadUrls'])) {
+            foreach ($job['DownloadUrls'] as $url) {
+                if (is_string($url) && $url !== '') {
+                    $images[] = ['url' => $url, 'file_name' => basename($url)];
+                }
+            }
+        }
+
+        if (!empty($job['DownloadUrl']) && is_string($job['DownloadUrl'])) {
+            $images[] = ['url' => $job['DownloadUrl'], 'file_name' => basename($job['DownloadUrl'])];
+        }
+
+        return $images;
+    }
+
+    /**
      * Get job by FocalCRM ID
      */
     public function getJobByFocalCrmId(string $focalcrmId)
@@ -499,6 +615,7 @@ class FocalCrmService
     /**
      * Get all pending PropertyVision jobs
      */
+
     public function getPendingJobs()
     {
         return DB::table($this->tableName)
