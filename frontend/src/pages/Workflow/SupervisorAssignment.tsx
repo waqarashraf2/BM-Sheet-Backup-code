@@ -482,33 +482,16 @@ export default function SupervisorAssignment() {
   const usesPrioritySummaryCount = projectId === 1 || projectId === 3;
   const visiblePaginationItems = useMemo<(number | 'ellipsis')[]>(() => {
     if (lastPage <= 1) return [];
-
-    // Keep pagination compact: show first/last, current window, and ellipsis gaps.
-    const items: (number | 'ellipsis')[] = [];
-    const maxAroundCurrent = 1;
-    const start = Math.max(2, currentPage - maxAroundCurrent);
-    const end = Math.min(lastPage - 1, currentPage + maxAroundCurrent);
-
-    items.push(1);
-
-    if (start > 2) {
-      items.push('ellipsis');
+    if (lastPage <= 10) {
+      return Array.from({ length: lastPage }, (_, index) => index + 1);
     }
 
-    for (let page = start; page <= end; page += 1) {
-      items.push(page);
-    }
-
-    if (end < lastPage - 1) {
-      items.push('ellipsis');
-    }
-
-    if (lastPage > 1) {
-      items.push(lastPage);
-    }
-
-    return items;
-  }, [currentPage, lastPage]);
+    return [
+      ...Array.from({ length: 10 }, (_, index) => index + 1),
+      'ellipsis',
+      lastPage,
+    ];
+  }, [lastPage]);
   const visiblePriorityCounts = useMemo(() => {
     const derivedCounts = displayedOrders.reduce(
       (acc, order) => {
