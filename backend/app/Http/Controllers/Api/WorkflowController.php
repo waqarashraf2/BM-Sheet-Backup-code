@@ -3126,6 +3126,10 @@ public function assignRole(Request $request, int $id)
         ? (Order::findInProject($projectId, $id) ?: Order::findOrFailGlobal($id))
         : Order::findOrFailGlobal($id);
 
+    if (in_array($order->workflow_state, ['DELIVERED', 'CANCELLED'])) {
+        return response()->json(['message' => 'Cannot reassign a completed or cancelled order.'], 422);
+    }
+
     $user = \App\Models\User::findOrFail($request->input('user_id'));
     $role = $request->input('role');
 

@@ -277,11 +277,23 @@ class RoomioImportService
 
         $pendingRecords    = $this->fetchAllOrders('pending',    $projectId, null);
         $processingRecords = $this->fetchAllOrders('processing', $projectId, 'yes');
+        $completedRecords  = $this->fetchAllOrders('completed',  $projectId, 'yes');
 
-        Log::info('RoomioImportService: pending=' . count($pendingRecords) . ', processing=' . count($processingRecords));
+        // Mark completed portal orders so they are stored as DELIVERED when new
+        $nowStr = (new \DateTime('now', new \DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
+        foreach ($completedRecords as &$r) {
+            $r['workflow_state'] = 'DELIVERED';
+            $r['status']         = 'completed';
+            $r['delivered_at']   = $nowStr;
+        }
+        unset($r);
 
-        // Merge -- processing record wins on duplicate order_number
+        Log::info('RoomioImportService: pending=' . count($pendingRecords) . ', processing=' . count($processingRecords) . ', completed=' . count($completedRecords));
+
+        // Merge -- later entries win on duplicate order_number
+        // completed goes last so active (pending/processing) state is preferred for already-tracked orders
         $orderMap = [];
+        foreach ($completedRecords  as $r) { $orderMap[$r['order_number']] = $r; }
         foreach ($pendingRecords    as $r) { $orderMap[$r['order_number']] = $r; }
         foreach ($processingRecords as $r) { $orderMap[$r['order_number']] = $r; }
 
