@@ -357,9 +357,21 @@ public function myCurrent(Request $request)
         $includeExternal = (string) $request->query('include_external', '0') === '1';
         $externalLinks = collect();
 
-        // External assetdetail links are currently available for FocalCRM photo jobs (project 22).
+        // For project 1 (FP) orders, the order_number has an "FCP-" prefix — strip it for the Focal API.
+        $focalJobId = preg_match('/^FCP-(.+)$/i', $jobOrderId, $m) ? $m[1] : $jobOrderId;
+
+        // Project 1 (FP): always try Focal assetdetail — assets appear once the photographer uploads.
+        if (in_array(1, $candidateProjectIds, true)) {
+            $externalLinks = $externalLinks->merge(
+                $this->fetchFocalAssetDetailLinks($focalJobId, 1)
+            );
+        }
+
+        // Project 22 (Photos): include live assetdetail when explicitly requested.
         if ($includeExternal && in_array(22, $candidateProjectIds, true)) {
-            $externalLinks = $this->fetchFocalAssetDetailLinks($jobOrderId);
+            $externalLinks = $externalLinks->merge(
+                $this->fetchFocalAssetDetailLinks($jobOrderId, 22)
+            );
         }
 
         $allLinks = $tableLinks
@@ -406,7 +418,7 @@ public function myCurrent(Request $request)
         });
     }
 
-    private function fetchFocalAssetDetailLinks(string $jobOrderId)
+    private function fetchFocalAssetDetailLinks(string $jobOrderId, int $projectId = 22)
     {
         $apiUrl = (string) env('FOCAL_CRM_PHOTO_API_URL', env('FOCAL_CRM_API_URL', 'https://api.focalagent.com/supplier-enhancement/v3/jobs'));
         $supplierSecret = (string) env('FOCAL_CRM_PHOTO_SUPPLIER_SECRET', env('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu'));
@@ -429,13 +441,13 @@ public function myCurrent(Request $request)
 
             $assetDetail = $response->json() ?? [];
 
-            return $this->extractFocalAssetLinks($assetDetail, $jobOrderId);
+            return $this->extractFocalAssetLinks($assetDetail, $jobOrderId, $projectId);
         } catch (\Throwable $e) {
             return collect();
         }
     }
 
-    private function extractFocalAssetLinks(array $assetDetail, string $jobOrderId)
+    private function extractFocalAssetLinks(array $assetDetail, string $jobOrderId, int $projectId = 22)
     {
         $links = collect();
 
@@ -447,7 +459,7 @@ public function myCurrent(Request $request)
             $links->push([
                 'source' => 'focal_assetdetail',
                 'source_table' => null,
-                'project_id' => 22,
+                'project_id' => $projectId,
                 'job_order_id' => $jobOrderId,
                 'id' => null,
                 'name' => $row['FileName'] ?? $row['file_name'] ?? basename($url),
@@ -465,7 +477,7 @@ public function myCurrent(Request $request)
             $links->push([
                 'source' => 'focal_assetdetail',
                 'source_table' => null,
-                'project_id' => 22,
+                'project_id' => $projectId,
                 'job_order_id' => $jobOrderId,
                 'id' => null,
                 'name' => $row['FileName'] ?? $row['file_name'] ?? basename($url),
@@ -483,7 +495,7 @@ public function myCurrent(Request $request)
             $links->push([
                 'source' => 'focal_assetdetail',
                 'source_table' => null,
-                'project_id' => 22,
+                'project_id' => $projectId,
                 'job_order_id' => $jobOrderId,
                 'id' => null,
                 'name' => $row['Description'] ?? $row['description'] ?? basename($url),
