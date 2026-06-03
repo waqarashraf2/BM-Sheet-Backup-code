@@ -781,7 +781,24 @@ export default function SupervisorAssignment() {
     }
     return null;
   }, [projectTz]);
-  const sortedOrders = useMemo(() => displayedOrders, [displayedOrders]);
+  const sortedOrders = useMemo(() => {
+    const shouldSortByRemainingTime = effectiveProjectId === 1 || effectiveProjectId === 2 || effectiveProjectId === 3;
+
+    if (!shouldSortByRemainingTime) {
+      return displayedOrders;
+    }
+
+    return [...displayedOrders].sort((a, b) => {
+      const aMs = parseDueIn(a.due_in, a.received_at);
+      const bMs = parseDueIn(b.due_in, b.received_at);
+
+      if (aMs == null && bMs == null) return 0;
+      if (aMs == null) return 1;
+      if (bMs == null) return -1;
+
+      return aMs - bMs;
+    });
+  }, [displayedOrders, effectiveProjectId, parseDueIn]);
 
   /** Render remaining time badge with colour coding */
   const RemainingBadge = ({ dueIn, receivedAt }: { dueIn: string | null; receivedAt?: string | null }) => {

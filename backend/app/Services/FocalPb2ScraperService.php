@@ -172,6 +172,10 @@ class FocalPb2ScraperService
                     }
                 }
 
+                if (!$this->isExpectedPropertyVisionHeaderRow($headers)) {
+                    continue;
+                }
+
                 $bodyRows = $xpath->query('.//tbody/tr', $table);
                 if (!$bodyRows || $bodyRows->length === 0) {
                     $bodyRows = $xpath->query('.//tr', $table);
@@ -201,10 +205,19 @@ class FocalPb2ScraperService
                         continue;
                     }
 
+                    $columnCount = min(count($headers), count($values));
+                    if ($columnCount < 7) {
+                        continue;
+                    }
+
                     $row = array_combine(
-                        array_slice($headers, 0, count($values)),
-                        $values
+                        array_slice($headers, 0, $columnCount),
+                        array_slice($values, 0, $columnCount)
                     );
+
+                    if (!is_array($row)) {
+                        continue;
+                    }
 
                     // Safe dedupe across both pages.
                     $key = trim((string)($row['Id'] ?? $row['ID'] ?? $row['Job Id'] ?? $row['JobID'] ?? md5(json_encode($row))));
@@ -223,6 +236,46 @@ class FocalPb2ScraperService
         Log::channel('daily')->info('FocalPb2: Scraped ' . count($rows) . ' unique row(s) from both pages');
 
         return $rows;
+    }
+
+    private function isExpectedPropertyVisionHeaderRow(array $headers): bool
+    {
+        if (empty($headers)) {
+            return false;
+        }
+
+        $normalized = [];
+        foreach ($headers as $header) {
+            $normalized[] = $this->normalizeHeader((string) $header);
+        }
+
+        // Expected source table:
+        // Id | User Name | Address | Job Type | Date Received | Date Due | Time Left | (empty action column)
+        $required = [
+            'id',
+            'user name',
+            'address',
+            'job type',
+            'date received',
+            'date due',
+            'time left',
+        ];
+
+        foreach ($required as $header) {
+            if (!in_array($header, $normalized, true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function normalizeHeader(string $header): string
+    {
+        $header = strtolower(trim($header));
+        $header = preg_replace('/\s+/', ' ', $header);
+
+        return $header ?? '';
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -345,6 +398,7 @@ class FocalPb2ScraperService
         $dateReceived = $this->rowValue($row, ['Date Received', 'Received', 'Created']);
         $dueDateRaw = $this->rowValue($row, ['Date Due', 'Due Date', 'Due']);
         $timeLeftRaw = $this->rowValue($row, ['Time Left', 'Remaining Time']) ?? '';
+        $receivedAt = $this->parseDateTime($dateReceived);
 
         $mappedKeys  = ['Id', 'ID', 'Job Id', 'JobID', 'Order Number', 'Order No', 'Name', 'Job Name', 'Address', 'Property Address', 'Job Type', 'Type', 'Project Type', 'Date Received', 'Received', 'Created', 'Date Due', 'Due Date', 'Due', 'Time Left', 'Remaining Time'];
 
@@ -373,9 +427,9 @@ class FocalPb2ScraperService
             'workflow_type'    => 'FP_3_LAYER',
             'project_type'     => $jobType,
             'priority'         => $this->resolvePriority($timeLeftRaw),
-            'received_at'      => $this->parseDateTime($dateReceived),
+            'received_at'      => $receivedAt,
             'due_date'         => $this->parseDueDate($dueDateRaw),
-            'due_in'           => $this->parseDueInWithManualOffset($dueDateRaw),
+            'due_in'           => $this->calculateDueInFromReceivedAt($receivedAt),
             'import_source'    => 'cron',
             'created_at'       => now(),
             'updated_at'       => now(),
@@ -464,6 +518,8 @@ class FocalPb2ScraperService
             return null;
         }
 
+        $dt = $this->applyHourOffset($dt);
+
         return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 
@@ -483,9 +539,38 @@ class FocalPb2ScraperService
         }
 
         // Preserve existing business behavior (+1h target), but normalize to UTC.
-        $dt->modify('+1 hour');
+        $dt = $this->applyHourOffset($dt);
 
         return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+    }
+
+    private function calculateDueInFromReceivedAt(?string $receivedAtUtc): ?string
+    {
+        if (!$receivedAtUtc) {
+            return null;
+        }
+
+        try {
+            $dt = new DateTime($receivedAtUtc, new \DateTimeZone('UTC'));
+            $dt->modify('+4 hours');
+
+            return $dt->format('Y-m-d H:i:s');
+        } catch (\Throwable $e) {
+            Log::warning('FocalPb2: Failed to calculate due_in from received_at', [
+                'received_at' => $receivedAtUtc,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    private function applyHourOffset(DateTime $dt): DateTime
+    {
+        $shifted = clone $dt;
+        $shifted->modify('+1 hour');
+
+        return $shifted;
     }
 
     /**
