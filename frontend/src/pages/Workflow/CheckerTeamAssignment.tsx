@@ -151,12 +151,10 @@ export default function CheckerTeamAssignment() {
     );
 
     /* ── Assign drawer ── */
-    // Default: own-team + guests only, hide absent. Searching → show all project drawers.
+    // Checker assignment should expose the full project drawer pool.
     const assignableDrawers = useMemo(() => {
         if (!assignDropdown) return [];
-        const base = assignSearch
-            ? [...drawers]                          // searching → show everyone
-            : drawers.filter(w => !w.is_absent && _relevantDrawerIds.has(w.id));  // default → own-team + guests, hide absent
+        const base = [...drawers];
         return base.sort((a, b) => {
             const ownA = a.is_own_team ? 0 : 1;
             const ownB = b.is_own_team ? 0 : 1;
@@ -239,17 +237,17 @@ export default function CheckerTeamAssignment() {
     /* ── Drawer buckets ── */
     // Drawers who have at least one order assigned in this checker's queue
     const assignedDrawerIds = _assignedDrawerIds;
-    const ownTeamDrawers  = drawers.filter(d => d.is_own_team);
-    const ownTeamPresent  = ownTeamDrawers.filter(d => !d.is_absent);
-    const ownTeamAbsent   = ownTeamDrawers.filter(d => d.is_absent);
+    const ownTeamDrawers = drawers.filter(d => d.is_own_team);
+    const ownTeamPresent = ownTeamDrawers.filter(d => !d.is_absent);
+    const ownTeamAbsent = ownTeamDrawers.filter(d => d.is_absent);
     // Guest = not own-team but OM assigned them to an order in this checker's queue
-    const guestDrawers    = drawers.filter(d => !d.is_own_team && assignedDrawerIds.has(d.id));
-    const guestPresent    = guestDrawers.filter(d => !d.is_absent);
-    const guestAbsent     = guestDrawers.filter(d => d.is_absent);
+    const guestDrawers = drawers.filter(d => !d.is_own_team && assignedDrawerIds.has(d.id));
+    const guestPresent = guestDrawers.filter(d => !d.is_absent);
+    const guestAbsent = guestDrawers.filter(d => d.is_absent);
     // "All project drawers" expand — exclude already-shown drawers
-    const shownIds        = new Set([...ownTeamDrawers, ...guestDrawers].map(d => d.id));
-    const otherPresent    = drawers.filter(d => !shownIds.has(d.id) && !d.is_absent);
-    const otherAbsent     = drawers.filter(d => !shownIds.has(d.id) && d.is_absent);
+    const shownIds = new Set([...ownTeamDrawers, ...guestDrawers].map(d => d.id));
+    const otherPresent = drawers.filter(d => !shownIds.has(d.id) && !d.is_absent);
+    const otherAbsent = drawers.filter(d => !shownIds.has(d.id) && d.is_absent);
     const displayedOthers = showAllDrawers ? [...otherPresent, ...otherAbsent] : otherPresent;
     const hiddenAbsentCount = otherAbsent.length;
 
@@ -493,18 +491,15 @@ export default function CheckerTeamAssignment() {
                                                 const pct = Math.min(100, limit > 0 ? (wip / limit) * 100 : 0);
                                                 const barColor = pct >= 100 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-400' : 'bg-emerald-400';
                                                 return (
-                                                    <div key={d.id} className={`p-2.5 rounded-xl border transition-colors ${
-                                                        d.is_absent ? 'bg-slate-50 border-slate-200 opacity-50' : 'bg-blue-50 border-blue-200'
-                                                    }`}>
+                                                    <div key={d.id} className={`p-2.5 rounded-xl border transition-colors ${d.is_absent ? 'bg-slate-50 border-slate-200 opacity-50' : 'bg-blue-50 border-blue-200'
+                                                        }`}>
                                                         <div className="flex items-center gap-1.5 mb-2">
-                                                            <div className={`w-6 h-6 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${
-                                                                d.is_absent ? 'bg-slate-400' : 'bg-blue-600'
-                                                            }`}>{d.name.charAt(0)}</div>
+                                                            <div className={`w-6 h-6 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${d.is_absent ? 'bg-slate-400' : 'bg-blue-600'
+                                                                }`}>{d.name.charAt(0)}</div>
                                                             <div className="min-w-0 flex-1">
                                                                 <div className="text-[11px] font-semibold text-slate-900 truncate leading-tight">{d.name}</div>
-                                                                <div className={`text-[9px] font-medium ${
-                                                                    d.is_absent ? 'text-red-400' : 'text-emerald-500'
-                                                                }`}>{d.is_absent ? 'Absent' : 'Available'}</div>
+                                                                <div className={`text-[9px] font-medium ${d.is_absent ? 'text-red-400' : 'text-emerald-500'
+                                                                    }`}>{d.is_absent ? 'Absent' : 'Available'}</div>
                                                             </div>
                                                         </div>
                                                         <div className="flex justify-between text-[9px] text-slate-400 mb-1">
@@ -535,18 +530,15 @@ export default function CheckerTeamAssignment() {
                                                 const pct = Math.min(100, limit > 0 ? (wip / limit) * 100 : 0);
                                                 const barColor = pct >= 100 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-400' : 'bg-emerald-400';
                                                 return (
-                                                    <div key={d.id} className={`p-2.5 rounded-xl border transition-colors ${
-                                                        d.is_absent ? 'bg-slate-50 border-slate-200 opacity-50' : 'bg-purple-50 border-purple-200'
-                                                    }`}>
+                                                    <div key={d.id} className={`p-2.5 rounded-xl border transition-colors ${d.is_absent ? 'bg-slate-50 border-slate-200 opacity-50' : 'bg-purple-50 border-purple-200'
+                                                        }`}>
                                                         <div className="flex items-center gap-1.5 mb-2">
-                                                            <div className={`w-6 h-6 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${
-                                                                d.is_absent ? 'bg-slate-400' : 'bg-purple-600'
-                                                            }`}>{d.name.charAt(0)}</div>
+                                                            <div className={`w-6 h-6 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${d.is_absent ? 'bg-slate-400' : 'bg-purple-600'
+                                                                }`}>{d.name.charAt(0)}</div>
                                                             <div className="min-w-0 flex-1">
                                                                 <div className="text-[11px] font-semibold text-slate-900 truncate leading-tight">{d.name}</div>
-                                                                <div className={`text-[9px] font-medium ${
-                                                                    d.is_absent ? 'text-red-400' : 'text-purple-500'
-                                                                }`}>{d.is_absent ? 'Absent' : 'Guest'}</div>
+                                                                <div className={`text-[9px] font-medium ${d.is_absent ? 'text-red-400' : 'text-purple-500'
+                                                                    }`}>{d.is_absent ? 'Absent' : 'Guest'}</div>
                                                             </div>
                                                         </div>
                                                         <div className="flex justify-between text-[9px] text-slate-400 mb-1">
@@ -594,20 +586,17 @@ export default function CheckerTeamAssignment() {
                                             const pct = Math.min(100, limit > 0 ? (wip / limit) * 100 : 0);
                                             const barColor = pct >= 100 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-400' : 'bg-emerald-400';
                                             return (
-                                                <div key={d.id} className={`p-2.5 rounded-xl border transition-colors ${
-                                                    d.is_absent
+                                                <div key={d.id} className={`p-2.5 rounded-xl border transition-colors ${d.is_absent
                                                         ? 'bg-slate-50 border-slate-200 opacity-50'
                                                         : 'bg-white border-slate-200 hover:border-slate-300'
-                                                }`}>
+                                                    }`}>
                                                     <div className="flex items-center gap-1.5 mb-2">
-                                                        <div className={`w-6 h-6 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${
-                                                            d.is_absent ? 'bg-slate-400' : 'bg-slate-500'
-                                                        }`}>{d.name.charAt(0)}</div>
+                                                        <div className={`w-6 h-6 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${d.is_absent ? 'bg-slate-400' : 'bg-slate-500'
+                                                            }`}>{d.name.charAt(0)}</div>
                                                         <div className="min-w-0 flex-1">
                                                             <div className="text-[11px] font-semibold text-slate-900 truncate leading-tight">{d.name}</div>
-                                                            <div className={`text-[9px] font-medium ${
-                                                                d.is_absent ? 'text-red-400' : 'text-slate-400'
-                                                            }`}>{d.is_absent ? 'Absent' : 'Available'}</div>
+                                                            <div className={`text-[9px] font-medium ${d.is_absent ? 'text-red-400' : 'text-slate-400'
+                                                                }`}>{d.is_absent ? 'Absent' : 'Available'}</div>
                                                         </div>
                                                     </div>
                                                     <div className="flex justify-between text-[9px] text-slate-400 mb-1">
@@ -818,7 +807,7 @@ export default function CheckerTeamAssignment() {
                                 </div>
                             ) : assignableDrawers.length === 0 ? (
                                 <div className="text-center py-6 text-xs text-slate-400">
-                                    {assignSearch ? 'No drawers found' : 'No available drawers — search to include absent'}
+                                    {assignSearch ? 'No drawers found' : 'No drawers available'}
                                 </div>
                             ) : (
                                 <div className="py-1">

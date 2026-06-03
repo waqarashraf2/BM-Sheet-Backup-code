@@ -27,6 +27,7 @@ class FocalPb2ScraperService
         Log::channel('daily')->info('FocalPb2 Scraper started');
 
         try {
+            $backfilled = $this->backfillDueIn();
             $token = $this->fetchCsrfToken();
             $this->authenticate($token);
             $rows  = $this->scrapeTable();
@@ -36,9 +37,43 @@ class FocalPb2ScraperService
             return ['ok' => false, 'inserted' => 0, 'skipped' => 0, 'error' => $e->getMessage()];
         }
 
-        Log::channel('daily')->info("FocalPb2 Scraper finished — inserted: {$inserted}, skipped: {$skipped}");
+        Log::channel('daily')->info("FocalPb2 Scraper finished — inserted: {$inserted}, skipped: {$skipped}, due_in_backfilled: {$backfilled}");
 
-        return ['ok' => true, 'inserted' => $inserted, 'skipped' => $skipped];
+        return ['ok' => true, 'inserted' => $inserted, 'skipped' => $skipped, 'due_in_backfilled' => $backfilled];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Backfill: heal existing rows that have NULL due_in
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private function backfillDueIn(): int
+    {
+        $idsToBackfill = DB::table($this->table)
+            ->whereNull('due_in')
+            ->whereNotNull('received_at')
+            ->orderByDesc('id')
+            ->limit(10)
+            ->pluck('id')
+            ->all();
+
+        $count = count($idsToBackfill);
+
+        if ($count === 0) {
+            return 0;
+        }
+
+        Log::channel('daily')->info("FocalPb2: Backfilling due_in for latest {$count} existing row(s) with NULL due_in");
+
+        $backfilled = DB::table($this->table)
+            ->whereIn('id', $idsToBackfill)
+            ->update([
+                'due_in' => DB::raw("DATE_FORMAT(DATE_ADD(`received_at`, INTERVAL 4 HOUR), '%Y-%m-%d %H:%i:%s')"),
+                'updated_at' => now(),
+            ]);
+
+        Log::channel('daily')->info("FocalPb2: Backfilled due_in for {$backfilled} row(s)");
+
+        return $backfilled;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -331,6 +366,26 @@ class FocalPb2ScraperService
             }
 
             if (($portalId && isset($existingPortalIds[$portalId])) || isset($existingOrderNumbers[$orderNumber])) {
+                // Backfill due_in if existing row has it NULL (inserted by older scraper version)
+                if (!empty($record['due_in'])) {
+                    $updateWhere = $portalId && isset($existingPortalIds[$portalId])
+                        ? ['client_portal_id' => $portalId]
+                        : ['order_number' => $orderNumber];
+
+                    $updated = DB::table($this->table)
+                        ->where($updateWhere)
+                        ->whereNull('due_in')
+                        ->update(['due_in' => $record['due_in'], 'updated_at' => now()]);
+
+                    if ($updated) {
+                        Log::channel('daily')->info("FocalPb2: Backfilled due_in for existing row", [
+                            'order_number' => $orderNumber,
+                            'client_portal_id' => $portalId,
+                            'due_in' => $record['due_in'],
+                        ]);
+                    }
+                }
+
                 $skipped++;
                 $reason = ($portalId && isset($existingPortalIds[$portalId]))
                     ? 'duplicate_client_portal_id'
@@ -340,8 +395,6 @@ class FocalPb2ScraperService
                     'reason' => $reason,
                     'client_portal_id' => $portalId,
                     'order_number' => $orderNumber,
-                    'mapped_record' => $record,
-                    'backend_row' => $row,
                 ]);
                 continue;
             }
@@ -400,6 +453,22 @@ class FocalPb2ScraperService
         $timeLeftRaw = $this->rowValue($row, ['Time Left', 'Remaining Time']) ?? '';
         $receivedAt = $this->parseDateTime($dateReceived);
 
+        if ($receivedAt === null) {
+            // Keep inserts stable: if source datetime is unparseable, use current UTC.
+            $receivedAt = $this->currentUtcDateTimeString();
+
+            Log::warning('FocalPb2: Falling back received_at to current UTC while mapping order', [
+                'raw_date_received' => $dateReceived,
+                'order_number' => $orderNumber,
+                'client_portal_id' => $clientPortalId,
+            ]);
+        }
+
+        $dueIn = $this->calculateDueInFromReceivedAt($receivedAt);
+        if ($dueIn === null) {
+            $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+4 hours'));
+        }
+
         $mappedKeys  = ['Id', 'ID', 'Job Id', 'JobID', 'Order Number', 'Order No', 'Name', 'Job Name', 'Address', 'Property Address', 'Job Type', 'Type', 'Project Type', 'Date Received', 'Received', 'Created', 'Date Due', 'Due Date', 'Due', 'Time Left', 'Remaining Time'];
 
         // Build extra_col_json for unmapped columns (Time Left is always included)
@@ -429,7 +498,7 @@ class FocalPb2ScraperService
             'priority'         => $this->resolvePriority($timeLeftRaw),
             'received_at'      => $receivedAt,
             'due_date'         => $this->parseDueDate($dueDateRaw),
-            'due_in'           => $this->calculateDueInFromReceivedAt($receivedAt),
+            'due_in'           => $dueIn,
             'import_source'    => 'cron',
             'created_at'       => now(),
             'updated_at'       => now(),
@@ -554,7 +623,7 @@ class FocalPb2ScraperService
             $dt = new DateTime($receivedAtUtc, new \DateTimeZone('UTC'));
             $dt->modify('+4 hours');
 
-            return $dt->format('Y-m-d H:i:s');
+            return $this->formatDueInForVarchar($dt);
         } catch (\Throwable $e) {
             Log::warning('FocalPb2: Failed to calculate due_in from received_at', [
                 'received_at' => $receivedAtUtc,
@@ -563,6 +632,23 @@ class FocalPb2ScraperService
 
             return null;
         }
+    }
+
+    private function formatDueInForVarchar(DateTime $dt): ?string
+    {
+        $value = $dt->format('Y-m-d H:i:s');
+
+        // due_in is VARCHAR(255); persist as a stable datetime-like string.
+        if ($value === '' || strlen($value) > 255) {
+            return null;
+        }
+
+        return $value;
+    }
+
+    private function currentUtcDateTimeString(): string
+    {
+        return (new DateTime('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
     }
 
     private function applyHourOffset(DateTime $dt): DateTime
@@ -583,6 +669,7 @@ class FocalPb2ScraperService
             return null;
         }
 
+        $raw = str_replace(["\xC2\xA0", ','], [' ', ''], $raw);
         $raw = trim($raw);
         if ($raw === '') {
             return null;
@@ -597,12 +684,21 @@ class FocalPb2ScraperService
         $formats = [
             'm/d/Y H:i:s',
             'm/d/Y H:i',
+            'm/d/Y h:i:s A',
+            'm/d/Y h:i A',
             'm/d/Y',
             'd/m/Y H:i:s',
             'd/m/Y H:i',
+            'd/m/Y h:i:s A',
+            'd/m/Y h:i A',
             'd/m/Y',
             'Y-m-d H:i:s',
             'Y-m-d H:i',
+            'Y-m-d\TH:i:s',
+            'Y-m-d\TH:i',
+            'Y-m-d\TH:i:s.u',
+            'Y-m-d\TH:i:sP',
+            'Y-m-d\TH:i:s.uP',
             'Y-m-d',
         ];
 
