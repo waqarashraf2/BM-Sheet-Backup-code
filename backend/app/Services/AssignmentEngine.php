@@ -736,7 +736,7 @@ class AssignmentEngine
 <<<<<<< HEAD
                     $updates['checker_done'] = 'yes';
                     $updates['checker_date'] = now()->toDateTimeString();
-=======
+=======                                     
                     if ($completionColumns['done_col']) {
                         $updates[$completionColumns['done_col']] = 'yes';
                     }
