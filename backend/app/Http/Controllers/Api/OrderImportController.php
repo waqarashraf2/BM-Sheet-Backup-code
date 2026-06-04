@@ -1,4 +1,4 @@
-<?php
+z<?php
 
 namespace App\Http\Controllers\Api;
 
@@ -836,7 +836,6 @@ private function processCsvString(string $csvText, Project $project, OrderImport
             */
             $csvToDbMap = [
 
-<<<<<<< HEAD
                 'client_portal_id'    => 'client_portal_id',
                 'client_name'         => 'client_name',
                 'company'             => 'company',
@@ -853,20 +852,7 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                 'hdr_images_count'    => 'hdr_images_count',
                 'single_images_count' => 'single_images_count',
                 'final_images_count'  => 'final_images_count',
-=======
-                'client_portal_id' => 'client_portal_id',
-                'client_name' => 'client_name',
-                'company'     => 'company',
-                'branch'      => 'branch',
-                'photographer'=> 'photographer',
-                'address'     => 'address',
-                'plan_type'   => 'plan_type',
-                'code'        => 'code',
-                'batch_number'=> 'batch_number',
-                'VARIANT_no'  => 'VARIANT_no',
-                'project_type'=> 'project_type',
-                'bedrooms'    => 'bedrooms',
->>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
+
             ];
 
             foreach ($csvToDbMap as $csvField => $dbColumn) {

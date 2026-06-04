@@ -2,259 +2,255 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
-use DOMDocument;
-use DOMXPath;
 use DateTime;
 use DateTimeZone;
 use Exception;
 
 class RoomioImportService
 {
-    protected int $maxPages = 10;
+    protected string $loginUrl   = 'https://es-portal.captur3d.io/external_supplier/login';
+    protected string $baseUrl    = 'https://es-portal.captur3d.io/external_supplier/plann3d_floorplan_orders';
+    protected string $cookieFile = '/tmp/roomio_portal_session.txt';
+    protected int    $maxPages   = 15;
 
-    /**
-     * Fetch variant number from JSON API
-     */
-    public function fetchVariantNo(string $orderId, array $auth): ?string
+    // ── Session auth ──────────────────────────────────────────────────────────
+
+    protected function portalLogin(): bool
     {
-        $cleanId = ltrim($orderId, '#');
-
-        $url = "https://es-portal.captur3d.io/external_supplier/orders/{$cleanId}.json";
-
-        $res = $this->curlRequest($url, 'GET', $auth);
-
-        if ($res['error'] || $res['code'] !== 200) {
-            Log::warning("Variant fetch failed for order {$orderId}, HTTP code: {$res['code']}");
-            return null;
-        }
-
-        $data = json_decode($res['body'], true);
-
-        if (!$data || !isset($data['data']['orderable']['variantName'])) {
-            Log::warning("Variant not found in JSON for order {$orderId}");
-            return null;
-        }
-
-        return $data['data']['orderable']['variantName'];
-    }
-
-    /**
-     * Simple CURL request
-     */
-    protected function curlRequest(string $url, string $method = 'GET', ?array $auth = null): array
-    {
-        $ch = curl_init($url);
-
+        // Step 1: GET login page to capture CSRF token
+        $ch = curl_init($this->loginUrl);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CUSTOMREQUEST  => $method,
             CURLOPT_TIMEOUT        => 30,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_COOKIEJAR      => $this->cookieFile,
+            CURLOPT_COOKIEFILE     => $this->cookieFile,
             CURLOPT_USERAGENT      => 'BenchmarkCron/1.0',
         ]);
-
-        if ($auth) {
-            curl_setopt($ch, CURLOPT_USERPWD, $auth[0] . ':' . $auth[1]);
-        }
-
-        $response = curl_exec($ch);
+        $html = curl_exec($ch);
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $err = $response === false ? curl_error($ch) : null;
-
         curl_close($ch);
 
-        return [
-            'code' => $code,
-            'body' => $response ?: '',
-            'error' => $err
-        ];
+        if (!$html || $code !== 200) {
+            Log::error("RoomioImportService: Login page fetch failed (HTTP {$code})");
+            return false;
+        }
+
+        if (!preg_match('/name="csrf-token"\s+content="([^"]+)"/', $html, $matches)) {
+            Log::error('RoomioImportService: CSRF token not found in login page');
+            return false;
+        }
+        $csrf = $matches[1];
+
+        // Step 2: POST JSON credentials
+        $payload = json_encode([
+            'external_supplier_user' => [
+                'email'    => env('CAPTUR3D_EMAIL'),
+                'password' => env('CAPTUR3D_PASSWORD'),
+            ],
+        ]);
+
+        $ch = curl_init($this->loginUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $payload,
+            CURLOPT_HTTPHEADER     => [
+                'Content-Type: application/json',
+                'Accept: application/json',
+                "X-CSRF-Token: {$csrf}",
+                'Origin: https://es-portal.captur3d.io',
+                'Referer: ' . $this->loginUrl,
+            ],
+            CURLOPT_COOKIEJAR      => $this->cookieFile,
+            CURLOPT_COOKIEFILE     => $this->cookieFile,
+            CURLOPT_USERAGENT      => 'BenchmarkCron/1.0',
+        ]);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($code !== 200 || str_contains((string) $body, '"errors"')) {
+            Log::error("RoomioImportService: Login POST failed (HTTP {$code}): {$body}");
+            return false;
+        }
+
+        return true;
     }
 
-    /**
-     * Convert "About 16 hours" or "2 days" to Pakistan timestamp
-     * Only update if due_in crosses current date
-     */
-protected function parseDueIn(string $dueRaw): string
-{
-    $dt = new DateTime('now', new DateTimeZone('Asia/Karachi'));
-    $raw = strtolower(trim($dueRaw));
+    // ── JSON API (single page) ────────────────────────────────────────────────
 
-    preg_match('/(\d+)/', $raw, $match);
-    $value = isset($match[1]) ? (int)$match[1] : 0;
-
-    if ($value <= 0) {
-        return $dt->format('Y-m-d H:i:s');
-    }
-
-    if (str_contains($raw, 'day')) {
-        $dt->modify("+{$value} days");
-    } elseif (str_contains($raw, 'hour')) {
-        $dt->modify("+{$value} hours");
-    } elseif (str_contains($raw, 'minute')) {
-        $dt->modify("+{$value} minutes");
-    } else {
-        $dt->modify("+{$value} hours");
-    }
-
-    return $dt->format('Y-m-d H:i:s');
-}
-
-    /**
-     * Parse HTML table and extract order records
-     */
-    protected function parseOrdersFromHtml(string $html, int $projectId, ?array $auth = null, ?string $processOrderValue = null): array
+    protected function fetchOrdersPage(string $url): ?array
     {
-        $records = [];
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+            CURLOPT_COOKIEFILE     => $this->cookieFile,
+            CURLOPT_USERAGENT      => 'BenchmarkCron/1.0',
+        ]);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
 
-        libxml_use_internal_errors(true);
-        $dom = new DOMDocument();
-        $dom->loadHTML('<?xml encoding="UTF-8">'.$html);
-        $xpath = new DOMXPath($dom);
-
-        $rows = $xpath->query('//table//tr');
-
-        if ($rows->length < 2) {
-            return [];
+        if ($code !== 200 || !$body) {
+            Log::warning("RoomioImportService: JSON fetch HTTP {$code} for {$url}");
+            return null;
         }
 
-        $headers = [];
-        foreach ($rows->item(0)->getElementsByTagName('th') as $th) {
-            $headers[] = trim($th->textContent);
-        }
-
-        $username = $auth[0] ?? env('EXTERNAL_PORTAL_USERNAME');
-        $password = $auth[1] ?? env('EXTERNAL_PORTAL_PASSWORD');
-
-        for ($i=1; $i<$rows->length; $i++) {
-
-            $cells = $rows->item($i)->getElementsByTagName('td');
-            if ($cells->length === 0) continue;
-
-            $row = [];
-            foreach ($cells as $idx => $cell) {
-                if (isset($headers[$idx])) {
-                    $row[$headers[$idx]] = trim($cell->textContent);
-                }
-            }
-
-            $rawOrderId = $row['Order ID'] ?? null;
-            if (!$rawOrderId) continue;
-
-            $address = $row['Address'] ?? '';
-            $priorityRaw = strtolower(trim($row['Priority'] ?? 'normal'));
-            $priority = in_array($priorityRaw, ['low','normal','high','urgent']) ? $priorityRaw : 'normal';
-
-            $receivedAt = new DateTime('now', new DateTimeZone('Asia/Karachi'));
-            $dueInRaw = trim($row['Due in'] ?? $row['Due In'] ?? '');
-            $dueIn = $this->parseDueIn($dueInRaw);
-
-            // variant_no left null — backfilled after insert to avoid per-order API calls during parse
-            $variantNo = null;
-
-            $nowPK = new DateTime('now', new DateTimeZone('Asia/Karachi'));
-
-            $record = [
-                'order_number' => $rawOrderId,
-                'client_reference' => $rawOrderId,
-                'project_id' => $projectId,
-                'address' => $address ?? null,
-                'priority' => $priority,
-                'current_layer' => 'drawer',
-                'status' => 'pending',
-                'workflow_state' => 'RECEIVED',
-                'workflow_type' => 'FP_3_LAYER',
-                'received_at' => $receivedAt->format('Y-m-d H:i:s'),
-                'due_in' => $dueIn,
-                'variant_no' => $variantNo,
-                'metadata' => json_encode([
-                    'due_in_raw' => $dueInRaw,
-                    'variant_fetch_method' => 'pending_backfill'
-                ]),
-                'import_source' => 'cron',
-                'year' => $nowPK->format('Y'),
-                'month' => $nowPK->format('m'),
-                'date' => $nowPK->format('d-m-Y'),
-                'created_at' => $nowPK->format('Y-m-d H:i:s'),
-                'updated_at' => $nowPK->format('Y-m-d H:i:s')
-            ];
-
-            if ($processOrderValue !== null) {
-                $record['process_order'] = $processOrderValue;
-            }
-
-            $records[] = $record;
-        }
-
-        return $records;
+        $decoded = json_decode($body, true);
+        return $decoded['data'] ?? null;
     }
 
-    /**
-     * Fetch records from a single URL with pagination
-     */
-    protected function fetchFromUrl(string $baseUrl, int $projectId, ?array $auth = null, ?string $processOrderValue = null): array
+    // ── Fetch VARIANT_no from detail page ─────────────────────────────────────
+
+    protected function fetchVariantName(int $orderId): ?string
+    {
+        $url = 'https://es-portal.captur3d.io/external_supplier/orders/' . $orderId . '.json';
+        $ch  = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+            CURLOPT_COOKIEFILE     => $this->cookieFile,
+            CURLOPT_USERAGENT      => 'BenchmarkCron/1.0',
+        ]);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($code !== 200 || !$body) {
+            return null;
+        }
+        $data = json_decode($body, true);
+        return $data['data']['orderable']['variantName'] ?? null;
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    protected function mapPriority(string $p): string
+    {
+        return match (strtolower($p)) {
+            'low'    => 'low',
+            'high'   => 'high',
+            'urgent' => 'urgent',
+            default  => 'normal',   // "regular" and anything else -> normal
+        };
+    }
+
+    protected function parseIsoTimestamp(string $raw): string
+    {
+        if ($raw === '') {
+            return (new DateTime('now', new DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
+        }
+        try {
+            $dt = new DateTime($raw);
+            $dt->setTimezone(new DateTimeZone('Asia/Karachi'));
+            return $dt->format('Y-m-d H:i:s');
+        } catch (Exception $e) {
+            return (new DateTime('now', new DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
+        }
+    }
+
+    protected function mapJsonOrder(array $order, int $projectId, ?string $processOrderValue): array
+    {
+        $nowPK = new DateTime('now', new DateTimeZone('Asia/Karachi'));
+
+        $record = [
+            'order_number'     => '#' . $order['id'],
+            'client_reference' => '#' . $order['id'],
+            'project_id'       => $projectId,
+            'address'          => $order['propertyAddress'] ?? null,
+            'priority'         => $this->mapPriority($order['priority'] ?? ''),
+            'current_layer'    => 'drawer',
+            'status'           => 'pending',
+            'workflow_state'   => 'RECEIVED',
+            'workflow_type'    => 'FP_3_LAYER',
+            'received_at'      => $this->parseIsoTimestamp($order['orderedAt'] ?? ''),
+            'due_in'           => $this->parseIsoTimestamp($order['deliveryDeadline'] ?? $order['targetDeadline'] ?? ''),
+            'VARIANT_no'       => null,
+            'metadata'         => json_encode([
+                'combinationType' => $order['orderableSummary']['combinationType'] ?? null,
+                'sourceType'      => $order['orderableSummary']['sourceType']      ?? null,
+                'providerName'    => $order['providerName']                        ?? null,
+                'requestId'       => $order['requestId']                           ?? null,
+                'orderedAt'       => $order['orderedAt']                           ?? null,
+            ], JSON_UNESCAPED_UNICODE),
+            'import_source'    => 'cron',
+            'year'             => (int) $nowPK->format('Y'),
+            'month'            => (int) $nowPK->format('m'),
+            'date'             => $nowPK->format('d-m-Y'),
+            'created_at'       => $nowPK->format('Y-m-d H:i:s'),
+            'updated_at'       => $nowPK->format('Y-m-d H:i:s'),
+        ];
+
+        if ($processOrderValue !== null) {
+            $record['process_order'] = $processOrderValue;
+        }
+
+        return $record;
+    }
+
+    // ── Paginated fetch all pages ─────────────────────────────────────────────
+
+    protected function fetchAllOrders(string $filter, int $projectId, ?string $processOrderValue): array
     {
         $allRecords = [];
-        $page = 1;
-        $username = $auth[0] ?? env('EXTERNAL_PORTAL_USERNAME');
-        $password = $auth[1] ?? env('EXTERNAL_PORTAL_PASSWORD');
+        $page       = 1;
 
         while ($page <= $this->maxPages) {
-            try {
-                $pageUrl = $baseUrl . (str_contains($baseUrl, '?') ? '&' : '?') . 'page=' . $page;
+            $url  = $this->baseUrl . ".json?filter={$filter}&page={$page}";
+            $data = $this->fetchOrdersPage($url);
 
-                $response = Http::timeout(60)
-                    ->withHeaders([
-                        'User-Agent' => 'BenchmarkCron/1.0',
-                        'Accept' => 'text/html'
-                    ])
-                    ->withBasicAuth($username, $password)
-                    ->get($pageUrl);
-
-                if (!$response->successful()) {
-                    Log::warning("HTTP error {$response->status()} fetching page {$page} from {$baseUrl}");
-                    break;
-                }
-
-                $pageRecords = $this->parseOrdersFromHtml($response->body(), $projectId, [$username, $password], $processOrderValue);
-
-                if (empty($pageRecords)) {
-                    Log::info("No records on page {$page}, stopping pagination for {$baseUrl}");
-                    break;
-                }
-
-                $allRecords = array_merge($allRecords, $pageRecords);
-                Log::info("Fetched ".count($pageRecords)." records from page {$page} of {$baseUrl}");
-
-                $page++;
-                usleep(300000);
-
-            } catch (Exception $e) {
-                Log::error("Import error on page {$page} from {$baseUrl}: ".$e->getMessage());
+            if ($data === null) {
                 break;
             }
+
+            $orders = $data['orders'] ?? [];
+            if (empty($orders)) {
+                break;
+            }
+
+            foreach ($orders as $order) {
+                $rec = $this->mapJsonOrder($order, $projectId, $processOrderValue);
+                $rec['_order_id'] = (int) $order['id']; // track for backfill, stripped later
+                $allRecords[] = $rec;
+            }
+
+            $totalPages = (int) ($data['meta']['totalPages'] ?? 1);
+            if ($page >= $totalPages) {
+                break;
+            }
+
+            $page++;
+            usleep(300000);
         }
 
         return $allRecords;
     }
 
-    /**
-     * Bulk inserts require every row to have the same keys.
-     */
-    protected function normalizeRecordsForInsert(array $records, string $table): array
+    protected function normalizeRecords(array $records, string $table): array
     {
         if (empty($records)) {
             return [];
         }
 
-        $hasProcessOrderColumn = Schema::hasColumn($table, 'process_order');
+        $hasProcessOrder = Schema::hasColumn($table, 'process_order');
 
         foreach ($records as &$record) {
-            if ($hasProcessOrderColumn) {
+            if ($hasProcessOrder) {
                 $record['process_order'] = $record['process_order'] ?? null;
             } else {
                 unset($record['process_order']);
@@ -265,97 +261,77 @@ protected function parseDueIn(string $dueRaw): string
         return $records;
     }
 
-    /**
-     * MAIN IMPORT FUNCTION - Fetches from both new and processing orders URLs
-     */
-    public function run()
+    // ── Entry point ───────────────────────────────────────────────────────────
+
+    public function run(): void
     {
-        $username = env('EXTERNAL_PORTAL_USERNAME');
-        $password = env('EXTERNAL_PORTAL_PASSWORD');
         $projectId = 15;
-        $totalInserted = 0;
+        $table     = 'project_15_orders';
 
-        Log::info("Starting RoomioImportService for project {$projectId}");
+        Log::info("RoomioImportService: starting for project {$projectId}");
 
-        // Fetch from NEW ORDERS URL
-        $newOrdersUrl = env('EXTERNAL_PORTAL_URL'); // https://es-portal.captur3d.io/external_supplier/plann3d_floorplan_orders?filter=pending
-        Log::info("Fetching new orders from: {$newOrdersUrl}");
-        $newRecords = $this->fetchFromUrl($newOrdersUrl, $projectId, [$username, $password], null);
-        Log::info("New orders fetch completed: ".count($newRecords)." records");
-
-        // Fetch from PROCESSING ORDERS URL
-        $processingOrdersUrl = 'https://es-portal.captur3d.io/external_supplier/plann3d_floorplan_orders?status=processing';
-        Log::info("Fetching processing orders from: {$processingOrdersUrl}");
-        $processingRecords = $this->fetchFromUrl($processingOrdersUrl, $projectId, [$username, $password], 'yes');
-        Log::info("Processing orders fetch completed: ".count($processingRecords)." records");
-
-        // Build unique total where processing source wins on duplicates.
-        $orderMap = [];
-        foreach ($newRecords as $record) {
-            $orderMap[$record['order_number']] = $record;
-        }
-        foreach ($processingRecords as $record) {
-            $orderMap[$record['order_number']] = $record;
-        }
-        $allRecords = array_values($orderMap);
-        $table = 'project_15_orders';
-        $allRecords = $this->normalizeRecordsForInsert($allRecords, $table);
-
-        Log::info("Total unique records after merge: ".count($allRecords));
-
-        if (!empty($allRecords)) {
-            Log::info("Insert-only mode active. Attempting to insert unique records: ".count($allRecords));
-            $totalInserted = (int) DB::table($table)->insertOrIgnore($allRecords);
-        }
-
-        Log::info("RoomioImportService finished. Total inserted: {$totalInserted}");
-
-        // Backfill variant_no for any newly inserted rows that still have it null.
-        // This runs AFTER insert so we only hit the API for genuinely new orders,
-        // not on every cron cycle for every order on the portal.
-        $this->backfillVariantNos($table, $projectId, [$username, $password]);
-    }
-
-    /**
-     * Fetch and store variant_no for orders that were inserted without one.
-     * Processes up to 50 rows per run to stay within cron time limits.
-     */
-    protected function backfillVariantNos(string $table, int $projectId, array $auth): void
-    {
-        $rows = DB::table($table)
-            ->where('project_id', $projectId)
-            ->whereNull('variant_no')
-            ->select('id', 'order_number')
-            ->orderBy('id', 'desc')
-            ->limit(50)
-            ->get();
-
-        if ($rows->isEmpty()) {
-            Log::info('Variant backfill: no rows need updating.');
+        if (!$this->portalLogin()) {
+            Log::error('RoomioImportService: portal login failed -- aborting');
             return;
         }
 
-        Log::info("Variant backfill: processing {$rows->count()} rows.");
-        $updated = 0;
+        $pendingRecords    = $this->fetchAllOrders('pending',    $projectId, null);
+        $processingRecords = $this->fetchAllOrders('processing', $projectId, 'yes');
+        $completedRecords  = $this->fetchAllOrders('completed',  $projectId, 'yes');
 
-        foreach ($rows as $row) {
-            try {
-                $variantNo = $this->fetchVariantNo($row->order_number, $auth);
-                if ($variantNo !== null) {
-                    DB::table($table)->where('id', $row->id)->update([
-                        'variant_no' => $variantNo,
-                        'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.variant_fetch_method', 'detail_page')"),
-                        'updated_at' => now(),
-                    ]);
-                    $updated++;
-                } else {
-                    Log::info("Variant backfill: no variant found for order {$row->order_number}, will retry next run.");
+        // Mark completed portal orders so they are stored as DELIVERED when new
+        $nowStr = (new \DateTime('now', new \DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
+        foreach ($completedRecords as &$r) {
+            $r['workflow_state'] = 'DELIVERED';
+            $r['status']         = 'completed';
+            $r['delivered_at']   = $nowStr;
+        }
+        unset($r);
+
+        Log::info('RoomioImportService: pending=' . count($pendingRecords) . ', processing=' . count($processingRecords) . ', completed=' . count($completedRecords));
+
+        // Merge -- later entries win on duplicate order_number
+        // completed goes last so active (pending/processing) state is preferred for already-tracked orders
+        $orderMap = [];
+        foreach ($completedRecords  as $r) { $orderMap[$r['order_number']] = $r; }
+        foreach ($pendingRecords    as $r) { $orderMap[$r['order_number']] = $r; }
+        foreach ($processingRecords as $r) { $orderMap[$r['order_number']] = $r; }
+
+        // Extract order IDs (temp key) before passing to normalizeRecords
+        $merged      = array_values($orderMap);
+        $allOrderIds = array_map(fn($r) => $r['_order_id'], $merged);
+        $merged      = array_map(function ($r) { unset($r['_order_id']); return $r; }, $merged);
+
+        $allRecords = $this->normalizeRecords($merged, $table);
+
+        $inserted = 0;
+        if (!empty($allRecords)) {
+            $inserted = (int) DB::table($table)->insertOrIgnore($allRecords);
+        }
+
+        // Backfill VARIANT_no for records in this run that still have null variant
+        $backfilled = 0;
+        if (!empty($allOrderIds)) {
+            $inList  = implode(',', array_map(fn($id) => "'#$id'", $allOrderIds));
+            $nullRows = DB::select(
+                "SELECT id, order_number FROM `{$table}` WHERE order_number IN ({$inList}) AND VARIANT_no IS NULL"
+            );
+            foreach ($nullRows as $row) {
+                $orderId = (int) ltrim($row->order_number, '#');
+                $variant = $this->fetchVariantName($orderId);
+                if ($variant !== null) {
+                    DB::table($table)->where('id', $row->id)
+                        ->update(['VARIANT_no' => $variant, 'updated_at' => now()]);
+                    $backfilled++;
                 }
-            } catch (Exception $e) {
-                Log::warning("Variant backfill failed for order {$row->order_number}: ".$e->getMessage());
+                usleep(150000);
             }
         }
 
-        Log::info("Variant backfill complete: {$updated} of {$rows->count()} rows updated.");
+        if (file_exists($this->cookieFile)) {
+            @unlink($this->cookieFile);
+        }
+
+        Log::info("RoomioImportService: finished -- {$inserted} new record(s) inserted, {$backfilled} VARIANT_no backfilled in {$table}");
     }
 }

@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Models\WorkItem;
 use App\Services\StateMachine;
 use App\Services\ProjectOrderService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -18,15 +19,39 @@ class DashboardController extends Controller
 {
     private const ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS = [
         16 => 2,
+        2  => 0,  // Project 2 (Focal PB) stores due_in as naive UTC; +5h converts to PKT for frontend
     ];
-<<<<<<< HEAD
-    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 7, 8, 42, 12, 11, 19];
-=======
-    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [2, 7, 8, 42, 12, 11];
->>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
+    // Projects whose due_in column stores naive UTC timestamps (not PKT)
+    private const BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS = [2, 5];
+    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 3, 7, 8, 42, 12, 11, 19];
     private const ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS = [1, 3, 16, 12, 19];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS = [1, 3,];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE = 100;
+
+    /**
+     * Business day bounds — the "today" window starts at 05:00 PKT.
+     * Before 05:00 PKT we are still in the previous business day.
+     * Result is cached per request instance.
+     * Returns [Carbon $start, Carbon $end] both in Asia/Karachi.
+     */
+    private function businessDayBounds(): array
+    {
+        static $cache = null;
+        if ($cache === null) {
+            // Business day: 05:00 PKT → 05:00 PKT next day = 00:00 UTC → 00:00 UTC next day
+            // (5 AM PKT aligns exactly with midnight UTC, so UTC DATE() comparisons work correctly)
+            $now = now('Asia/Karachi');
+            $start = $now->copy()->startOfDay()->addHours(5); // 05:00 PKT today
+            if ($now->lt($start)) {
+                $start->subDay(); // before 05:00 → still in previous business day
+            }
+            // Convert to UTC so comparisons work against UTC-stored TIMESTAMP columns
+            $startUtc = $start->copy()->utc();
+            $endUtc   = $start->copy()->addDay()->utc();
+            $cache = [$startUtc, $endUtc];
+        }
+        return $cache;
+    }
 
     
 public function batchStatusReport(Request $request)
@@ -61,6 +86,11 @@ if ($request->query('date')) {
         $selectedDatePkt = \Carbon\Carbon::parse($date, 'Asia/Karachi');
         $batchNowPkt = now('Asia/Karachi')->format('Y-m-d H:i:s');
 
+        // Projects that store due_in as naive UTC need UTC_TIMESTAMP() for correct TIMESTAMPDIFF
+        $isUtcDueInProject = $projectId && in_array((int) $projectId, self::BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS);
+        $batchNowSql   = $isUtcDueInProject ? 'UTC_TIMESTAMP()' : '?';
+        $batchNowParam = $isUtcDueInProject ? [] : [$batchNowPkt];
+
         // 29 10 PM
         $shiftStartPkt = $selectedDatePkt->copy()->subDay()->setTime(22, 0, 0);
 
@@ -76,6 +106,9 @@ if ($request->query('date')) {
         $shiftEndUtc = $shiftEndPkt->copy()->setTimezone('UTC');
         $shiftStartLocal = $shiftStartPkt->format('Y-m-d H:i:s');
         $shiftEndLocal = $shiftEndPkt->format('Y-m-d H:i:s');
+        // UTC strings for TIMESTAMP column comparisons (DB session is UTC)
+        $shiftStartUtcStr = $shiftStartUtc->format('Y-m-d H:i:s');
+        $shiftEndUtcStr   = $shiftEndUtc->format('Y-m-d H:i:s');
 
         /*
         |--------------------------------------------------------------------------
@@ -121,12 +154,12 @@ if ($request->query('date')) {
             ->selectRaw("
                 orders.*,
                 CASE
-                    WHEN due_in IS NOT NULL THEN GREATEST(TIMESTAMPDIFF(MINUTE, ?, {$batchDueInExpr}), 0)
+                    WHEN due_in IS NOT NULL THEN GREATEST(TIMESTAMPDIFF(MINUTE, {$batchNowSql}, {$batchDueInExpr}), 0)
                     ELSE NULL
                 END as batch_remaining_minutes
-            ", [$batchNowPkt])
-            ->where('received_at', '>=', $shiftStartLocal)
-            ->where('received_at', '<', $shiftEndLocal);
+            ", $batchNowParam)
+            ->where('received_at', '>=', $shiftStartUtcStr)
+            ->where('received_at', '<', $shiftEndUtcStr);
 
         if ($projectId) {
             $query->where('project_id', $projectId);
@@ -140,8 +173,8 @@ if ($request->query('date')) {
         |--------------------------------------------------------------------------
         */
         $statusWindowQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->where('received_at', '>=', $shiftStartLocal)
-            ->where('received_at', '<', $shiftEndLocal);
+            ->where('received_at', '>=', $shiftStartUtcStr)
+            ->where('received_at', '<', $shiftEndUtcStr);
 
         if ($projectId) {
             $statusWindowQuery->where('project_id', $projectId);
@@ -162,8 +195,8 @@ if ($request->query('date')) {
             ->map(function ($items, $batchNo) {
                 $minReceived = \Carbon\Carbon::parse(
                     $items->min('received_at'),
-                    'Asia/Karachi'
-                );
+                    'UTC'
+                )->setTimezone('Asia/Karachi');
 
                 $activeOrders = $items->filter(
                     fn($o) =>
@@ -228,21 +261,20 @@ if ($request->query('date')) {
             'sent_to_fixing' => $statusWindowOrders->where('workflow_state', 'PENDING_BY_DRAWER')->count(),
         ];
 
-        
         /*
         |--------------------------------------------------------------------------
         | Plans Remaining (Include pending orders from the last 5 days)
         |--------------------------------------------------------------------------
         */
-        $plansRemainingStartLocal = $shiftStartPkt
+        $plansRemainingStartLocal = $shiftStartUtc
             ->copy()
             ->subDays(2)
             ->format('Y-m-d H:i:s');
 
         $plansRemainingQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, ?, {$batchDueInExpr}), 0) as remaining_hour_bucket", [$batchNowPkt])
+            ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, {$batchNowSql}, {$batchDueInExpr}), 0) as remaining_hour_bucket", $batchNowParam)
             ->where('received_at', '>=', $plansRemainingStartLocal)
-            ->where('received_at', '<', $shiftEndLocal)
+            ->where('received_at', '<', $shiftEndUtcStr)
             ->whereNotNull('due_in')
             ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER']);
 
@@ -267,14 +299,14 @@ if ($request->query('date')) {
         | Hourly Received Orders
         |--------------------------------------------------------------------------
         */
-        $last24h = $shiftStartLocal;
+        $last24h = $shiftStartUtcStr;
 
         $doneOrdersLast24h = collect(
             DB::table(DB::raw("({$rawUnion}) as orders"))
                 ->where('workflow_state', 'DELIVERED')
                 ->whereNotNull('completed_at')
                 ->where('completed_at', '>=', $last24h)
-                ->where('completed_at', '<', $shiftEndLocal)
+                ->where('completed_at', '<', $shiftEndUtcStr)
                 ->when(
                     $projectId,
                     fn($q) => $q->where('project_id', $projectId)
@@ -303,8 +335,8 @@ if ($request->query('date')) {
                 ->filter(function ($o) use ($slot) {
                     $hour = \Carbon\Carbon::parse(
                         $o->completed_at,
-                        'Asia/Karachi'
-                    )->hour;
+                        'UTC'
+                    )->setTimezone('Asia/Karachi')->hour;
 
                     return $hour >= $slot['start']
                         && $hour < $slot['end'];
@@ -428,7 +460,7 @@ if ($request->query('date')) {
         }
 
         // Cache master dashboard for 120s — 26 projects × 7 queries is heavy on file cache
-        $cacheKey = 'dashboard_master_' . today()->format('Y-m-d');
+        $cacheKey = 'dashboard_master_' . $this->businessDayBounds()[0]->toDateString();
         $data = \Illuminate\Support\Facades\Cache::remember($cacheKey, 120, function () {
             return $this->generateMasterData();
         });
@@ -450,15 +482,15 @@ if ($request->query('date')) {
 
         $deliveredToday = Order::queryAcrossProjects($allProjectIds->toArray(), function($q) {
             $q->where('workflow_state', 'DELIVERED')
-              ->where('delivered_at', '>=', today()->startOfDay())
-              ->where('delivered_at', '<', today()->addDay()->startOfDay())
+              ->where('delivered_at', '>=', $this->businessDayBounds()[0])
+              ->where('delivered_at', '<', $this->businessDayBounds()[1])
               ->selectRaw('project_id, COUNT(*) as cnt')
               ->groupBy('project_id');
         })->pluck('cnt', 'project_id');
 
         $receivedToday = Order::queryAcrossProjects($allProjectIds->toArray(), function($q) {
-            $q->where('received_at', '>=', today()->startOfDay())
-              ->where('received_at', '<', today()->addDay()->startOfDay())
+            $q->where('received_at', '>=', $this->businessDayBounds()[0])
+              ->where('received_at', '<', $this->businessDayBounds()[1])
               ->selectRaw('project_id, COUNT(*) as cnt')
               ->groupBy('project_id');
         })->pluck('cnt', 'project_id');
@@ -537,7 +569,8 @@ if ($request->query('date')) {
         
         // Calculate overtime/undertime based on work items (bulk loaded)
         $todayWorkItems = WorkItem::where('status', 'completed')
-            ->whereDate('completed_at', today())
+            ->where('completed_at', '>=', $this->businessDayBounds()[0])
+            ->where('completed_at', '<', $this->businessDayBounds()[1])
             ->selectRaw('assigned_user_id, COUNT(*) as cnt')
             ->groupBy('assigned_user_id')
             ->pluck('cnt', 'assigned_user_id');
@@ -581,8 +614,8 @@ if ($request->query('date')) {
                 SUM(CASE WHEN workflow_state = 'DELIVERED' AND delivered_at >= ? THEN 1 ELSE 0 END) as delivered_month,
                 SUM(CASE WHEN workflow_state NOT IN ('DELIVERED','CANCELLED') THEN 1 ELSE 0 END) as pending
             ", [
-                today()->startOfDay(), today()->addDay()->startOfDay(),
-                today()->startOfDay(), today()->addDay()->startOfDay(),
+                $this->businessDayBounds()[0], $this->businessDayBounds()[1],
+                $this->businessDayBounds()[0], $this->businessDayBounds()[1],
                 now()->startOfWeek(),
                 now()->startOfWeek(),
                 now()->startOfMonth(),
@@ -630,8 +663,8 @@ if ($request->query('date')) {
         $teamDeliveredToday = Order::queryAcrossProjects($allProjectIds->toArray(), function($q) {
             $q->whereNotNull('team_id')
               ->where('workflow_state', 'DELIVERED')
-              ->where('delivered_at', '>=', today()->startOfDay())
-              ->where('delivered_at', '<', today()->addDay()->startOfDay())
+              ->where('delivered_at', '>=', $this->businessDayBounds()[0])
+              ->where('delivered_at', '<', $this->businessDayBounds()[1])
               ->selectRaw('team_id, COUNT(*) as cnt')
               ->groupBy('team_id');
         })->pluck('cnt', 'team_id');
@@ -681,7 +714,7 @@ if ($request->query('date')) {
                 SUM(CASE WHEN workflow_state = 'DELIVERED' AND recheck_count > 0 THEN 1 ELSE 0 END) as rework_delivered,
                 SUM(CASE WHEN workflow_state = 'DELIVERED' THEN 1 ELSE 0 END) as total_delivered_all
             ", [
-                today()->startOfDay(), today()->addDay()->startOfDay(),
+                $this->businessDayBounds()[0], $this->businessDayBounds()[1],
                 now()->startOfWeek(),
                 now()->startOfMonth(),
             ]);
@@ -702,6 +735,7 @@ if ($request->query('date')) {
               ->whereNotNull('received_at')
               ->whereNotNull('delivered_at')
               ->where('delivered_at', '>=', now()->startOfMonth())
+              ->whereRaw('delivered_at >= received_at') // exclude corrupt timestamps
               ->selectRaw("
                   project_id,
                   AVG(TIMESTAMPDIFF(HOUR, received_at, delivered_at)) as avg_hours,
@@ -780,6 +814,15 @@ if ($request->query('date')) {
 
         // 7. CAPACITY vs DEMAND
         $totalDailyCapacity = $allStaff->filter(fn($u) => !$u->is_absent && $u->is_active)->sum('daily_target');
+        // Fallback: when daily_target is not configured (all zeros), estimate from 30-day historical avg output
+        if ($totalDailyCapacity === 0) {
+            $thirtyDayDeliveries = Order::queryAcrossProjects($allProjectIds->toArray(), function($q) {
+                $q->where('workflow_state', 'DELIVERED')
+                  ->where('delivered_at', '>=', now()->subDays(30)->startOfDay())
+                  ->selectRaw('COUNT(*) as cnt');
+            })->sum('cnt');
+            $totalDailyCapacity = (int) round($thirtyDayDeliveries / 30);
+        }
         $capacityDemand = [
             'daily_capacity' => (int) $totalDailyCapacity,
             'today_received' => $wm->received_today,
@@ -809,21 +852,21 @@ if ($request->query('date')) {
             $q->where('received_at', '>=', now()->subDays(7)->startOfDay())
               ->selectRaw("DATE(received_at) as the_date, COUNT(*) as cnt")
               ->groupByRaw('DATE(received_at)');
-        })->pluck('cnt', 'the_date');
+        })->groupBy('the_date')->map(fn($rows) => $rows->sum('cnt'));
 
         $trendDelivered = Order::queryAcrossProjects($allProjectIds->toArray(), function($q) {
             $q->where('workflow_state', 'DELIVERED')
               ->where('delivered_at', '>=', now()->subDays(7)->startOfDay())
               ->selectRaw("DATE(delivered_at) as the_date, COUNT(*) as cnt")
               ->groupByRaw('DATE(delivered_at)');
-        })->pluck('cnt', 'the_date');
+        })->groupBy('the_date')->map(fn($rows) => $rows->sum('cnt'));
 
         $trendRejected = Order::queryAcrossProjects($allProjectIds->toArray(), function($q) {
             $q->where('rejected_at', '>=', now()->subDays(7)->startOfDay())
               ->whereNotNull('rejected_at')
               ->selectRaw("DATE(rejected_at) as the_date, COUNT(*) as cnt")
               ->groupByRaw('DATE(rejected_at)');
-        })->pluck('cnt', 'the_date');
+        })->groupBy('the_date')->map(fn($rows) => $rows->sum('cnt'));
 
         $trend7d = [];
         for ($i = 6; $i >= 0; $i--) {
@@ -853,7 +896,8 @@ if ($request->query('date')) {
 
         // 10. TOP/BOTTOM PERFORMERS (by completed work items today)
         $performerData = WorkItem::where('status', 'completed')
-            ->whereDate('completed_at', today())
+            ->where('completed_at', '>=', $this->businessDayBounds()[0])
+            ->where('completed_at', '<', $this->businessDayBounds()[1])
             ->selectRaw('assigned_user_id, COUNT(*) as completed, AVG(time_spent_seconds) as avg_seconds')
             ->groupBy('assigned_user_id')
             ->orderByDesc('completed')
@@ -1026,7 +1070,8 @@ if ($request->query('date')) {
         // Performance: single WorkItem GROUP BY stage instead of per-stage queries
         $completionsByStage = WorkItem::where('project_id', $id)
             ->where('status', 'completed')
-            ->whereDate('completed_at', today())
+            ->where('completed_at', '>=', $this->businessDayBounds()[0])
+            ->where('completed_at', '<', $this->businessDayBounds()[1])
             ->selectRaw('stage, COUNT(*) as cnt')
             ->groupBy('stage')
             ->pluck('cnt', 'stage');
@@ -1056,8 +1101,8 @@ if ($request->query('date')) {
                 SUM(CASE WHEN workflow_state NOT IN ('DELIVERED','CANCELLED') AND due_date IS NOT NULL AND due_date < ? THEN 1 ELSE 0 END) as sla_breaches,
                 SUM(CASE WHEN workflow_state = 'ON_HOLD' THEN 1 ELSE 0 END) as on_hold
             ", [
-                today()->startOfDay(), today()->addDay()->startOfDay(),
-                today()->startOfDay(), today()->addDay()->startOfDay(),
+                $this->businessDayBounds()[0], $this->businessDayBounds()[1],
+                $this->businessDayBounds()[0], $this->businessDayBounds()[1],
                 now(),
             ])->first();
 
@@ -1085,7 +1130,8 @@ if ($request->query('date')) {
         $shiftHours = 9;
         $workItemsToday = WorkItem::where('project_id', $id)
             ->where('status', 'completed')
-            ->whereDate('completed_at', today())
+            ->where('completed_at', '>=', $this->businessDayBounds()[0])
+            ->where('completed_at', '<', $this->businessDayBounds()[1])
             ->selectRaw('assigned_user_id, COUNT(*) as completed')
             ->groupBy('assigned_user_id')
             ->get()
@@ -1161,6 +1207,10 @@ if ($request->query('date')) {
     
     
     
+    
+    
+
+    
     /**
      * GET /dashboard/project-stats
      * Project stats based on selected date.
@@ -1184,6 +1234,7 @@ if ($request->query('date')) {
             if ($startDate > $endDate) {
                 [$startDate, $endDate] = [$endDate, $startDate];
             }
+            
         } else {
             $startDate = \Carbon\Carbon::parse($date)->toDateString();
             $endDate = $startDate;
@@ -1192,6 +1243,12 @@ if ($request->query('date')) {
         $dateFilterType = $startDate === $endDate ? 'single_date' : 'date_range';
         $dateFormatted = \Carbon\Carbon::parse($startDate)->format('d-m-Y');
         $endDateFormatted = \Carbon\Carbon::parse($endDate)->format('d-m-Y');
+
+        // Cache key includes date range, selected project and role
+        $cacheKey = 'ceo_pstats:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0') . ':' . ($selectedRole ?? 'all');
+        if (\Illuminate\Support\Facades\Cache::has($cacheKey)) {
+            return response()->json(\Illuminate\Support\Facades\Cache::get($cacheKey));
+        }
 
         $applyTimestampRange = function ($query, string $column) use ($startDate, $endDate) {
             if ($startDate === $endDate) {
@@ -1714,7 +1771,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             $applyTimestampRange($q, 'received_at');
         });
 
-        return response()->json([
+        $responseData = [
             'success' => true,
             'selected_date' => $startDate,
             'start_date' => $startDate,
@@ -1728,7 +1785,9 @@ $userCounts = User::whereIn('project_id', $projectIds)
             'selected_project_breakdown' => $selectedProjectId
                 ? $this->buildProjectDoneBreakdown((int) $selectedProjectId, $startDate, $endDate, $selectedRole)
                 : null,
-        ]);
+        ];
+        \Illuminate\Support\Facades\Cache::put($cacheKey, $responseData, 60);
+        return response()->json($responseData);
     }
 
     /**
@@ -2262,6 +2321,9 @@ $userCounts = User::whereIn('project_id', $projectIds)
     ];
 }
 
+
+
+
     private function buildTeamWiseDoneBreakdown(
         int $projectId,
         \Illuminate\Support\Collection $teamBreakdownRows,
@@ -2280,7 +2342,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
 
         $users = User::where('project_id', $projectId)
             ->whereIn('role', ['drawer', 'checker', 'qa'])
-            ->get(['id', 'name', 'role', 'team_id', 'wip_count', 'last_activity', 'is_absent'])
+            ->get(['id', 'name', 'role', 'team_id', 'wip_count'])
             ->keyBy('id');
 
         $usersByNameRole = $users
@@ -2345,10 +2407,6 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     'total_done' => 0,
                     'total_done_selected_date' => 0,
                     'wip' => (int) ($user?->wip_count ?? 0),
-                    'last_activity' => $user?->last_activity,
-                    'is_online' => ($user?->last_activity) && !($user?->is_absent)
-                        ? $user->last_activity->gt(now()->subMinutes(15))
-                        : false,
                 ];
             }
 
@@ -2356,11 +2414,42 @@ $userCounts = User::whereIn('project_id', $projectIds)
             $teamGroups[$teamId][$memberKey][$memberMapKey]['total_done_selected_date'] += $doneCount;
         }
 
+        // Fetch pending order counts per team (current snapshot, not date-filtered)
+        $table = \App\Services\ProjectOrderService::getTableName($projectId);
+        $teamPendingCounts = collect();
+
+        if (self::tableExists($table) && self::columnExists($table, 'workflow_state')) {
+            // Try direct team_id on orders first
+            if (self::columnExists($table, 'team_id')) {
+                $direct = DB::table($table)
+                    ->whereNotNull('team_id')
+                    ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+                    ->selectRaw('team_id, COUNT(*) as cnt')
+                    ->groupBy('team_id')
+                    ->pluck('cnt', 'team_id');
+                if ($direct->isNotEmpty()) {
+                    $teamPendingCounts = $direct;
+                }
+            }
+            // Fallback: infer team from drawer assignment via users table
+            if ($teamPendingCounts->isEmpty() && self::columnExists($table, 'drawer_id')) {
+                $teamPendingCounts = DB::table($table . ' as o')
+                    ->join('users as u', 'o.drawer_id', '=', 'u.id')
+                    ->whereNotNull('u.team_id')
+                    ->whereNotIn('o.workflow_state', ['DELIVERED', 'CANCELLED'])
+                    ->selectRaw('u.team_id, COUNT(DISTINCT o.id) as cnt')
+                    ->groupBy('u.team_id')
+                    ->pluck('cnt', 'team_id');
+            }
+        }
+
         foreach ($teamGroups as &$team) {
             $team['total_completed_orders'] = (int) $team['qa_done'];
             $team['total_done'] = (int) $team['total_role_done'];
             $team['total_done_selected_date'] = (int) $team['total_role_done'];
             $team['completed_orders_selected_date'] = (int) $team['qa_done'];
+            $team['pending'] = (int) ($teamPendingCounts->get($team['team_id'], 0));
+            $team['total_assigned'] = $team['pending'] + $team['total_done_selected_date'];
 
             foreach (['drawers', 'checkers', 'qas'] as $memberKey) {
                 $team[$memberKey] = collect($team[$memberKey])
@@ -2376,7 +2465,6 @@ $userCounts = User::whereIn('project_id', $projectIds)
             ->values()
             ->all();
     }
-
 
 
 
@@ -2426,8 +2514,8 @@ $userCounts = User::whereIn('project_id', $projectIds)
         // ─── BULK LOADS (minimize table scans) ──────────────────────
 
         // Reusable date boundaries
-        $todayStart = today()->startOfDay();
-        $tomorrowStart = today()->addDay()->startOfDay();
+        $todayStart = $this->businessDayBounds()[0];
+        $tomorrowStart = $this->businessDayBounds()[1];
         $weekStart = now()->subDays(6)->startOfDay();
 
         // 1. All staff once (replaces per-project User::where + later allStaff re-query)
@@ -2953,7 +3041,8 @@ $userCounts = User::whereIn('project_id', $projectIds)
 
         $todayCompleted = WorkItem::where('assigned_user_id', $user->id)
             ->where('status', 'completed')
-            ->whereDate('completed_at', today())
+            ->where('completed_at', '>=', $this->businessDayBounds()[0])
+            ->where('completed_at', '<', $this->businessDayBounds()[1])
             ->count();
 
         // Fallback: count from project table (Metro-synced orders)
@@ -2965,7 +3054,8 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     $todayCompleted = DB::table($table)
                         ->where($idCol, $user->id)
                         ->where($doneCol, 'yes')
-                        ->whereDate($dateCol, today())
+                        ->where($dateCol, '>=', $this->businessDayBounds()[0])
+                        ->where($dateCol, '<', $this->businessDayBounds()[1])
                         ->count();
                 }
             }
@@ -3118,7 +3208,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
     // ✅ Support both old (date) and new (date_from/date_to)
     $from = $request->get('date_from')
         ?? $request->get('date')
-        ?? today()->format('Y-m-d');
+        ?? $this->businessDayBounds()[0]->toDateString();
 
     $to = $request->get('date_to', $from);
 
@@ -3555,16 +3645,22 @@ $userCounts = User::whereIn('project_id', $projectIds)
             ->where('is_active', true)
             ->pluck('id');
 
-        // Staff: must be in PM's project, have a worker role, AND belong to an active team
-        // This prevents showing users who have project_id set but no team or wrong team
-        $allStaff = User::whereIn('project_id', $projectIds)
+        // Staff: must be in PM's project, have a worker role.
+        // Team filter is applied only when pmTeamIds is non-empty AND the user has a team_id set
+        // (some photo projects have designers with no team_id assigned yet — include them too)
+        $staffQuery = User::whereIn('project_id', $projectIds)
             ->where('is_active', true)
-            ->whereIn('role', $departmentRoles)
-            ->whereNotNull('team_id')
-            ->whereIn('team_id', $pmTeamIds)
-            ->get();
+            ->whereIn('role', $departmentRoles);
+        if ($pmTeamIds->isNotEmpty()) {
+            $staffQuery->where(function ($q) use ($pmTeamIds) {
+                $q->whereNull('team_id')
+                  ->orWhereIn('team_id', $pmTeamIds);
+            });
+        }
+        $allStaff = $staffQuery->get();
         $allStaffIds = $allStaff->pluck('id');
-        $todayCompletions = WorkItem::whereDate('completed_at', today())
+        $todayCompletions = WorkItem::where('completed_at', '>=', $this->businessDayBounds()[0])
+            ->where('completed_at', '<', $this->businessDayBounds()[1])
             ->where('status', 'completed')
             ->whereIn('assigned_user_id', $allStaffIds)
             ->selectRaw('assigned_user_id, COUNT(*) as cnt')
@@ -3578,9 +3674,9 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 ->selectRaw("
                     COUNT(*) as total_orders,
                     SUM(CASE WHEN workflow_state NOT IN ('DELIVERED','CANCELLED') THEN 1 ELSE 0 END) as pending,
-                    SUM(CASE WHEN workflow_state = 'DELIVERED' AND DATE(delivered_at) = ? THEN 1 ELSE 0 END) as delivered_today,
+                    SUM(CASE WHEN workflow_state = 'DELIVERED' AND delivered_at >= ? AND delivered_at < ? THEN 1 ELSE 0 END) as delivered_today,
                     SUM(CASE WHEN workflow_state IN ('IN_DRAW','IN_CHECK','IN_QA','IN_DESIGN') THEN 1 ELSE 0 END) as in_progress
-                ", [today()->format('Y-m-d')])->first();
+                ", [$this->businessDayBounds()[0], $this->businessDayBounds()[1]])->first();
 
             $staff = $allStaff->where('project_id', $project->id);
 
@@ -3608,11 +3704,11 @@ $userCounts = User::whereIn('project_id', $projectIds)
         $totalStats = Order::queryAcrossProjects($projectIds, function($q) {
             $q->selectRaw("
                 SUM(CASE WHEN workflow_state NOT IN ('DELIVERED','CANCELLED') THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN workflow_state = 'DELIVERED' AND DATE(delivered_at) = ? THEN 1 ELSE 0 END) as delivered_today,
+                SUM(CASE WHEN workflow_state = 'DELIVERED' AND delivered_at >= ? AND delivered_at < ? THEN 1 ELSE 0 END) as delivered_today,
                 SUM(CASE WHEN workflow_state IN ('IN_DRAW','IN_CHECK','IN_QA','IN_DESIGN') THEN 1 ELSE 0 END) as in_progress,
                 COUNT(*) as total_orders,
-                SUM(CASE WHEN DATE(received_at) = ? THEN 1 ELSE 0 END) as received_today
-            ", [today()->format('Y-m-d'), today()->format('Y-m-d')]);
+                SUM(CASE WHEN received_at >= ? AND received_at < ? THEN 1 ELSE 0 END) as received_today
+            ", [$this->businessDayBounds()[0], $this->businessDayBounds()[1], $this->businessDayBounds()[0], $this->businessDayBounds()[1]]);
         });
         $totalPending = $totalStats->sum('pending');
         $totalDeliveredToday = $totalStats->sum('delivered_today');
@@ -3719,8 +3815,8 @@ $userCounts = User::whereIn('project_id', $projectIds)
             ->with(['project:id,name,code', 'qaLead:id,name'])
             ->where('is_active', true)->get();
 
-        $todayStart = today()->startOfDay();
-        $tomorrowStart = today()->addDay()->startOfDay();
+        $todayStart = $this->businessDayBounds()[0];
+        $tomorrowStart = $this->businessDayBounds()[1];
 
         // Team delivered today (uses idx_delivered_at, very fast)
         $pmTeamDeliveredToday = Order::queryAcrossProjects($projectIds, function($q) use ($todayStart, $tomorrowStart) {
@@ -3802,8 +3898,8 @@ $userCounts = User::whereIn('project_id', $projectIds)
         })->values();
 
         // ─── QA SUMMARY WITH DATE SELECTION FOR PM ──────────────────
-        $pmQaDateStart = today()->startOfDay();
-        $pmQaDateEnd = today()->addDay()->startOfDay();
+        $pmQaDateStart = $this->businessDayBounds()[0];
+        $pmQaDateEnd = $this->businessDayBounds()[1];
 
         // Parse date parameters if provided
         if ($dateFilter === 'range' && $startDate && $endDate) {
@@ -4038,6 +4134,9 @@ $endDate = $request->input('end_date');
         $effectiveRoleSortColumn = $roleSortColumn ?? $roleSortColumnFromSortBy;
         $shouldPaginateOrders = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS));
         $hasSpecialPriorityProjects = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS));
+        $isDateRangeSelection = !empty($startDate) && !empty($endDate)
+            && Carbon::parse($startDate)->toDateString() !== Carbon::parse($endDate)->toDateString();
+        $useDueInFirstOrdering = $hasSpecialPriorityProjects && $isDateRangeSelection;
         $page = max((int) $request->input('page', 1), 1);
         $defaultPerPage = $shouldPaginateOrders ? self::ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE : 15;
         $requestedPerPage = max((int) $request->input('per_page', $defaultPerPage), 1);
@@ -4070,11 +4169,7 @@ $endDate = $request->input('end_date');
 
         // Overlay CRM assignments (survives external cron truncation of project tables)
         // LEFT JOIN crm_order_assignments and COALESCE to prefer CRM values
-<<<<<<< HEAD
         $unionQuery = "SELECT qo.id, qo.order_number, qo.client_portal_id, qo.clint_order_number, qo.VARIANT_no, qo.batch_number, qo.date, qo.bedrooms, qo.images, qo.total_raw_files, qo.hdr_images_count, qo.single_images_count, qo.final_images_count, qo.edited_images_count, qo.it_datetime, qo.project_id, qo.client_reference, qo.address, qo.client_name, qo.company, qo.branch, qo.photographer, qo.code, qo.plan_type, qo.instruction,"
-=======
-        $unionQuery = "SELECT qo.id, qo.order_number, qo.client_portal_id, qo.clint_order_number, qo.VARIANT_no, qo.batch_number, qo.date, qo.bedrooms, qo.project_id, qo.client_reference, qo.address, qo.client_name, qo.company, qo.branch, qo.photographer, qo.code, qo.plan_type, qo.instruction,"
->>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
             . "COALESCE(NULLIF(coa.current_layer,''), qo.current_layer) as current_layer, "
             . "COALESCE(coa.workflow_state, qo.workflow_state) as workflow_state, "
             . "qo.priority, "
@@ -4423,11 +4518,20 @@ if ($statusFilter === 'pending_by_drawer') {
                 ->orderBy($sortColumn, $sortOrder);
         }
 
-        $orderedQuery
-            ->orderByRaw("{$priorityOrderExpr} ASC")
-            ->orderByRaw("CASE WHEN due_in IS NOT NULL THEN TIMESTAMPDIFF(SECOND, NOW(), {$dueInOrderExpr}) ELSE 999999999 END ASC")
-            ->orderBy('received_at', 'asc')
-            ->orderBy('id', 'asc');
+if ($useDueInFirstOrdering) {
+    $orderedQuery->reorder();
+
+    $orderedQuery
+->orderByRaw("CASE WHEN due_in IS NULL THEN 1 ELSE 0 END ASC")
+->orderByRaw("CAST({$dueInOrderExpr} AS DATETIME) ASC")
+->orderBy('id', 'asc');
+} else {
+            $orderedQuery
+                ->orderByRaw("{$priorityOrderExpr} ASC")
+                ->orderByRaw("CASE WHEN due_in IS NOT NULL THEN TIMESTAMPDIFF(SECOND, NOW(), {$dueInOrderExpr}) ELSE 999999999 END ASC")
+                ->orderBy('received_at', 'asc')
+                ->orderBy('id', 'asc');
+        }
 
         $orders = $orderedQuery->get();
 
@@ -4572,8 +4676,8 @@ if ($statusFilter === 'pending_by_drawer') {
 
         // ─── 5. Role-wise completion stats for today ───
         $roleCompletions = [];
-        $todayCompletions = WorkItem::where('completed_at', '>=', today()->startOfDay())
-            ->where('completed_at', '<', today()->addDay()->startOfDay())
+        $todayCompletions = WorkItem::where('completed_at', '>=', $this->businessDayBounds()[0])
+            ->where('completed_at', '<', $this->businessDayBounds()[1])
             ->where('status', 'completed')
             ->whereIn('assigned_user_id', $allWorkers->pluck('id'))
             ->selectRaw('assigned_user_id, COUNT(*) as cnt')
@@ -5093,8 +5197,3 @@ if ($statusFilter === 'pending_by_drawer') {
 
 
 
-<<<<<<< HEAD
-=======
-
-
->>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
