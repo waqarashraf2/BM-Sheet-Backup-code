@@ -704,17 +704,12 @@ class AssignmentEngine
             } elseif ($action === 'submit') {
                 // Worker completed their stage
                 if ($role === 'drawer' && in_array($state, ['SUBMITTED_DRAW', 'QUEUED_CHECK'], true)) {
-<<<<<<< HEAD
-                    $updates['drawer_done'] = 'yes';
-                    $updates['drawer_date'] = now()->toDateTimeString();
-=======
                     if ($completionColumns['done_col']) {
                         $updates[$completionColumns['done_col']] = 'yes';
                     }
                     if ($completionColumns['date_col']) {
                         $updates[$completionColumns['date_col']] = now()->toDateTimeString();
                     }
->>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
                 } elseif (
                     $role === 'checker'
                     && Project::checkerCompletesOrder((int) $order->project_id)
@@ -733,17 +728,12 @@ class AssignmentEngine
                     $role === 'checker'
                     && in_array($state, ['SUBMITTED_CHECK', 'QUEUED_QA', 'QUEUED_FILLER'], true)
                 ) {
-<<<<<<< HEAD
-                    $updates['checker_done'] = 'yes';
-                    $updates['checker_date'] = now()->toDateTimeString();
-=======                                     
                     if ($completionColumns['done_col']) {
                         $updates[$completionColumns['done_col']] = 'yes';
                     }
                     if ($completionColumns['date_col']) {
                         $updates[$completionColumns['date_col']] = now()->toDateTimeString();
                     }
->>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
                     if ((int) $order->project_id === 12) {
                         $updates['current_layer'] = 'filler';
                     }
@@ -757,14 +747,6 @@ class AssignmentEngine
                     }
                     $updates['current_layer'] = 'qa';
                 } elseif ($role === 'filler' && in_array($state, ['SUBMITTED_FILLER', 'QUEUED_QA'], true)) {
-<<<<<<< HEAD
-                    $updates['file_uploaded']    = 'yes';
-                    $updates['file_upload_date'] = now()->toDateTimeString();
-                    $updates['current_layer']    = 'qa';
-                } elseif ($role === 'qa' && in_array($state, ['APPROVED_QA', 'DELIVERED'], true)) {
-                    $updates['final_upload']  = 'yes';
-                    $updates['ausFinaldate']  = now()->toDateTimeString();
-=======
                     if ($completionColumns['done_col']) {
                         $updates[$completionColumns['done_col']] = 'yes';
                     }
@@ -779,7 +761,6 @@ class AssignmentEngine
                     if ($completionColumns['date_col']) {
                         $updates[$completionColumns['date_col']] = now()->toDateTimeString();
                     }
->>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
                 }
             }
 
