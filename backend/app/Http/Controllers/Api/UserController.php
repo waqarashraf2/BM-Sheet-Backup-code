@@ -87,6 +87,12 @@ class UserController extends Controller
 
         $users = $query->latest()->paginate($request->per_page ?? 15);
 
+        $users->setCollection(
+            $users->getCollection()->map(function (User $user) {
+                return $this->enrichUserWithTeamStatus($user);
+            })
+        );
+
         return response()->json($users);
     }
 
@@ -118,7 +124,7 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'User created successfully',
-            'data' => $user->load(['project', 'team']),
+            'data' => $this->enrichUserWithTeamStatus($user->load(['project', 'team'])),
         ], 201);
     }
 
@@ -128,6 +134,7 @@ class UserController extends Controller
     public function show(string $id)
     {
         $user = User::with(['project', 'team', 'workAssignments.order'])->findOrFail($id);
+        $user = $this->enrichUserWithTeamStatus($user);
 
         return response()->json([
             'data' => $user,
@@ -190,7 +197,7 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'User updated successfully',
-            'data' => $user->load(['project', 'team']),
+            'data' => $this->enrichUserWithTeamStatus($user->load(['project', 'team'])),
         ]);
     }
 
@@ -254,6 +261,10 @@ class UserController extends Controller
             ->with(['project', 'team'])
             ->get();
 
+        $users = $users->map(function (User $user) {
+            return $this->enrichUserWithTeamStatus($user);
+        });
+
         return response()->json($users);
     }
 
@@ -297,5 +308,32 @@ class UserController extends Controller
             'message' => 'All work reassigned from user.',
             'data' => $user->fresh(),
         ]);
+    }
+
+    /**
+     * Add safe team diagnostics without changing existing response fields.
+     */
+    private function enrichUserWithTeamStatus(User $user): User
+    {
+        $user->loadMissing('team');
+
+        $teamStatus = 'team_ok';
+        $teamStatusReason = null;
+
+        if ($user->team_id === null) {
+            $teamStatus = 'no_team_assigned';
+            $teamStatusReason = 'User has null team_id';
+        } elseif ($user->team === null) {
+            $teamStatus = 'team_missing';
+            $teamStatusReason = 'team_id is set but team record was not found';
+        } elseif ((int) ($user->team->project_id ?? 0) !== (int) ($user->project_id ?? 0)) {
+            $teamStatus = 'team_project_mismatch';
+            $teamStatusReason = 'User project_id differs from team project_id';
+        }
+
+        $user->setAttribute('team_status', $teamStatus);
+        $user->setAttribute('team_status_reason', $teamStatusReason);
+
+        return $user;
     }
 }

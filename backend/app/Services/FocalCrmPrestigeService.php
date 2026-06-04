@@ -23,7 +23,6 @@ class FocalCrmPrestigeService
     protected string $subscriptionKey = 'daee797833ca4dbd87fc98b1421c57b1';
     protected int $projectId = 25;
     protected string $tableName = 'project_25_orders';
-    protected string $imagesTable = 'job_detail_25_images';
     protected string $timezone = 'Europe/London';
     protected string $productName = 'prestige photography';
 
@@ -152,7 +151,6 @@ class FocalCrmPrestigeService
 
                 $clientPortalIds[$clientPortalId] = true;
                 $records[] = $this->mapJobToOrder($job, $now);
-                $this->saveJobImages($job);
             } catch (Exception $e) {
                 Log::error('Error processing prestige job', [
                     'job_id' => $job['Id'] ?? 'unknown',
@@ -305,90 +303,6 @@ class FocalCrmPrestigeService
         }
 
         return [$inserted, $updated, $skipped];
-    }
-
-    protected function saveJobImages(array $job): void
-    {
-        $jobOrderId = (string) ($job['Id'] ?? '');
-
-        if (empty($jobOrderId)) {
-            return;
-        }
-
-        $images = $this->extractImagesFromJob($job);
-
-        if (empty($images)) {
-            return;
-        }
-
-        // Remove stale image rows before re-inserting
-        DB::table($this->imagesTable)->where('job_order_id', $jobOrderId)->delete();
-
-        foreach ($images as $image) {
-            try {
-                DB::table($this->imagesTable)->insert([
-                    'images_url'   => $image['url']       ?? null,
-                    'file_name'    => $image['file_name'] ?? null,
-                    'job_order_id' => $jobOrderId,
-                ]);
-            } catch (Exception $e) {
-                Log::error('Failed to save prestige job image', [
-                    'job_order_id' => $jobOrderId,
-                    'url'          => $image['url'] ?? '',
-                    'error'        => $e->getMessage(),
-                ]);
-            }
-        }
-    }
-
-    protected function extractImagesFromJob(array $job): array
-    {
-        // Pattern 1: Images => [ {Url, FileName}, ... ]
-        if (!empty($job['Images']) && is_array($job['Images'])) {
-            $result = [];
-            foreach ($job['Images'] as $img) {
-                $url  = $img['Url'] ?? $img['url'] ?? $img['URL'] ?? null;
-                $name = $img['FileName'] ?? $img['file_name'] ?? ($url ? basename($url) : null);
-                if ($url) {
-                    $result[] = ['url' => $url, 'file_name' => $name];
-                }
-            }
-            return $result;
-        }
-
-        // Pattern 2: Photos => [ {Url, FileName}, ... ]
-        if (!empty($job['Photos']) && is_array($job['Photos'])) {
-            $result = [];
-            foreach ($job['Photos'] as $img) {
-                $url  = $img['Url'] ?? $img['url'] ?? $img['URL'] ?? null;
-                $name = $img['FileName'] ?? $img['file_name'] ?? ($url ? basename($url) : null);
-                if ($url) {
-                    $result[] = ['url' => $url, 'file_name' => $name];
-                }
-            }
-            return $result;
-        }
-
-        // Pattern 3: DownloadUrls => ['https://...', ...]
-        if (!empty($job['DownloadUrls']) && is_array($job['DownloadUrls'])) {
-            $result = [];
-            foreach ($job['DownloadUrls'] as $url) {
-                if (is_string($url) && $url !== '') {
-                    $result[] = ['url' => $url, 'file_name' => basename($url)];
-                }
-            }
-            return $result;
-        }
-
-        // Pattern 4: DownloadUrl => 'https://...' (single string)
-        if (!empty($job['DownloadUrl']) && is_string($job['DownloadUrl'])) {
-            return [[
-                'url'       => $job['DownloadUrl'],
-                'file_name' => basename($job['DownloadUrl']),
-            ]];
-        }
-
-        return [];
     }
 
     protected function getTableColumnMeta(): array

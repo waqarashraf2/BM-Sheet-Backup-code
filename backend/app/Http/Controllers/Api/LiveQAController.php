@@ -1786,7 +1786,7 @@ $toDateTime   = $request->input('to_datetime');
             }
 
             $projects = $projectsQuery
-                ->select('id', 'name', 'client_name', 'country')
+                ->select('id', 'name', 'queue_name', 'client_name', 'country')
                 ->orderBy('id')
                 ->get();
             $debugSteps[] = ['step' => 'loaded_projects', 'count' => $projects->count(), 'layer' => $layer, 'client_code_project_ids' => $clientCodeProjectIds];
@@ -1863,6 +1863,7 @@ $toDateTime   = $request->input('to_datetime');
                                     'report_key'            => $project->id . ':' . $clientName,
                                     'project_id'            => $project->id,
                                     'project_name'          => $clientName,
+                                    'queue_name'            => $project->queue_name ?: $project->name,
                                     'client_name'           => $clientName,
                                     'source_project_name'   => $project->name,
                                     'client_names'          => [$clientName],
@@ -1888,6 +1889,7 @@ $toDateTime   = $request->input('to_datetime');
                         $projectReports[] = [
                             'project_id'            => $project->id,
                             'project_name'          => $project->name,
+                            'queue_name'            => $project->queue_name ?: $project->name,
                             'client_name'           => $project->client_name,
                             'client_names'          => $clientNames,
                             'client_name_counts'    => $clientNameCounts,
@@ -1965,6 +1967,7 @@ $toDateTime   = $request->input('to_datetime');
                                 'report_key'            => $project->id . ':' . $clientName,
                                 'project_id'            => $project->id,
                                 'project_name'          => $clientName,
+                                'queue_name'            => $project->queue_name ?: $project->name,
                                 'client_name'           => $clientName,
                                 'source_project_name'   => $project->name,
                                 'client_names'          => [$clientName],
@@ -1998,6 +2001,7 @@ $toDateTime   = $request->input('to_datetime');
                     $projectReports[] = [
                         'project_id'            => $project->id,
                         'project_name'          => $project->name,
+                        'queue_name'            => $project->queue_name ?: $project->name,
                         'client_name'           => $project->client_name,
                         'client_names'          => $clientNames,
                         'client_name_counts'    => $clientNameCounts,
@@ -2016,6 +2020,8 @@ $toDateTime   = $request->input('to_datetime');
                 }
             }
             $debugSteps[] = ['step' => 'built_project_reports', 'count' => count($projectReports)];
+            $projectReports = $this->groupInternalQaProjectReportsByQueueName($projectReports);
+            $debugSteps[] = ['step' => 'grouped_project_reports_by_queue_name', 'count' => count($projectReports)];
 
             $response = [
                 'success'        => true,
@@ -2052,6 +2058,77 @@ $toDateTime   = $request->input('to_datetime');
     }
 
     // ─── Private Helpers ───────────────────────────────────────────────
+
+    private function groupInternalQaProjectReportsByQueueName(array $projectReports): array
+    {
+        return collect($projectReports)
+            ->groupBy(fn ($report) => ($report['queue_name'] ?? null) ?: ($report['project_name'] ?? 'Unknown'))
+            ->map(function ($queueReports, $queueName) {
+                $first = $queueReports->first();
+
+                $clientNameCounts = $queueReports
+                    ->flatMap(fn ($report) => $report['client_name_counts'] ?? [])
+                    ->groupBy(fn ($client) => $client['client_name'] ?? 'Unknown')
+                    ->map(fn ($clients, $clientName) => [
+                        'client_name' => $clientName,
+                        'code_client_name' => $clientName,
+                        'project_name' => $clientName,
+                        'orders_count' => (int) $clients->sum(fn ($client) => (int) ($client['orders_count'] ?? 0)),
+                        'total_received_orders' => (int) $clients->sum(fn ($client) => (int) ($client['total_received_orders'] ?? $client['orders_count'] ?? 0)),
+                        'all_time_orders_count' => (int) $clients->sum(fn ($client) => (int) ($client['all_time_orders_count'] ?? 0)),
+                    ])
+                    ->sortByDesc('orders_count')
+                    ->sortBy('client_name')
+                    ->values()
+                    ->all();
+
+                $checklistCounts = $queueReports
+                    ->flatMap(fn ($report) => collect($report['checklist_counts'] ?? [])->map(fn ($item) => (array) $item))
+                    ->groupBy(fn ($item) => $item['title'] ?? 'Unknown')
+                    ->map(fn ($items, $title) => [
+                        'title' => $title,
+                        'total_mistakes' => (int) $items->sum(fn ($item) => (int) ($item['total_mistakes'] ?? 0)),
+                        'orders_affected' => (int) $items->sum(fn ($item) => (int) ($item['orders_affected'] ?? 0)),
+                    ])
+                    ->sortByDesc('total_mistakes')
+                    ->values()
+                    ->all();
+
+                return [
+                    'project_id'            => $first['project_id'],
+                    'project_ids'           => $queueReports->pluck('project_id')->unique()->values()->all(),
+                    'project_name'          => $queueName,
+                    'queue_name'            => $queueName,
+                    'source_project_names'  => $queueReports
+                        ->map(fn ($report) => $report['source_project_name'] ?? $report['project_name'] ?? null)
+                        ->filter()
+                        ->unique()
+                        ->values()
+                        ->all(),
+                    'client_name'           => $first['client_name'],
+                    'client_names'          => $queueReports
+                        ->flatMap(fn ($report) => $report['client_names'] ?? [])
+                        ->filter(fn ($clientName) => $clientName !== null && $clientName !== '' && $clientName !== 'Unknown')
+                        ->unique()
+                        ->values()
+                        ->all(),
+                    'client_name_counts'    => $clientNameCounts,
+                    'active_client_name_counts' => collect($clientNameCounts)
+                        ->filter(fn ($client) => (int) ($client['orders_count'] ?? 0) > 0)
+                        ->values()
+                        ->all(),
+                    'country'               => $first['country'],
+                    'total_received_orders' => (int) $queueReports->sum(fn ($report) => (int) ($report['total_received_orders'] ?? 0)),
+                    'total_orders'          => (int) $queueReports->sum(fn ($report) => (int) ($report['total_orders'] ?? 0)),
+                    'mistake_orders'        => (int) $queueReports->sum(fn ($report) => (int) ($report['mistake_orders'] ?? 0)),
+                    'total_mistakes'        => (int) $queueReports->sum(fn ($report) => (int) ($report['total_mistakes'] ?? 0)),
+                    'checklist_counts'      => $checklistCounts,
+                ];
+            })
+            ->sortBy('project_name')
+            ->values()
+            ->all();
+    }
 
     private function resolveLiveQaReportRange(Request $request): array
     {

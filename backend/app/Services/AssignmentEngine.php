@@ -8,14 +8,15 @@ use App\Models\WorkItem;
 use App\Models\Project;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-
 class AssignmentEngine
 {
+
     /**
      * Start next: find the next order in the user's queue and assign it.
      * Returns the assigned order or null if queue is empty.
      * Uses per-user wip_limit and complexity-weighted load check.
      */
+    
     public static function startNext(User $user): ?Order
     {
         $project = $user->project;
@@ -68,26 +69,23 @@ class AssignmentEngine
         return DB::transaction(function () use ($order, $user, $inState, $queueState, $role) {
             // Assign + transition — also set role-specific columns on the Order model
             $assignData = ['assigned_to' => $user->id, 'team_id' => $user->team_id];
-            if ($role === 'drawer' || $role === 'designer') {
-                $assignData['drawer_id']   = $user->id;
-                $assignData['drawer_name'] = $user->name;
-                $assignData['dassign_time'] = now();
-                if ($role === 'designer') {
-                    $assignData['current_layer'] = 'designer';
-                    $assignData['workflow_type'] = 'PH_2_LAYER';
-                }
-            } elseif ($role === 'checker') {
-                $assignData['checker_id']   = $user->id;
-                $assignData['checker_name'] = $user->name;
-                $assignData['cassign_time'] = now();
+            $assignmentColumns = self::getRoleAssignmentColumns($role);
+
+            if ($assignmentColumns['id_col']) {
+                $assignData[$assignmentColumns['id_col']] = $user->id;
+            }
+            if ($assignmentColumns['name_col']) {
+                $assignData[$assignmentColumns['name_col']] = $user->name;
+            }
+            if ($assignmentColumns['time_col']) {
+                $assignData[$assignmentColumns['time_col']] = now();
+            }
+
+            if ($role === 'designer') {
+                $assignData['current_layer'] = 'designer';
+                $assignData['workflow_type'] = 'PH_2_LAYER';
             } elseif ($role === 'filler') {
-                $assignData['file_uploader_id'] = $user->id;
-                $assignData['file_uploader_name'] = $user->name;
-                $assignData['fassign_time'] = now();
                 $assignData['current_layer'] = 'filler';
-            } elseif ($role === 'qa') {
-                $assignData['qa_id']   = $user->id;
-                $assignData['qa_name'] = $user->name;
             }
             $order->update($assignData);
 
@@ -170,6 +168,12 @@ class AssignmentEngine
                 ]);
             }
 
+            // Project 17 only: parse photo-selection values from submit comments
+            // and persist them to project_17_orders without affecting other projects.
+            // Guarded to designer and qa roles only — other roles are silently skipped.
+            // Pass $order directly (not fresh) so the dynamic table binding is preserved.
+            self::syncProject17PhotoMetrics($order, $user, $comments);
+
             // Transition to submitted state
             StateMachine::transition($order, $submittedState, $user->id);
 
@@ -190,6 +194,114 @@ class AssignmentEngine
 
             return $order->fresh();
         });
+    }
+
+    private static function syncProject17PhotoMetrics(Order $order, User $user, ?string $comments): void
+    {
+        if ((int) $order->project_id !== 17) {
+            return;
+        }
+
+        // Only run when the submitting role is designer or qa.
+        if (!in_array($user->role, ['designer', 'qa'], true)) {
+            \Log::debug('syncProject17PhotoMetrics: skipped — role not designer/qa', [
+                'role'     => $user->role,
+                'order_id' => $order->id,
+            ]);
+            return;
+        }
+
+        // Log that we're attempting the sync so failures can be traced.
+        \Log::info('syncProject17PhotoMetrics: attempting sync', [
+            'order_id'        => $order->id,
+            'order_number'    => $order->order_number,
+            'role'            => $user->role,
+            'comments_sample' => $comments ? mb_substr($comments, 0, 300) : null,
+        ]);
+
+        $metrics = self::extractPhotoSelectionMetrics($comments);
+        if ($metrics === null) {
+            \Log::info('syncProject17PhotoMetrics: no photo-selection pattern matched in comment — nothing to write', [
+                'order_id'        => $order->id,
+                'comments_sample' => $comments ? mb_substr($comments, 0, 300) : null,
+            ]);
+            return;
+        }
+
+        $table = ProjectOrderService::getTableName(17);
+        if (!Schema::hasTable($table)) {
+            \Log::warning('syncProject17PhotoMetrics: project table does not exist', ['table' => $table]);
+            return;
+        }
+
+        // Fetch the real column list once — more reliable than per-column hasColumn calls.
+        $existingCols = array_flip(Schema::getColumnListing($table));
+        $safeMetrics  = array_filter(
+            $metrics,
+            fn($col) => isset($existingCols[$col]),
+            ARRAY_FILTER_USE_KEY
+        );
+
+        if (empty($safeMetrics)) {
+            \Log::warning('syncProject17PhotoMetrics: metric columns missing from table — add migration', [
+                'table'          => $table,
+                'wanted_columns' => array_keys($metrics),
+                'table_columns'  => array_keys($existingCols),
+            ]);
+            return;
+        }
+
+        $payload = array_merge($safeMetrics, ['updated_at' => now()]);
+
+        // Try update by id first, then by order_number as a fallback.
+        $updated = DB::table($table)->where('id', $order->id)->update($payload);
+
+        if ($updated === 0) {
+            $updated = DB::table($table)
+                ->where('order_number', $order->order_number)
+                ->update($payload);
+        }
+
+        if ($updated > 0) {
+            \Log::info('syncProject17PhotoMetrics: columns written', [
+                'order_id' => $order->id,
+                'columns'  => array_keys($safeMetrics),
+                'values'   => $safeMetrics,
+            ]);
+        } else {
+            \Log::warning('syncProject17PhotoMetrics: update matched 0 rows', [
+                'order_id'     => $order->id,
+                'order_number' => $order->order_number,
+                'table'        => $table,
+            ]);
+        }
+    }
+
+    private static function extractPhotoSelectionMetrics(?string $comments): ?array
+    {
+        if (!is_string($comments) || trim($comments) === '') {
+            return null;
+        }
+
+        // Flexible pattern — handles em-dash, en-dash, hyphen, or colon as separator;
+        // allows optional whitespace around colons and between fields; case-insensitive.
+        $matched = preg_match(
+            '/Photo\s+Selections?\s*[\x{2014}\x{2013}\-:]\s*Total\s*:\s*(\d+)\s*,\s*Normal\s*:\s*(\d+)\s*,\s*HDR\s*:\s*(\d+)\s*,\s*Edited\s*:\s*(\d+)\s*,\s*Final\s*:\s*(\d+)/iu',
+            $comments,
+            $matches
+        );
+
+        if ($matched !== 1) {
+            return null;
+        }
+
+        return [
+            'total_raw_files'     => (string) ((int) $matches[1]),
+            'single_images_count' => (int) $matches[2],
+            'hdr_images_count'    => (int) $matches[3],
+            'edited_images_count' => (int) $matches[4],
+            'final_images_count'  => (int) $matches[5],
+        ];
     }
 
     /**
@@ -416,6 +528,7 @@ class AssignmentEngine
                     'assigned_to' => null,
                 ]);
 
+                
                 // Sync unassignment to CRM
                 $existingCrm = DB::table('crm_order_assignments')
                     ->where('project_id', $order->project_id)
@@ -568,65 +681,105 @@ class AssignmentEngine
 
             $state = $order->workflow_state;
             $role = $user->role;
+            $assignmentColumns = self::getRoleAssignmentColumns($role);
+            $completionColumns = self::getRoleCompletionColumns($role);
 
             if ($action === 'start') {
                 // Worker picked up the order
-                if ($role === 'drawer' || $role === 'designer') {
-                    $updates['drawer_name'] = $user->name;
-                    $updates['drawer_id']   = $user->id;
-                    $updates['dassign_time'] = now()->toDateTimeString();
-                    if ($role === 'designer') {
-                        $updates['current_layer'] = 'designer';
-                    }
-                } elseif ($role === 'checker') {
-                    $updates['checker_name'] = $user->name;
-                    $updates['checker_id']   = $user->id;
-                    $updates['cassign_time'] = now()->toDateTimeString();
+                if ($assignmentColumns['name_col']) {
+                    $updates[$assignmentColumns['name_col']] = $user->name;
+                }
+                if ($assignmentColumns['id_col']) {
+                    $updates[$assignmentColumns['id_col']] = $user->id;
+                }
+                if ($assignmentColumns['time_col']) {
+                    $updates[$assignmentColumns['time_col']] = now()->toDateTimeString();
+                }
+
+                if ($role === 'designer') {
+                    $updates['current_layer'] = 'designer';
                 } elseif ($role === 'filler') {
-                    $updates['file_uploader_name'] = $user->name;
-                    $updates['file_uploader_id']   = $user->id;
-                    $updates['fassign_time']       = now()->toDateTimeString();
-                    $updates['current_layer']      = 'filler';
-                } elseif ($role === 'qa') {
-                    $updates['qa_name'] = $user->name;
-                    $updates['qa_id']   = $user->id;
+                    $updates['current_layer'] = 'filler';
                 }
             } elseif ($action === 'submit') {
                 // Worker completed their stage
                 if ($role === 'drawer' && in_array($state, ['SUBMITTED_DRAW', 'QUEUED_CHECK'], true)) {
+<<<<<<< HEAD
                     $updates['drawer_done'] = 'yes';
                     $updates['drawer_date'] = now()->toDateTimeString();
+=======
+                    if ($completionColumns['done_col']) {
+                        $updates[$completionColumns['done_col']] = 'yes';
+                    }
+                    if ($completionColumns['date_col']) {
+                        $updates[$completionColumns['date_col']] = now()->toDateTimeString();
+                    }
+>>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
                 } elseif (
                     $role === 'checker'
                     && Project::checkerCompletesOrder((int) $order->project_id)
                     && in_array($state, ['DELIVERED', 'SUBMITTED_CHECK'], true)
                 ) {
                     $timestamp = now()->toDateTimeString();
-                    $updates['checker_done'] = 'yes';
-                    $updates['checker_date'] = $timestamp;
+                    if ($completionColumns['done_col']) {
+                        $updates[$completionColumns['done_col']] = 'yes';
+                    }
+                    if ($completionColumns['date_col']) {
+                        $updates[$completionColumns['date_col']] = $timestamp;
+                    }
                     $updates['final_upload'] = 'yes';
                     $updates['ausFinaldate'] = $timestamp;
                 } elseif (
                     $role === 'checker'
                     && in_array($state, ['SUBMITTED_CHECK', 'QUEUED_QA', 'QUEUED_FILLER'], true)
                 ) {
+<<<<<<< HEAD
                     $updates['checker_done'] = 'yes';
                     $updates['checker_date'] = now()->toDateTimeString();
+=======
+                    if ($completionColumns['done_col']) {
+                        $updates[$completionColumns['done_col']] = 'yes';
+                    }
+                    if ($completionColumns['date_col']) {
+                        $updates[$completionColumns['date_col']] = now()->toDateTimeString();
+                    }
+>>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
                     if ((int) $order->project_id === 12) {
                         $updates['current_layer'] = 'filler';
                     }
                 } elseif ($role === 'designer' && in_array($state, ['SUBMITTED_DESIGN', 'QUEUED_QA'], true)) {
                     // Photos 2-layer: designer done
-                    $updates['drawer_done'] = 'yes';
-                    $updates['drawer_date'] = now()->toDateTimeString();
+                    if ($completionColumns['done_col']) {
+                        $updates[$completionColumns['done_col']] = 'yes';
+                    }
+                    if ($completionColumns['date_col']) {
+                        $updates[$completionColumns['date_col']] = now()->toDateTimeString();
+                    }
                     $updates['current_layer'] = 'qa';
                 } elseif ($role === 'filler' && in_array($state, ['SUBMITTED_FILLER', 'QUEUED_QA'], true)) {
+<<<<<<< HEAD
                     $updates['file_uploaded']    = 'yes';
                     $updates['file_upload_date'] = now()->toDateTimeString();
                     $updates['current_layer']    = 'qa';
                 } elseif ($role === 'qa' && in_array($state, ['APPROVED_QA', 'DELIVERED'], true)) {
                     $updates['final_upload']  = 'yes';
                     $updates['ausFinaldate']  = now()->toDateTimeString();
+=======
+                    if ($completionColumns['done_col']) {
+                        $updates[$completionColumns['done_col']] = 'yes';
+                    }
+                    if ($completionColumns['date_col']) {
+                        $updates[$completionColumns['date_col']] = now()->toDateTimeString();
+                    }
+                    $updates['current_layer'] = 'qa';
+                } elseif ($role === 'qa' && in_array($state, ['APPROVED_QA', 'DELIVERED'], true)) {
+                    if ($completionColumns['done_col']) {
+                        $updates[$completionColumns['done_col']] = 'yes';
+                    }
+                    if ($completionColumns['date_col']) {
+                        $updates[$completionColumns['date_col']] = now()->toDateTimeString();
+                    }
+>>>>>>> 25e5eb2a4388ba0a16a10a72ea20c0172cffa3e4
                 }
             }
 
@@ -727,5 +880,79 @@ class AssignmentEngine
                 'error'      => $e->getMessage(),
             ]);
         }
+    }
+
+    private static function getRoleAssignmentColumns(string $role): array
+    {
+        $config = self::getRoleStageConfig($role);
+
+        return [
+            'id_col' => $config['id_column'] ?? null,
+            'name_col' => $config['name_column'] ?? null,
+            'time_col' => $config['assign_time_column'] ?? null,
+        ];
+    }
+
+    private static function getRoleCompletionColumns(string $role): array
+    {
+        $config = self::getRoleStageConfig($role);
+
+        return [
+            'done_col' => $config['done_column'] ?? null,
+            'date_col' => $config['done_date_column'] ?? null,
+        ];
+    }
+
+    private static function getRoleStageConfig(string $role): array
+    {
+        $defaults = self::getDefaultRoleStageConfig();
+        $configured = config("role_stage_columns.{$role}");
+
+        if (!is_array($configured)) {
+            return $defaults[$role] ?? [];
+        }
+
+        return array_replace($defaults[$role] ?? [], $configured);
+    }
+
+    private static function getDefaultRoleStageConfig(): array
+    {
+        return [
+            'drawer' => [
+                'id_column' => 'drawer_id',
+                'name_column' => 'drawer_name',
+                'assign_time_column' => 'dassign_time',
+                'done_column' => 'drawer_done',
+                'done_date_column' => 'drawer_date',
+            ],
+            'designer' => [
+                'id_column' => 'drawer_id',
+                'name_column' => 'drawer_name',
+                'assign_time_column' => 'dassign_time',
+                'done_column' => 'drawer_done',
+                'done_date_column' => 'drawer_date',
+            ],
+            'checker' => [
+                'id_column' => 'checker_id',
+                'name_column' => 'checker_name',
+                'assign_time_column' => 'cassign_time',
+                'done_column' => 'checker_done',
+                'done_date_column' => 'checker_date',
+            ],
+            'filler' => [
+                'id_column' => 'file_uploader_id',
+                'name_column' => 'file_uploader_name',
+                'assign_time_column' => 'fassign_time',
+                'done_column' => 'file_uploaded',
+                'done_date_column' => 'file_upload_date',
+            ],
+            'qa' => [
+                'id_column' => 'qa_id',
+                'name_column' => 'qa_name',
+                'assign_time_column' => null,
+                'done_column' => 'final_upload',
+                'done_date_column' => 'ausFinaldate',
+            ],
+        ];
     }
 }

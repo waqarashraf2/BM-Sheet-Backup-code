@@ -357,28 +357,9 @@ public function myCurrent(Request $request)
         $includeExternal = (string) $request->query('include_external', '0') === '1';
         $externalLinks = collect();
 
-        // For project 1 (FP) orders, the order_number has an "FCP-" prefix — strip it for the Focal API.
-        $focalJobId = preg_match('/^FCP-(.+)$/i', $jobOrderId, $m) ? $m[1] : $jobOrderId;
-
-        // Project 1 (FP): always try Focal assetdetail — assets appear once the photographer uploads.
-        if (in_array(1, $candidateProjectIds, true)) {
-            $externalLinks = $externalLinks->merge(
-                $this->fetchFocalAssetDetailLinks($focalJobId, 1)
-            );
-        }
-
-        // Project 22 (Photos): include live assetdetail when explicitly requested.
+        // External assetdetail links are currently available for FocalCRM photo jobs (project 22).
         if ($includeExternal && in_array(22, $candidateProjectIds, true)) {
-            $externalLinks = $externalLinks->merge(
-                $this->fetchFocalAssetDetailLinks($jobOrderId, 22)
-            );
-        }
-
-        // Project 25 (Prestige Photography): same supplier-enhancement API — try assetdetail when explicitly requested.
-        if ($includeExternal && in_array(25, $candidateProjectIds, true)) {
-            $externalLinks = $externalLinks->merge(
-                $this->fetchFocalAssetDetailLinks($jobOrderId, 25)
-            );
+            $externalLinks = $this->fetchFocalAssetDetailLinks($jobOrderId);
         }
 
         $allLinks = $tableLinks
@@ -425,7 +406,7 @@ public function myCurrent(Request $request)
         });
     }
 
-    private function fetchFocalAssetDetailLinks(string $jobOrderId, int $projectId = 22)
+    private function fetchFocalAssetDetailLinks(string $jobOrderId)
     {
         $apiUrl = (string) env('FOCAL_CRM_PHOTO_API_URL', env('FOCAL_CRM_API_URL', 'https://api.focalagent.com/supplier-enhancement/v3/jobs'));
         $supplierSecret = (string) env('FOCAL_CRM_PHOTO_SUPPLIER_SECRET', env('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu'));
@@ -448,13 +429,13 @@ public function myCurrent(Request $request)
 
             $assetDetail = $response->json() ?? [];
 
-            return $this->extractFocalAssetLinks($assetDetail, $jobOrderId, $projectId);
+            return $this->extractFocalAssetLinks($assetDetail, $jobOrderId);
         } catch (\Throwable $e) {
             return collect();
         }
     }
 
-    private function extractFocalAssetLinks(array $assetDetail, string $jobOrderId, int $projectId = 22)
+    private function extractFocalAssetLinks(array $assetDetail, string $jobOrderId)
     {
         $links = collect();
 
@@ -466,7 +447,7 @@ public function myCurrent(Request $request)
             $links->push([
                 'source' => 'focal_assetdetail',
                 'source_table' => null,
-                'project_id' => $projectId,
+                'project_id' => 22,
                 'job_order_id' => $jobOrderId,
                 'id' => null,
                 'name' => $row['FileName'] ?? $row['file_name'] ?? basename($url),
@@ -484,7 +465,7 @@ public function myCurrent(Request $request)
             $links->push([
                 'source' => 'focal_assetdetail',
                 'source_table' => null,
-                'project_id' => $projectId,
+                'project_id' => 22,
                 'job_order_id' => $jobOrderId,
                 'id' => null,
                 'name' => $row['FileName'] ?? $row['file_name'] ?? basename($url),
@@ -502,7 +483,7 @@ public function myCurrent(Request $request)
             $links->push([
                 'source' => 'focal_assetdetail',
                 'source_table' => null,
-                'project_id' => $projectId,
+                'project_id' => 22,
                 'job_order_id' => $jobOrderId,
                 'id' => null,
                 'name' => $row['Description'] ?? $row['description'] ?? basename($url),
@@ -515,6 +496,162 @@ public function myCurrent(Request $request)
         }
 
         return $links;
+    }
+
+    /**
+     * POST /workflow/orders/uploads/notify-success
+     *
+     * Frontend-only upload flow safety check:
+     * verifies uploaded file names against Focal assetdetail before allowing submit.
+     */
+    public function notifyUploadSuccess(Request $request)
+    {
+        $user = $request->user();
+
+        $data = $request->validate([
+            'order_id' => 'required|integer|min:1',
+            'job_order_id' => 'nullable|string|max:255',
+            'uploaded_files' => 'required|array|min:1',
+            'uploaded_files.*' => 'required|string|max:500',
+            'expected_count' => 'nullable|integer|min:1',
+        ]);
+
+        $order = self::findOrderForUser((int) $data['order_id'], $user);
+
+        if (!self::isOrderAssignedToUser($order, $user)) {
+            return response()->json(['message' => 'This order is not assigned to you.'], 403);
+        }
+
+        $requiredRole = strtoupper((string) $order->workflow_type) === 'PH_2_LAYER' ? 'qa' : 'checker';
+        if (($user->role ?? '') !== $requiredRole) {
+            return response()->json([
+                'message' => "Only {$requiredRole} can verify uploads for this order.",
+            ], 403);
+        }
+
+        $jobOrderId = trim((string) ($data['job_order_id'] ?? ''));
+        if ($jobOrderId === '') {
+            $jobOrderId = trim((string) ($order->order_number ?? ''));
+        }
+
+        if ($jobOrderId === '') {
+            return response()->json(['message' => 'job_order_id is required.'], 422);
+        }
+
+        $uploadedFiles = collect((array) $data['uploaded_files'])
+            ->map(fn ($name) => strtolower(trim((string) $name)))
+            ->filter(fn ($name) => $name !== '')
+            ->unique()
+            ->values();
+
+        if ($uploadedFiles->isEmpty()) {
+            return response()->json(['message' => 'At least one uploaded file is required.'], 422);
+        }
+
+        $expectedCount = (int) ($data['expected_count'] ?? $uploadedFiles->count());
+        if ($expectedCount < 1) {
+            $expectedCount = $uploadedFiles->count();
+        }
+
+        $assetLinks = $this->fetchFocalAssetDetailLinks($jobOrderId);
+        $assetNames = $assetLinks
+            ->map(function ($row) {
+                return strtolower(trim((string) ($row['name'] ?? '')));
+            })
+            ->filter(fn ($name) => $name !== '')
+            ->unique()
+            ->values();
+
+        $missingFiles = $uploadedFiles
+            ->filter(fn ($fileName) => !$assetNames->contains($fileName))
+            ->values();
+
+        $allUploaded = $missingFiles->isEmpty() && $uploadedFiles->count() >= $expectedCount;
+
+        return response()->json([
+            'message' => $allUploaded
+                ? 'Upload verification completed successfully.'
+                : 'Upload verification failed. Some files are still missing in client portal.',
+            'all_uploaded' => $allUploaded,
+            'job_order_id' => $jobOrderId,
+            'expected_count' => $expectedCount,
+            'verified_count' => $uploadedFiles->count() - $missingFiles->count(),
+            'missing_files' => $missingFiles->values(),
+        ]);
+    }
+
+    /**
+     * POST /workflow/orders/{jobOrderId}/client-portal-submit
+     *
+     * Optional helper endpoint to submit completed jobs to client portal.
+     * Existing internal submitWork flow remains unchanged.
+     */
+    public function submitOrderToClientPortal(Request $request, string $jobOrderId)
+    {
+        if (!filter_var(env('FOCAL_CLIENT_PORTAL_SUBMIT_ENABLED', false), FILTER_VALIDATE_BOOLEAN)) {
+            return response()->json([
+                'message' => 'Client portal submit is disabled while migration testing is active.',
+                'job_order_id' => trim($jobOrderId),
+                'submit_enabled' => false,
+            ], 423);
+        }
+
+        $user = $request->user();
+        $jobOrderId = trim($jobOrderId);
+
+        if ($jobOrderId === '') {
+            return response()->json(['message' => 'job_order_id is required.'], 422);
+        }
+
+        $payload = $request->validate([
+            'order_id' => 'nullable|integer|min:1',
+        ]);
+
+        if (!in_array($user->role, ['qa', 'checker'], true)) {
+            return response()->json(['message' => 'Only checker/qa can submit to client portal.'], 403);
+        }
+
+        if (!empty($payload['order_id'])) {
+            $order = self::findOrderForUser((int) $payload['order_id'], $user);
+            if (!self::isOrderAssignedToUser($order, $user)) {
+                return response()->json(['message' => 'This order is not assigned to you.'], 403);
+            }
+        }
+
+        $apiBase = (string) env('FOCAL_CRM_PHOTO_SUBMIT_API_URL', 'https://api.focalagent.com/supplier-enhancement/v2/jobs');
+        $supplierSecret = (string) env('FOCAL_CRM_PHOTO_SUPPLIER_SECRET', env('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu'));
+        $subscriptionKey = (string) env('FOCAL_CRM_PHOTO_SUBSCRIPTION_KEY', env('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1'));
+
+        try {
+            $url = rtrim($apiBase, '/') . '/' . rawurlencode($jobOrderId) . '/submit';
+
+            $response = Http::timeout(60)
+                ->withHeaders([
+                    'Accept' => '*/*',
+                    'Supplier-Secret' => $supplierSecret,
+                    'Ocp-Apim-Subscription-Key' => $subscriptionKey,
+                ])
+                ->post($url, []);
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'message' => 'Client portal submit failed.',
+                    'status' => $response->status(),
+                    'response' => $response->body(),
+                ], 502);
+            }
+
+            return response()->json([
+                'message' => 'Client portal submit sent successfully.',
+                'job_order_id' => $jobOrderId,
+                'response' => $response->json() ?? $response->body(),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => 'Client portal submit failed.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
 
@@ -981,30 +1118,8 @@ public function myStats(Request $request)
         }
 
         // 🟡 Legacy states (QUEUE SAFE)
-        $legacyStateMap = [
-            'drawer' => 'DRAW',
-            'checker' => 'CHECK',
-            'qa' => 'QA',
-            'designer' => 'DESIGN'
-        ];
-
-        $idColMap = [
-            'drawer' => 'drawer_id',
-            'checker' => 'checker_id',
-            'qa' => 'qa_id',
-            'designer' => 'drawer_id'
-        ];
-
-        $doneColMap = [
-            'drawer' => 'drawer_done',
-            'checker' => 'checker_done',
-            'qa' => 'final_upload',
-            'designer' => 'drawer_done'
-        ];
-
-        $legacyState = $legacyStateMap[$user->role] ?? null;
-        $idCol = $idColMap[$user->role] ?? null;
-        $doneCol = $doneColMap[$user->role] ?? null;
+        $legacyState = self::getRoleLegacyState($user->role);
+        [$idCol, $doneCol] = self::getRoleColumns($user->role);
 
         if ($legacyState && $idCol) {
 
@@ -1097,8 +1212,7 @@ public function myQueue(Request $request)
         return $role === $user->role;
     });
 
-    $legacyStateMap = ['drawer' => 'DRAW', 'checker' => 'CHECK', 'filler' => 'FILLER', 'qa' => 'QA', 'designer' => 'DESIGN'];
-    $legacyState = $legacyStateMap[$user->role] ?? null;
+    $legacyState = self::getRoleLegacyState($user->role);
 
     [$idCol] = self::getRoleColumns($user->role);
 
@@ -2371,12 +2485,6 @@ public function startTimer(Request $request, int $id)
             'plan_type' => 'nullable|string|max:255',
             'code' => 'nullable|string|max:255',
             'it_datetime' => 'nullable|date',
-            'received_at' => 'nullable|date',
-            'total_raw_files' => 'nullable|integer|min:0',
-            'hdr_images_count' => 'nullable|integer|min:0',
-            'single_images_count' => 'nullable|integer|min:0',
-            'final_images_count' => 'nullable|integer|min:0',
-            'edited_images_count' => 'nullable|integer|min:0',
             'project_id' => 'nullable|integer|exists:projects,id',
         ]);
 
@@ -2426,55 +2534,18 @@ public function startTimer(Request $request, int $id)
             $itDatetime = $itDatetime === '' ? null : $itDatetime;
         }
 
-        $receivedAt = $request->input('received_at');
-        if (is_string($receivedAt)) {
-            $receivedAt = trim($receivedAt);
-            $receivedAt = $receivedAt === '' ? null : $receivedAt;
-        }
-
-        $totalRawFiles = $request->input('total_raw_files');
-        if ($totalRawFiles !== null) {
-            $totalRawFiles = (int) $totalRawFiles;
-        }
-
-        $hdrImagesCount = $request->input('hdr_images_count');
-        if ($hdrImagesCount !== null) {
-            $hdrImagesCount = (int) $hdrImagesCount;
-        }
-
-        $singleImagesCount = $request->input('single_images_count');
-        if ($singleImagesCount !== null) {
-            $singleImagesCount = (int) $singleImagesCount;
-        }
-
-        $finalImagesCount = $request->input('final_images_count');
-        if ($finalImagesCount !== null) {
-            $finalImagesCount = (int) $finalImagesCount;
-        }
-
-        $editedImagesCount = $request->input('edited_images_count');
-        if ($editedImagesCount !== null) {
-            $editedImagesCount = (int) $editedImagesCount;
-        }
-
         $hasInstructionInput = $request->exists('instruction');
         $hasPlanTypeInput = $request->exists('plan_type');
         $hasCodeInput = $request->exists('code');
         $hasItDatetimeInput = $request->exists('it_datetime');
-        $hasReceivedAtInput = $request->exists('received_at');
-        $hasTotalRawFilesInput = $request->exists('total_raw_files');
-        $hasHdrImagesCountInput = $request->exists('hdr_images_count');
-        $hasSingleImagesCountInput = $request->exists('single_images_count');
-        $hasFinalImagesCountInput = $request->exists('final_images_count');
-        $hasEditedImagesCountInput = $request->exists('edited_images_count');
 
-        if (!$hasInstructionInput && !$hasPlanTypeInput && !$hasCodeInput && !$hasItDatetimeInput && !$hasReceivedAtInput && !$hasTotalRawFilesInput && !$hasHdrImagesCountInput && !$hasSingleImagesCountInput && !$hasFinalImagesCountInput && !$hasEditedImagesCountInput) {
+        if (!$hasInstructionInput && !$hasPlanTypeInput && !$hasCodeInput && !$hasItDatetimeInput) {
             return response()->json([
                 'message' => 'Nothing to update.',
             ], 422);
         }
 
-        DB::transaction(function () use ($order, $actor, $instruction, $planType, $code, $itDatetime, $receivedAt, $totalRawFiles, $hdrImagesCount, $singleImagesCount, $finalImagesCount, $editedImagesCount, $hasInstructionInput, $hasPlanTypeInput, $hasCodeInput, $hasItDatetimeInput, $hasReceivedAtInput, $hasTotalRawFilesInput, $hasHdrImagesCountInput, $hasSingleImagesCountInput, $hasFinalImagesCountInput, $hasEditedImagesCountInput) {
+        DB::transaction(function () use ($order, $actor, $instruction, $planType, $code, $itDatetime, $hasInstructionInput, $hasPlanTypeInput, $hasCodeInput, $hasItDatetimeInput) {
             $before = [];
             $after = [];
             $orderUpdates = [];
@@ -2501,42 +2572,6 @@ public function startTimer(Request $request, int $id)
                 $before['it_datetime'] = $order->it_datetime;
                 $after['it_datetime'] = $itDatetime;
                 $orderUpdates['it_datetime'] = $itDatetime;
-            }
-
-            if ($hasReceivedAtInput) {
-                $before['received_at'] = $order->received_at;
-                $after['received_at'] = $receivedAt;
-                $orderUpdates['received_at'] = $receivedAt;
-            }
-
-            if ($hasTotalRawFilesInput) {
-                $before['total_raw_files'] = $order->total_raw_files;
-                $after['total_raw_files'] = $totalRawFiles;
-                $orderUpdates['total_raw_files'] = $totalRawFiles;
-            }
-
-            if ($hasHdrImagesCountInput) {
-                $before['hdr_images_count'] = $order->hdr_images_count;
-                $after['hdr_images_count'] = $hdrImagesCount;
-                $orderUpdates['hdr_images_count'] = $hdrImagesCount;
-            }
-
-            if ($hasSingleImagesCountInput) {
-                $before['single_images_count'] = $order->single_images_count;
-                $after['single_images_count'] = $singleImagesCount;
-                $orderUpdates['single_images_count'] = $singleImagesCount;
-            }
-
-            if ($hasFinalImagesCountInput) {
-                $before['final_images_count'] = $order->final_images_count;
-                $after['final_images_count'] = $finalImagesCount;
-                $orderUpdates['final_images_count'] = $finalImagesCount;
-            }
-
-            if ($hasEditedImagesCountInput) {
-                $before['edited_images_count'] = $order->edited_images_count;
-                $after['edited_images_count'] = $editedImagesCount;
-                $orderUpdates['edited_images_count'] = $editedImagesCount;
             }
 
             if (!empty($orderUpdates)) {
@@ -2567,30 +2602,6 @@ public function startTimer(Request $request, int $id)
                     $crmData['it_datetime'] = $itDatetime;
                 }
 
-                if ($hasReceivedAtInput && Schema::hasColumn('crm_order_assignments', 'received_at')) {
-                    $crmData['received_at'] = $receivedAt;
-                }
-
-                if ($hasTotalRawFilesInput && Schema::hasColumn('crm_order_assignments', 'total_raw_files')) {
-                    $crmData['total_raw_files'] = $totalRawFiles;
-                }
-
-                if ($hasHdrImagesCountInput && Schema::hasColumn('crm_order_assignments', 'hdr_images_count')) {
-                    $crmData['hdr_images_count'] = $hdrImagesCount;
-                }
-
-                if ($hasSingleImagesCountInput && Schema::hasColumn('crm_order_assignments', 'single_images_count')) {
-                    $crmData['single_images_count'] = $singleImagesCount;
-                }
-
-                if ($hasFinalImagesCountInput && Schema::hasColumn('crm_order_assignments', 'final_images_count')) {
-                    $crmData['final_images_count'] = $finalImagesCount;
-                }
-
-                if ($hasEditedImagesCountInput && Schema::hasColumn('crm_order_assignments', 'edited_images_count')) {
-                    $crmData['edited_images_count'] = $editedImagesCount;
-                }
-
                 if ($existingCrm) {
                     DB::table('crm_order_assignments')
                         ->where('id', $existingCrm->id)
@@ -2606,23 +2617,17 @@ public function startTimer(Request $request, int $id)
 
             AuditService::log(
                 $actor->id,
-                ($hasInstructionInput || $hasPlanTypeInput || $hasCodeInput || $hasReceivedAtInput || $hasTotalRawFilesInput || $hasHdrImagesCountInput || $hasSingleImagesCountInput || $hasFinalImagesCountInput || $hasEditedImagesCountInput)
+                ($hasInstructionInput || $hasPlanTypeInput || $hasCodeInput)
                     && (
                         ($hasInstructionInput ? 1 : 0)
                         + ($hasPlanTypeInput ? 1 : 0)
                         + ($hasCodeInput ? 1 : 0)
                         + ($hasItDatetimeInput ? 1 : 0)
-                        + ($hasReceivedAtInput ? 1 : 0)
-                        + ($hasTotalRawFilesInput ? 1 : 0)
-                        + ($hasHdrImagesCountInput ? 1 : 0)
-                        + ($hasSingleImagesCountInput ? 1 : 0)
-                        + ($hasFinalImagesCountInput ? 1 : 0)
-                        + ($hasEditedImagesCountInput ? 1 : 0)
                     ) > 1
                     ? 'update_order_details'
                     : ($hasCodeInput
                         ? 'update_code'
-                        : ($hasPlanTypeInput ? 'update_plan_type' : ($hasItDatetimeInput ? 'update_it_datetime' : ($hasReceivedAtInput ? 'update_received_at' : ($hasTotalRawFilesInput ? 'update_total_raw_files' : ($hasHdrImagesCountInput ? 'update_hdr_images_count' : ($hasSingleImagesCountInput ? 'update_single_images_count' : ($hasFinalImagesCountInput ? 'update_final_images_count' : ($hasEditedImagesCountInput ? 'update_edited_images_count' : 'update_instruction'))))))))),
+                        : ($hasPlanTypeInput ? 'update_plan_type' : ($hasItDatetimeInput ? 'update_it_datetime' : 'update_instruction'))),
                 'Order',
                 (int) $order->id,
                 (int) $order->project_id,
@@ -2634,12 +2639,12 @@ public function startTimer(Request $request, int $id)
         return response()->json([
             'order' => $order->fresh(),
             'message' => (
-                (($hasInstructionInput ? 1 : 0) + ($hasPlanTypeInput ? 1 : 0) + ($hasCodeInput ? 1 : 0) + ($hasItDatetimeInput ? 1 : 0) + ($hasReceivedAtInput ? 1 : 0) + ($hasTotalRawFilesInput ? 1 : 0) + ($hasHdrImagesCountInput ? 1 : 0) + ($hasSingleImagesCountInput ? 1 : 0) + ($hasFinalImagesCountInput ? 1 : 0) + ($hasEditedImagesCountInput ? 1 : 0)) > 1
+                (($hasInstructionInput ? 1 : 0) + ($hasPlanTypeInput ? 1 : 0) + ($hasCodeInput ? 1 : 0) + ($hasItDatetimeInput ? 1 : 0)) > 1
             )
                 ? 'Order details updated successfully.'
                 : ($hasCodeInput
                     ? 'Code updated successfully.'
-                    : ($hasPlanTypeInput ? 'Plan type updated successfully.' : ($hasItDatetimeInput ? 'IT datetime updated successfully.' : ($hasReceivedAtInput ? 'Received at updated successfully.' : ($hasTotalRawFilesInput ? 'Total raw files updated successfully.' : ($hasHdrImagesCountInput ? 'HDR images count updated successfully.' : ($hasSingleImagesCountInput ? 'Single images count updated successfully.' : ($hasFinalImagesCountInput ? 'Final images count updated successfully.' : ($hasEditedImagesCountInput ? 'Edited images count updated successfully.' : 'Instruction updated successfully.'))))))))),
+                    : ($hasPlanTypeInput ? 'Plan type updated successfully.' : ($hasItDatetimeInput ? 'IT datetime updated successfully.' : 'Instruction updated successfully.'))),
         ]);
     }
 
@@ -2736,12 +2741,9 @@ public function startTimer(Request $request, int $id)
         // QA supervisor can assign, or management
         $isQASupervisor = $actor->role === 'qa' && $order->qa_supervisor_id === $actor->id;
         $isManagement = in_array($actor->role, ['operations_manager', 'director', 'ceo']);
-        // Checker can assign drawers ONLY to orders they are the assigned checker on.
-        // Use loose int cast to avoid string/int type mismatch from the DB.
-        $isAssignedChecker = $actor->role === 'checker' && (int)$order->checker_id === (int)$actor->id;
         
-        if (!$isQASupervisor && !$isManagement && !$isAssignedChecker) {
-            return response()->json(['message' => 'Only the assigned QA supervisor, management, or the assigned checker can assign to drawers.'], 403);
+        if (!$isQASupervisor && !$isManagement) {
+            return response()->json(['message' => 'Only the assigned QA supervisor or management can assign to drawers.'], 403);
         }
 
         // Verify drawer user role
@@ -2752,16 +2754,6 @@ public function startTimer(Request $request, int $id)
         // Verify order state
         if (!in_array($order->workflow_state, ['PENDING_QA_REVIEW', 'QUEUED_DRAW', 'REJECTED_BY_CHECK'])) {
             return response()->json(['message' => 'Order cannot be assigned to drawer from its current state.'], 422);
-        }
-
-        // Checker may only assign from QUEUED_DRAW or REJECTED_BY_CHECK (not PENDING_QA_REVIEW — that belongs to QA)
-        if ($isAssignedChecker && $order->workflow_state === 'PENDING_QA_REVIEW') {
-            return response()->json(['message' => 'Checkers cannot assign drawers while order is pending QA review.'], 422);
-        }
-
-        // Checker may only assign drawers from the same project
-        if ($isAssignedChecker && (int)$drawerUser->project_id !== (int)$actor->project_id) {
-            return response()->json(['message' => 'You can only assign drawers from your project.'], 422);
         }
 
         DB::transaction(function () use ($order, $drawerUser, $actor) {
@@ -2881,68 +2873,6 @@ public function qaTeamMembers(Request $request)
     ]);
 }
 
-    /**
-     * GET /workflow/checker-orders
-     * Checker gets all orders where they are the assigned checker,
-     * so they can distribute drawing work to their team drawers.
-     */
-    public function checkerOrders(Request $request)
-    {
-        $user = $request->user();
-
-        if ($user->role !== 'checker') {
-            return response()->json(['message' => 'Only checkers can access this endpoint.'], 403);
-        }
-
-        $orders = collect();
-        if ($user->project_id) {
-            $orders = Order::forProject($user->project_id)
-                ->where('checker_id', $user->id)
-                ->whereNotIn('workflow_state', ['APPROVED_QA', 'DELIVERED', 'CANCELLED'])
-                ->with(['project', 'team', 'assignedUser'])
-                ->orderBy('created_at', 'asc')
-                ->get();
-        }
-
-        return response()->json([
-            'orders'   => $orders,
-            'in_draw'  => $orders->whereIn('workflow_state', ['QUEUED_DRAW', 'IN_DRAW'])->count(),
-            'in_check' => $orders->whereIn('workflow_state', ['QUEUED_CHECK', 'IN_CHECK'])->count(),
-        ]);
-    }
-
-    /**
-     * GET /workflow/checker-team-members
-     * Checker gets drawers from their own team for assignment.
-     */
-    public function checkerTeamMembers(Request $request)
-    {
-        $user = $request->user();
-
-        if ($user->role !== 'checker') {
-            return response()->json(['message' => 'Only checkers can access this endpoint.'], 403);
-        }
-
-        // Return ALL active drawers in the project (not just own team).
-        // Own-team drawers come first so the UI can highlight them.
-        $drawers = \App\Models\User::where('project_id', $user->project_id)
-            ->where('role', 'drawer')
-            ->where('is_active', true)
-            ->select(['id', 'name', 'email', 'role', 'team_id', 'wip_count', 'wip_limit', 'today_completed', 'is_absent'])
-            ->orderByRaw('(team_id = ?) DESC, name ASC', [$user->team_id ?? 0])
-            ->get()
-            // Flag which drawers belong to this checker's team so frontend can mark them
-            ->map(function ($drawer) use ($user) {
-                $drawer->is_own_team = $user->team_id !== null && (int)$drawer->team_id === (int)$user->team_id;
-                return $drawer;
-            });
-
-        return response()->json([
-            'drawers' => $drawers,
-            'total'   => $drawers->count(),
-        ]);
-    }
-
     // ═══════════════════════════════════════════
     // HELPERS
     // ═══════════════════════════════════════════
@@ -3011,14 +2941,95 @@ public function qaTeamMembers(Request $request)
      */
     private static function getRoleColumns(string $role): array
     {
-        return match ($role) {
-            'drawer' => ['drawer_id', 'drawer_done', 'IN_DRAW', 'drawer_date'],
-            'designer' => ['drawer_id', 'drawer_done', 'IN_DESIGN', 'drawer_date'],
-            'checker' => ['checker_id', 'checker_done', 'IN_CHECK', 'checker_date'],
-            'filler' => ['file_uploader_id', 'file_uploaded', 'IN_FILLER', 'file_upload_date'],
-            'qa' => ['qa_id', 'final_upload', 'IN_QA', 'ausFinaldate'],
-            default => [null, null, null, null],
-        };
+        $config = self::getRoleStageConfig($role);
+
+        return [
+            $config['id_column'] ?? null,
+            $config['done_column'] ?? null,
+            $config['in_progress_state'] ?? null,
+            $config['done_date_column'] ?? null,
+        ];
+    }
+
+    private static function getRoleAssignmentColumns(string $role): array
+    {
+        $config = self::getRoleStageConfig($role);
+
+        return [
+            'id_col' => $config['id_column'] ?? null,
+            'name_col' => $config['name_column'] ?? null,
+            'time_col' => $config['assign_time_column'] ?? null,
+        ];
+    }
+
+    private static function getRoleLegacyState(string $role): ?string
+    {
+        $config = self::getRoleStageConfig($role);
+
+        return $config['legacy_state'] ?? null;
+    }
+
+    private static function getRoleStageConfig(string $role): array
+    {
+        $defaults = self::getDefaultRoleStageConfig();
+        $configured = config("role_stage_columns.{$role}");
+
+        if (!is_array($configured)) {
+            return $defaults[$role] ?? [];
+        }
+
+        return array_replace($defaults[$role] ?? [], $configured);
+    }
+
+    private static function getDefaultRoleStageConfig(): array
+    {
+        return [
+            'drawer' => [
+                'id_column' => 'drawer_id',
+                'name_column' => 'drawer_name',
+                'assign_time_column' => 'dassign_time',
+                'done_column' => 'drawer_done',
+                'done_date_column' => 'drawer_date',
+                'in_progress_state' => 'IN_DRAW',
+                'legacy_state' => 'DRAW',
+            ],
+            'designer' => [
+                'id_column' => 'drawer_id',
+                'name_column' => 'drawer_name',
+                'assign_time_column' => 'dassign_time',
+                'done_column' => 'drawer_done',
+                'done_date_column' => 'drawer_date',
+                'in_progress_state' => 'IN_DESIGN',
+                'legacy_state' => 'DESIGN',
+            ],
+            'checker' => [
+                'id_column' => 'checker_id',
+                'name_column' => 'checker_name',
+                'assign_time_column' => 'cassign_time',
+                'done_column' => 'checker_done',
+                'done_date_column' => 'checker_date',
+                'in_progress_state' => 'IN_CHECK',
+                'legacy_state' => 'CHECK',
+            ],
+            'filler' => [
+                'id_column' => 'file_uploader_id',
+                'name_column' => 'file_uploader_name',
+                'assign_time_column' => 'fassign_time',
+                'done_column' => 'file_uploaded',
+                'done_date_column' => 'file_upload_date',
+                'in_progress_state' => 'IN_FILLER',
+                'legacy_state' => 'FILLER',
+            ],
+            'qa' => [
+                'id_column' => 'qa_id',
+                'name_column' => 'qa_name',
+                'assign_time_column' => null,
+                'done_column' => 'final_upload',
+                'done_date_column' => 'ausFinaldate',
+                'in_progress_state' => 'IN_QA',
+                'legacy_state' => 'QA',
+            ],
+        ];
     }
 
     private static function resolveWorkflowTypeForUser($user, $project): string
@@ -3082,15 +3093,7 @@ public function qaTeamMembers(Request $request)
     private static function isOrderAssignedToUser($order, $user): bool
     {
         // Check role-specific ID column first (authoritative for Metro-synced orders)
-        $roleIdMap = [
-            'drawer'   => 'drawer_id',
-            'designer' => 'drawer_id',
-            'checker'  => 'checker_id',
-            'filler'   => 'file_uploader_id',
-            'qa'       => 'qa_id',
-        ];
-
-        $idCol = $roleIdMap[$user->role] ?? null;
+        [$idCol] = self::getRoleColumns($user->role);
 
         if ($idCol) {
             $roleId = $order->{$idCol};
@@ -3145,10 +3148,6 @@ public function assignRole(Request $request, int $id)
         ? (Order::findInProject($projectId, $id) ?: Order::findOrFailGlobal($id))
         : Order::findOrFailGlobal($id);
 
-    if (in_array($order->workflow_state, ['DELIVERED', 'CANCELLED'])) {
-        return response()->json(['message' => 'Cannot reassign a completed or cancelled order.'], 422);
-    }
-
     $user = \App\Models\User::findOrFail($request->input('user_id'));
     $role = $request->input('role');
 
@@ -3165,42 +3164,15 @@ public function assignRole(Request $request, int $id)
     }
 
     // DONE LOCK
-    $doneLockMap = [
-        'drawer'  => 'drawer_done',
-        'designer' => 'drawer_done',
-        'checker' => 'checker_done',
-        'filler'  => 'file_uploaded',
-        'qa'      => 'final_upload',
-    ];
-
 // DONE LOCK (optional warning only, does not block assignment)
-$doneCol = $doneLockMap[$role] ?? null;
+[, $doneCol, $targetState] = self::getRoleColumns($role);
 if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
     // Log a warning instead of blocking
     \Log::warning("Reassigning {$role} for order #{$order->id} which is already done.");
     // If you want, you could also set $updates['status'] = 'in-progress'; here
 }
 
-    // Role column mapping
-    $colMap = [
-        'drawer'  => ['id_col' => 'drawer_id',  'name_col' => 'drawer_name',  'time_col' => 'dassign_time'],
-        'designer' => ['id_col' => 'drawer_id',  'name_col' => 'drawer_name',  'time_col' => 'dassign_time'],
-        'checker' => ['id_col' => 'checker_id', 'name_col' => 'checker_name', 'time_col' => 'cassign_time'],
-        'filler'  => ['id_col' => 'file_uploader_id', 'name_col' => 'file_uploader_name', 'time_col' => 'fassign_time'],
-        'qa'      => ['id_col' => 'qa_id',      'name_col' => 'qa_name',      'time_col' => null],
-    ];
-
-    $cols = $colMap[$role];
-
-    $roleToInState = [
-        'drawer'  => 'IN_DRAW',
-        'designer' => 'IN_DESIGN',
-        'checker' => 'IN_CHECK',
-        'filler'  => 'IN_FILLER',
-        'qa'      => 'IN_QA',
-    ];
-
-    $targetState = $roleToInState[$role];
+    $cols = self::getRoleAssignmentColumns($role);
 
     DB::transaction(function () use ($order, $user, $cols, $actor, $role, $targetState) {
 
