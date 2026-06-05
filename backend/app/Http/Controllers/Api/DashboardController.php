@@ -3392,7 +3392,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             } else {
                 // Standard logic: count orders delivered on this date
                 $deliveredQuery = DB::table($tableName)->where('workflow_state', 'DELIVERED');
-                if ($hasAusFinal) {
+                if ($hasAusFinal && (int) $project->id !== 3) {
                     // Normalize ausFinaldate from AEDT to PKT (-6h) for accurate day boundary
                     $deliveredQuery->where(function ($q) use ($dateStr) {
                         $q->whereRaw("DATE(received_at) = ?", [$dateStr])
@@ -3441,7 +3441,21 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     continue;
                 }
 
-                $stageQuery = (clone $receivedBaseQuery)->where($doneCol, 'yes');
+                if ((int) $project->id === 3) {
+                    $stageQuery = DB::table($tableName)->where($doneCol, 'yes');
+                    $dateCol = match ($stage) {
+                        'DRAW', 'DESIGN' => 'drawer_date',
+                        'CHECK' => 'checker_date',
+                        'QA' => 'delivered_at',
+                        'FILLER' => 'file_upload_date',
+                        default => null,
+                    };
+                    if ($dateCol && self::columnExists($tableName, $dateCol)) {
+                        $stageQuery->whereDate($dateCol, $dateObj);
+                    }
+                } else {
+                    $stageQuery = (clone $receivedBaseQuery)->where($doneCol, 'yes');
+                }
 
                 $total = (clone $stageQuery)->count();
                 $workers = collect();
@@ -3497,7 +3511,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 } else {
                     // Get orders delivered on this date (existing logic)
                     $dlvIdQuery = DB::table($tableName)->where('workflow_state', 'DELIVERED');
-                    if ($hasAusFinal) {
+                    if ($hasAusFinal && (int) $project->id !== 3) {
                         $dlvIdQuery->where(function ($q) use ($dateStr) {
                             $q->whereRaw("DATE(received_at) = ?", [$dateStr])
                               ->orWhere(function ($q2) use ($dateStr) {

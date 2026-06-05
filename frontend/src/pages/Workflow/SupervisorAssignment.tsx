@@ -482,16 +482,23 @@ export default function SupervisorAssignment() {
   const usesPrioritySummaryCount = projectId === 1 || projectId === 3;
   const visiblePaginationItems = useMemo<(number | 'ellipsis')[]>(() => {
     if (lastPage <= 1) return [];
-    if (lastPage <= 10) {
+    if (lastPage <= 11) {
       return Array.from({ length: lastPage }, (_, index) => index + 1);
     }
 
-    return [
-      ...Array.from({ length: 10 }, (_, index) => index + 1),
-      'ellipsis',
-      lastPage,
-    ];
-  }, [lastPage]);
+    const windowStart = currentPage <= 2 ? 1 : currentPage;
+    const windowEnd = Math.min(windowStart + 10, lastPage);
+    const pageWindow = Array.from(
+      { length: windowEnd - windowStart + 1 },
+      (_, index) => windowStart + index,
+    );
+
+    if (windowStart === 1) {
+      return pageWindow;
+    }
+
+    return [1, 'ellipsis', ...pageWindow];
+  }, [currentPage, lastPage]);
   const visiblePriorityCounts = useMemo(() => {
     const derivedCounts = displayedOrders.reduce(
       (acc, order) => {
