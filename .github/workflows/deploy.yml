@@ -55,8 +55,15 @@ jobs:
             backend/ \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/laravel-backend/
 
-      - name: Run post-deploy commands
+      - name: Run migrations
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "cd ~/laravel-backend && php artisan migrate --force"
+
+      - name: Clear and rebuild caches
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-            "cd ~/laravel-backend && php artisan config:cache && php artisan route:cache && php artisan view:cache && php artisan migrate --force"
+            "cd ~/laravel-backend && php artisan config:cache && php artisan route:cache && php artisan view:cache"
