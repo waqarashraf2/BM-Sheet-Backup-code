@@ -4923,11 +4923,9 @@ if ($useDueInFirstOrdering) {
             ];
         }
 
-        return [
-            'type' => 'between',
-            'start' => now($projectTimezone)->startOfDay()->setTimezone($appTimezone),
-            'end' => now($projectTimezone)->endOfDay()->setTimezone($appTimezone),
-        ];
+        // No explicit date selected — fall back to the generic PKT "today" range so the
+        // Pakistan team always sees today's orders regardless of client timezone.
+        return null;
     }
 
     private function buildAssignmentDashboardProject16Range(
