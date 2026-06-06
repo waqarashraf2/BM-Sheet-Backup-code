@@ -23,7 +23,7 @@ class DashboardController extends Controller
     ];
     // Projects whose due_in column stores naive UTC timestamps (not PKT)
     private const BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS = [2, 5];
-    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 3, 7, 8, 42, 12, 11, 19];
+    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 7, 8, 42, 12, 11, 19];
     private const ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS = [1, 3, 16, 12, 19];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS = [1, 3,];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE = 100;
@@ -3392,7 +3392,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             } else {
                 // Standard logic: count orders delivered on this date
                 $deliveredQuery = DB::table($tableName)->where('workflow_state', 'DELIVERED');
-                if ($hasAusFinal && (int) $project->id !== 3) {
+                if ($hasAusFinal) {
                     // Normalize ausFinaldate from AEDT to PKT (-6h) for accurate day boundary
                     $deliveredQuery->where(function ($q) use ($dateStr) {
                         $q->whereRaw("DATE(received_at) = ?", [$dateStr])
@@ -3441,21 +3441,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     continue;
                 }
 
-                if ((int) $project->id === 3) {
-                    $stageQuery = DB::table($tableName)->where($doneCol, 'yes');
-                    $dateCol = match ($stage) {
-                        'DRAW', 'DESIGN' => 'drawer_date',
-                        'CHECK' => 'checker_date',
-                        'QA' => 'delivered_at',
-                        'FILLER' => 'file_upload_date',
-                        default => null,
-                    };
-                    if ($dateCol && self::columnExists($tableName, $dateCol)) {
-                        $stageQuery->whereDate($dateCol, $dateObj);
-                    }
-                } else {
-                    $stageQuery = (clone $receivedBaseQuery)->where($doneCol, 'yes');
-                }
+                $stageQuery = (clone $receivedBaseQuery)->where($doneCol, 'yes');
 
                 $total = (clone $stageQuery)->count();
                 $workers = collect();
@@ -3511,7 +3497,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 } else {
                     // Get orders delivered on this date (existing logic)
                     $dlvIdQuery = DB::table($tableName)->where('workflow_state', 'DELIVERED');
-                    if ($hasAusFinal && (int) $project->id !== 3) {
+                    if ($hasAusFinal) {
                         $dlvIdQuery->where(function ($q) use ($dateStr) {
                             $q->whereRaw("DATE(received_at) = ?", [$dateStr])
                               ->orWhere(function ($q2) use ($dateStr) {
@@ -4134,6 +4120,8 @@ $endDate = $request->input('end_date');
             'drawer_name' => 'drawer_name',
             'checker' => 'checker_name',
             'checker_name' => 'checker_name',
+            'filler' => 'file_uploader_name',
+            'file_uploader_name' => 'file_uploader_name',
             'qa' => 'qa_name',
             'qa_name' => 'qa_name',
         ];
@@ -4141,6 +4129,7 @@ $endDate = $request->input('end_date');
         $roleSortableColumns = [
             'drawer' => 'drawer',
             'checker' => 'checker',
+            'filler' => 'filler',
             'qa' => 'qa',
         ];
         $roleSortColumn = $roleSortableColumns[$roleSortByInput] ?? null;
@@ -4491,6 +4480,7 @@ if ($statusFilter === 'pending_by_drawer') {
             $qaDoneExpr = "(TRIM(COALESCE(final_upload, '')) <> '' AND LOWER(TRIM(COALESCE(final_upload, ''))) NOT IN ('no', '0', 'false'))";
             $drawerNotDoneExpr = "(TRIM(COALESCE(drawer_done, '')) = '' OR LOWER(TRIM(COALESCE(drawer_done, ''))) IN ('no', '0', 'false'))";
             $checkerNotDoneExpr = "(TRIM(COALESCE(checker_done, '')) = '' OR LOWER(TRIM(COALESCE(checker_done, ''))) IN ('no', '0', 'false'))";
+            $fillerNotDoneExpr = "(TRIM(COALESCE(file_uploaded, '')) = '' OR LOWER(TRIM(COALESCE(file_uploaded, ''))) IN ('no', '0', 'false'))";
             $qaNotDoneExpr = "(TRIM(COALESCE(final_upload, '')) = '' OR LOWER(TRIM(COALESCE(final_upload, ''))) IN ('no', '0', 'false'))";
 
             // Sort the requested role's workflow queue globally before pagination.
@@ -4507,6 +4497,12 @@ if ($statusFilter === 'pending_by_drawer') {
                     AND (checker_id IS NULL OR checker_id = 0)
                     AND (checker_name IS NULL OR TRIM(checker_name) = '')
                     AND {$checkerNotDoneExpr}
+                )",
+                'filler' => "(
+                    {$checkerDoneExpr}
+                    AND (file_uploader_id IS NULL OR file_uploader_id = 0)
+                    AND (file_uploader_name IS NULL OR TRIM(file_uploader_name) = '')
+                    AND {$fillerNotDoneExpr}
                 )",
                 'qa' => "(
                     {$checkerDoneExpr}
@@ -4536,9 +4532,11 @@ if ($useDueInFirstOrdering) {
     $orderedQuery->reorder();
 
     $orderedQuery
-->orderByRaw("CASE WHEN due_in IS NULL THEN 1 ELSE 0 END ASC")
-->orderByRaw("CAST({$dueInOrderExpr} AS DATETIME) ASC")
-->orderBy('id', 'asc');
+        ->orderByRaw("CASE WHEN due_in IS NULL THEN 1 ELSE 0 END ASC")
+        ->orderByRaw("CAST({$dueInOrderExpr} AS DATETIME) ASC")
+        ->orderByRaw("{$priorityOrderExpr} ASC")
+        ->orderBy('received_at', 'asc')
+        ->orderBy('id', 'asc');
 } else {
             $orderedQuery
                 ->orderByRaw("{$priorityOrderExpr} ASC")
@@ -5207,140 +5205,5 @@ if ($useDueInFirstOrdering) {
 
 
 
-
-
-
-
-rojectQuery->whereIn('project_id', $genericProjectIds);
-                    $this->applyProjectAwareRangeConstraint($projectQuery, $genericRange, $column);
-                });
-            }
-        });
-    }
-
-    private function applyProjectAwareRangeConstraint($query, array $range, string $column): void
-    {
-        $type = $range['type'] ?? 'between';
-
-        if ($type === 'start') {
-            $query->where($column, '>=', $range['start']);
-            return;
-        }
-
-        if ($type === 'end') {
-            $query->where($column, '<=', $range['end']);
-            return;
-        }
-
-        $query->whereBetween($column, [$range['start'], $range['end']]);
-    }
-
-    private function buildAssignmentDashboardCommentMap(\Illuminate\Support\Collection $orders): array
-    {
-        $orderIds = $orders->pluck('id')
-            ->filter()
-            ->map(fn ($id) => (int) $id)
-            ->unique()
-            ->values();
-
-        $projectIds = $orders->pluck('project_id')
-            ->filter()
-            ->map(fn ($projectId) => (int) $projectId)
-            ->unique()
-            ->values();
-
-        if ($orderIds->isEmpty() || $projectIds->isEmpty()) {
-            return [];
-        }
-
-        $workItems = WorkItem::query()
-            ->whereIn('project_id', $projectIds->all())
-            ->whereIn('order_id', $orderIds->all())
-            ->whereNotNull('comments')
-            ->orderByDesc('id')
-            ->get(['id', 'project_id', 'order_id', 'comments']);
-
-        $commentMap = [];
-
-        foreach ($workItems as $workItem) {
-            $key = ((int) $workItem->project_id) . ':' . ((int) $workItem->order_id);
-
-            if (array_key_exists($key, $commentMap)) {
-                continue;
-            }
-
-            $area = $this->extractAreaFromAssignmentComment($workItem->comments);
-            $totalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Total');
-            $finalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Final');
-
-            if ($area === null && $totalImages === null && $finalImages === null) {
-                continue;
-            }
-
-            $commentMap[$key] = [
-                'area' => $area,
-                'total_images' => $totalImages,
-                'final_images' => $finalImages,
-            ];
-        }
-
-        return $commentMap;
-    }
-
-    private function extractAreaFromAssignmentComment(?string $comments)
-    {
-        if (empty($comments)) {
-            return null;
-        }
-
-        if (!preg_match('/Area\s*:\s*([^,]+)/i', $comments, $matches)) {
-            return null;
-        }
-
-        $area = trim($matches[1]);
-        if ($area === '') {
-            return null;
-        }
-
-        if (preg_match('/^-?\d+$/', $area)) {
-            return (int) $area;
-        }
-
-        if (is_numeric($area)) {
-            return (float) $area;
-        }
-
-        return $area;
-    }
-
-    private function extractImageCountFromAssignmentComment(?string $comments, string $label): ?int
-    {
-        if (empty($comments)) {
-            return null;
-        }
-
-        $pattern = '/\\b' . preg_quote($label, '/') . '\\s*:\\s*(-?\\d+)\\b/i';
-        if (!preg_match($pattern, $comments, $matches)) {
-            return null;
-        }
-
-        return (int) $matches[1];
-    }
-
-    /**
-     * Map worker role to project table columns.
-     * Returns [id_column, done_column, in_progress_state, date_column]
-     */
-    private static function getWorkerRoleColumns(string $role): array
-    {
-        return match ($role) {
-            'drawer', 'designer' => ['drawer_id', 'drawer_done', 'IN_DRAW', 'drawer_date'],
-            'checker'            => ['checker_id', 'checker_done', 'IN_CHECK', 'checker_date'],
-            'filler'             => ['file_uploader_id', 'file_uploaded', 'IN_FILLER', 'file_upload_date'],
-            'qa'                 => ['qa_id', 'final_upload', 'IN_QA', 'ausFinaldate'],
-            default              => [null, null, null, null],
-        };
-    }
-}
 
 
