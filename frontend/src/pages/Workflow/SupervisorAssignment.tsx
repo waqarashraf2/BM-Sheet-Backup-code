@@ -20,6 +20,7 @@ const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
 const PROJECT_16_TIMEZONE = 'Asia/Ho_Chi_Minh';
 const TEAM_NAME_COLUMN_PROJECT_IDS = [16, 42];
 const DIRECT_CHECKER_ASSIGNMENT_PROJECT_IDS = [16, 42];
+const QA_WAIT_DURING_FILLER_PROJECT_IDS = [12];
 const isValidTimeZone = (timeZone?: string | null) => {
   if (typeof timeZone !== 'string' || timeZone.trim() === '') {
     return false;
@@ -125,7 +126,7 @@ export default function SupervisorAssignment() {
   const [endDate, setEndDate] = useState('');
   const [selectedWorker, setSelectedWorker] = useState<number | null>(null);
   const [workerRoleFilter, setWorkerRoleFilter] = useState<string | null>(null);
-  const [globalRoleSort, setGlobalRoleSort] = useState<'drawer' | 'checker' | 'qa' | null>(null);
+  const [globalRoleSort, setGlobalRoleSort] = useState<'drawer' | 'checker' | 'filler' | 'qa' | null>(null);
   const [exportMonth, setExportMonth] = useState(new Date().toISOString().slice(0, 7));
   const [exportingType, setExportingType] = useState<'csv' | 'pdf' | null>(null);
 
@@ -966,16 +967,23 @@ export default function SupervisorAssignment() {
   const DESIGN_STAGES = ['RECEIVED', 'QUEUED_DESIGN', 'IN_DESIGN', 'SUBMITTED_DESIGN'];
   const DRAW_STAGES = ['RECEIVED', 'QUEUED_DRAW', 'IN_DRAW', 'SUBMITTED_DRAW', 'PENDING_QA_REVIEW'];
   const FILLER_WAIT_STAGES = [...DRAW_STAGES, 'QUEUED_CHECK', 'IN_CHECK'];
+  const QA_FILLER_WAIT_STAGES = ['QUEUED_FILLER', 'IN_FILLER'];
   // For PH_2_LAYER queues, QA must wait while design is still in progress.
   const QA_WAIT_STAGES = isPhotoEnhancementQueue
     ? DESIGN_STAGES
     : [...DRAW_STAGES, 'QUEUED_CHECK', 'IN_CHECK', 'SUBMITTED_CHECK'];
-  const isWaiting = (ws: string | undefined, role: 'drawer' | 'checker' | 'filler' | 'qa'): boolean => {
+  const isWaiting = (order: AssignmentOrder, role: 'drawer' | 'checker' | 'filler' | 'qa'): boolean => {
+    const ws = (order.workflow_state || '').toUpperCase();
     if (!ws) return false;
     if (role === 'checker' && allowDirectCheckerAssignment) return false;
     if (role === 'checker') return DRAW_STAGES.includes(ws);
     if (role === 'filler') return FILLER_WAIT_STAGES.includes(ws);
-    if (role === 'qa') return QA_WAIT_STAGES.includes(ws);
+    if (role === 'qa') {
+      const shouldWaitDuringFiller = QA_WAIT_DURING_FILLER_PROJECT_IDS.includes(order.project_id)
+        && QA_FILLER_WAIT_STAGES.includes(ws);
+
+      return QA_WAIT_STAGES.includes(ws) || shouldWaitDuringFiller;
+    }
     return false;
   };
 
@@ -1024,7 +1032,7 @@ export default function SupervisorAssignment() {
     const isDoneOrder = isOrderDoneForReassignmentRestriction(order);
     const isExistingAssignmentChangeBlocked = !!name && !canReassignDoneOrders;
     const isDoneReassignBlocked = isDoneOrder && !!name && isDone && !canReassignDoneOrders;
-    const waiting = !name && !isDone && isWaiting(order.workflow_state, role);
+    const waiting = !name && !isDone && isWaiting(order, role);
     const roleLabel = getRoleDisplayLabel(role);
 
     return (
@@ -2741,7 +2749,7 @@ export default function SupervisorAssignment() {
                           </th>
                         )}
                         {visibleRoleColumns.map((column) => {
-                          const toggleRole = column.role === 'drawer' || column.role === 'checker' || column.role === 'qa'
+                          const toggleRole = column.role === 'drawer' || column.role === 'checker' || column.role === 'filler' || column.role === 'qa'
                             ? column.role
                             : null;
                           const isActive = globalRoleSort === toggleRole;

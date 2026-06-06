@@ -4120,6 +4120,8 @@ $endDate = $request->input('end_date');
             'drawer_name' => 'drawer_name',
             'checker' => 'checker_name',
             'checker_name' => 'checker_name',
+            'filler' => 'file_uploader_name',
+            'file_uploader_name' => 'file_uploader_name',
             'qa' => 'qa_name',
             'qa_name' => 'qa_name',
         ];
@@ -4127,6 +4129,7 @@ $endDate = $request->input('end_date');
         $roleSortableColumns = [
             'drawer' => 'drawer',
             'checker' => 'checker',
+            'filler' => 'filler',
             'qa' => 'qa',
         ];
         $roleSortColumn = $roleSortableColumns[$roleSortByInput] ?? null;
@@ -4456,6 +4459,7 @@ if ($statusFilter === 'pending_by_drawer') {
             $qaDoneExpr = "(TRIM(COALESCE(final_upload, '')) <> '' AND LOWER(TRIM(COALESCE(final_upload, ''))) NOT IN ('no', '0', 'false'))";
             $drawerNotDoneExpr = "(TRIM(COALESCE(drawer_done, '')) = '' OR LOWER(TRIM(COALESCE(drawer_done, ''))) IN ('no', '0', 'false'))";
             $checkerNotDoneExpr = "(TRIM(COALESCE(checker_done, '')) = '' OR LOWER(TRIM(COALESCE(checker_done, ''))) IN ('no', '0', 'false'))";
+            $fillerNotDoneExpr = "(TRIM(COALESCE(file_uploaded, '')) = '' OR LOWER(TRIM(COALESCE(file_uploaded, ''))) IN ('no', '0', 'false'))";
             $qaNotDoneExpr = "(TRIM(COALESCE(final_upload, '')) = '' OR LOWER(TRIM(COALESCE(final_upload, ''))) IN ('no', '0', 'false'))";
 
             // Sort the requested role's workflow queue globally before pagination.
@@ -4472,6 +4476,12 @@ if ($statusFilter === 'pending_by_drawer') {
                     AND (checker_id IS NULL OR checker_id = 0)
                     AND (checker_name IS NULL OR TRIM(checker_name) = '')
                     AND {$checkerNotDoneExpr}
+                )",
+                'filler' => "(
+                    {$checkerDoneExpr}
+                    AND (file_uploader_id IS NULL OR file_uploader_id = 0)
+                    AND (file_uploader_name IS NULL OR TRIM(file_uploader_name) = '')
+                    AND {$fillerNotDoneExpr}
                 )",
                 'qa' => "(
                     {$checkerDoneExpr}
@@ -5168,8 +5178,6 @@ if ($useDueInFirstOrdering) {
         };
     }
 }
-
-
 
 
 
