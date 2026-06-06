@@ -170,7 +170,7 @@ export default function SupervisorAssignment() {
     [queues, selectedQueue]
   );
   const effectiveProjectId = projectId ?? selectedQueueInfo?.projects?.[0]?.id ?? null;
-  const shouldUseAssignmentPagination = effectiveProjectId === 1 || effectiveProjectId === 3 || effectiveProjectId === 16 || effectiveProjectId === 12 || effectiveProjectId === 19 || effectiveProjectId === 46 || effectiveProjectId === 2;
+  const shouldUseAssignmentPagination = true; // All queues now use real SQL pagination
   const showClientSummaryCard = projectId === 9 || projectId === 46;
   const showCodeQueues = useMemo(() => ['Canada'], []);
   const hasDrawerAssignment = useCallback((order: AssignmentOrder) => {
@@ -223,9 +223,7 @@ export default function SupervisorAssignment() {
     if (!selectedQueue) return;
     try {
       isRefresh ? setRefreshing(true) : setLoading(true);
-      const params: any = shouldUseAssignmentPagination
-        ? { page, per_page: 200 }
-        : { per_page: 10000 };
+      const params: any = { page, per_page: 100 };
       if (statusFilter !== 'all' && statusFilter !== 'cancelled' && statusFilter !== 'unassigned' && statusFilter !== 'pending') {
         params.status = statusFilter;
       }

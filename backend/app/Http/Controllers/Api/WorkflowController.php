@@ -2811,26 +2811,55 @@ public function startTimer(Request $request, int $id)
     public function qaOrders(Request $request)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'qa') {
             return response()->json(['message' => 'Only QA supervisors can access this endpoint.'], 403);
         }
 
-        $orders = collect();
+        $page    = max((int) $request->input('page', 1), 1);
+        $perPage = min((int) $request->input('per_page', 50), 200);
+
+        $baseQuery = null;
+        $pendingCount = 0;
+        $inProgressCount = 0;
+
         if ($user->project_id) {
-            $orders = Order::forProject($user->project_id)
+            $baseQuery = Order::forProject($user->project_id)
                 ->where('qa_supervisor_id', $user->id)
-                ->whereIn('workflow_state', ['PENDING_QA_REVIEW', 'QUEUED_DRAW', 'IN_DRAW', 'QUEUED_CHECK', 'IN_CHECK', 'QUEUED_FILLER', 'IN_FILLER', 'QUEUED_QA', 'IN_QA'])
+                ->whereIn('workflow_state', [
+                    'PENDING_QA_REVIEW', 'QUEUED_DRAW', 'IN_DRAW',
+                    'QUEUED_CHECK', 'IN_CHECK', 'QUEUED_FILLER',
+                    'IN_FILLER', 'QUEUED_QA', 'IN_QA',
+                ]);
+
+            $pendingCount    = (clone $baseQuery)->where('workflow_state', 'PENDING_QA_REVIEW')->count();
+            $inProgressCount = (clone $baseQuery)->whereIn('workflow_state', ['IN_DRAW', 'IN_CHECK', 'IN_FILLER', 'IN_QA'])->count();
+
+            $paginated = $baseQuery
                 ->with(['project', 'team', 'assignedUser'])
                 ->orderBy('priority', 'desc')
                 ->orderBy('created_at', 'asc')
-                ->get();
+                ->paginate($perPage, ['*'], 'page', $page);
+
+            return response()->json([
+                'orders'             => $paginated->items(),
+                'current_page'       => $paginated->currentPage(),
+                'per_page'           => $paginated->perPage(),
+                'total'              => $paginated->total(),
+                'last_page'          => $paginated->lastPage(),
+                'pending_assignment' => $pendingCount,
+                'in_progress'        => $inProgressCount,
+            ]);
         }
 
         return response()->json([
-            'orders' => $orders,
-            'pending_assignment' => $orders->where('workflow_state', 'PENDING_QA_REVIEW')->count(),
-            'in_progress' => $orders->whereIn('workflow_state', ['IN_DRAW', 'IN_CHECK', 'IN_FILLER', 'IN_QA'])->count(),
+            'orders'             => [],
+            'current_page'       => 1,
+            'per_page'           => $perPage,
+            'total'              => 0,
+            'last_page'          => 1,
+            'pending_assignment' => 0,
+            'in_progress'        => 0,
         ]);
     }
 
@@ -2872,6 +2901,81 @@ public function qaTeamMembers(Request $request)
         'total' => $members->count(),
     ]);
 }
+
+    /**
+     * GET /workflow/checker-orders
+     * Checker supervisor gets orders in checker stage for team distribution.
+     */
+    public function checkerOrders(Request $request)
+    {
+        $user = $request->user();
+
+        if ($user->role !== 'checker') {
+            return response()->json(['message' => 'Only checker supervisors can access this endpoint.'], 403);
+        }
+
+        $page    = max((int) $request->input('page', 1), 1);
+        $perPage = min((int) $request->input('per_page', 50), 200);
+
+        if (!$user->project_id) {
+            return response()->json([
+                'orders' => [], 'current_page' => 1, 'per_page' => $perPage,
+                'total' => 0, 'last_page' => 1,
+                'pending_assignment' => 0, 'in_progress' => 0,
+            ]);
+        }
+
+        $checkerStates = ['QUEUED_CHECK', 'IN_CHECK', 'QUEUED_QA', 'IN_QA', 'QUEUED_FILLER', 'IN_FILLER'];
+
+        $baseQuery = Order::forProject($user->project_id)
+            ->where('checker_supervisor_id', $user->id)
+            ->whereIn('workflow_state', $checkerStates);
+
+        $pendingCount    = (clone $baseQuery)->whereNull('checker_id')->count();
+        $inProgressCount = (clone $baseQuery)->whereIn('workflow_state', ['IN_CHECK'])->count();
+
+        $paginated = $baseQuery
+            ->with(['project', 'team', 'assignedUser'])
+            ->orderBy('priority', 'desc')
+            ->orderBy('created_at', 'asc')
+            ->paginate($perPage, ['*'], 'page', $page);
+
+        return response()->json([
+            'orders'             => $paginated->items(),
+            'current_page'       => $paginated->currentPage(),
+            'per_page'           => $paginated->perPage(),
+            'total'              => $paginated->total(),
+            'last_page'          => $paginated->lastPage(),
+            'pending_assignment' => $pendingCount,
+            'in_progress'        => $inProgressCount,
+        ]);
+    }
+
+    /**
+     * GET /workflow/checker-team-members
+     * Checker supervisor gets their team members for assignment.
+     */
+    public function checkerTeamMembers(Request $request)
+    {
+        $user = $request->user();
+
+        if ($user->role !== 'checker') {
+            return response()->json(['message' => 'Only checker supervisors can access this endpoint.'], 403);
+        }
+
+        $members = \App\Models\User::where('project_id', $user->project_id)
+            ->where('team_id', $user->team_id)
+            ->where('role', 'checker')
+            ->where('is_active', true)
+            ->select(['id', 'name', 'email', 'role', 'team_id', 'wip_count', 'wip_limit', 'today_completed', 'is_absent'])
+            ->orderBy('name')
+            ->get();
+
+        return response()->json([
+            'checkers' => $members,
+            'total'    => $members->count(),
+        ]);
+    }
 
     // ═══════════════════════════════════════════
     // HELPERS

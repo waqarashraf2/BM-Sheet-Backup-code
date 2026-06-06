@@ -4132,17 +4132,15 @@ $endDate = $request->input('end_date');
         $roleSortColumn = $roleSortableColumns[$roleSortByInput] ?? null;
         $roleSortColumnFromSortBy = $roleSortableColumns[$sortByInput] ?? null;
         $effectiveRoleSortColumn = $roleSortColumn ?? $roleSortColumnFromSortBy;
-        $shouldPaginateOrders = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS));
+        $shouldPaginateOrders = true; // All queues use real SQL pagination
         $hasSpecialPriorityProjects = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS));
         $isDateRangeSelection = !empty($startDate) && !empty($endDate)
             && Carbon::parse($startDate)->toDateString() !== Carbon::parse($endDate)->toDateString();
         $useDueInFirstOrdering = $hasSpecialPriorityProjects && $isDateRangeSelection;
         $page = max((int) $request->input('page', 1), 1);
-        $defaultPerPage = $shouldPaginateOrders ? self::ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE : 15;
+        $defaultPerPage = self::ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE;
         $requestedPerPage = max((int) $request->input('per_page', $defaultPerPage), 1);
-        $perPage = $shouldPaginateOrders
-            ? min($requestedPerPage, self::ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE)
-            : $requestedPerPage;
+        $perPage = min($requestedPerPage, 200); // Cap at 200 rows per page
 
         // Selected columns
         $selectCols = 'id, order_number, code, plan_type, project_id, client_reference, address, client_name, instruction,'
@@ -4272,25 +4270,6 @@ $endDate = $request->input('end_date');
                 ->groupBy('assigned_user_id')
                 ->pluck('cnt', 'assigned_user_id');
         }
-
-        $drawerWipByWorker = DB::table(DB::raw("({$unionQuery}) as queue_orders"))
-            ->whereNotNull('drawer_id')
-            ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
-            ->where(function ($q) {
-                $q->whereNull('drawer_done')
-                  ->orWhere('drawer_done', '!=', 'yes');
-            })
-            ->selectRaw('drawer_id as worker_id, COUNT(*) as wip_count')
-            ->groupBy('drawer_id')
-            ->pluck('wip_count', 'worker_id');
-        $this->applyAssignmentDashboardDateFilter(
-            DB::table(DB::raw("({$unionQuery}) as queue_orders")),
-            $projects,
-            $projectIds,
-            $dateFilter,
-            $startDate,
-            $endDate
-        );
 
         $drawerWipByWorkerQuery = DB::table(DB::raw("({$unionQuery}) as queue_orders"))
             ->whereNotNull('drawer_id')
@@ -4535,7 +4514,8 @@ if ($useDueInFirstOrdering) {
                 ->orderBy('id', 'asc');
         }
 
-        $orders = $orderedQuery->get();
+        $total = (clone $orderedQuery)->count();
+        $orders = $orderedQuery->forPage($page, $perPage)->get();
 
         $assignmentCommentMap = $this->buildAssignmentDashboardCommentMap($orders);
 
@@ -4561,11 +4541,7 @@ if ($useDueInFirstOrdering) {
             return $order;
         });
 
-        $total = $orders->count();
-
-        $ordersResponseData = $shouldPaginateOrders
-            ? $orders->forPage($page, $perPage)->values()
-            : $orders;
+        $ordersResponseData = $orders;
 
         $priorityCountsRow = (clone $query)->selectRaw("
             SUM(CASE WHEN priority = 'normal' THEN 1 ELSE 0 END) as normal_count,
@@ -4737,10 +4713,10 @@ if ($useDueInFirstOrdering) {
             'workers' => $workers,
             'orders' => [
                 'data' => $ordersResponseData,
-                'current_page' => $shouldPaginateOrders ? $page : 1,
-                'per_page' => $shouldPaginateOrders ? $perPage : ($total ?: 1),
+                'current_page' => $page,
+                'per_page' => $perPage,
                 'total' => $total,
-                'last_page' => $shouldPaginateOrders ? max((int) ceil($total / $perPage), 1) : 1,
+                'last_page' => max((int) ceil($total / $perPage), 1),
             ],
             'counts' => $counts,
             'date_stats' => $dateStats,
