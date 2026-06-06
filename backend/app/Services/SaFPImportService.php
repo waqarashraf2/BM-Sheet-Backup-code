@@ -85,6 +85,17 @@ class SaFPImportService
                 // processing_date / processing_at -> received_at
                 // conduct_date -> created_at
                 $receivedAt = $this->resolveReceivedAt($task, $nowPK);
+
+                // Skip records that have no received_at — only import tasks with a real date
+                if ($receivedAt === null) {
+                    $skipped++;
+                    Log::info('Project12 Import Skipped: no received_at', [
+                        'client_portal_id' => $clientPortalId,
+                        'order_number'     => $sourceOrderNumber,
+                    ]);
+                    continue;
+                }
+
                 $dueIn = (clone $receivedAt)->modify('+6 hours');
                 $createdAt = $this->resolveCreatedAt($task, $nowPK);
                 $storedOrderNumber = $this->resolveStoredOrderNumber($sourceOrderNumber, $clientPortalId);
@@ -125,8 +136,8 @@ class SaFPImportService
                     'amend' => null,
 
                     // TIME
-                    'received_at' => $receivedAt->format('Y-m-d H:i:s'),
-                    'due_in' => $dueIn->format('Y-m-d H:i:s'),
+                    'received_at' => $receivedAt?->format('Y-m-d H:i:s'),
+                    'due_in'      => $dueIn?->format('Y-m-d H:i:s'),
 
                     'started_at' => null,
 
@@ -157,12 +168,8 @@ class SaFPImportService
                         if ($result === 1) {
                             $inserted++;
                         } else {
-                            $updatedRows = $this->updateExistingImportTimestamps($record);
-                            if ($updatedRows > 0) {
-                                $updated++;
-                            } else {
-                                $skipped++;
-                            }
+                            // Record already exists — never update, just skip
+                            $skipped++;
                         }
                     } catch (Exception $rowException) {
                         $skipped++;
@@ -203,50 +210,38 @@ class SaFPImportService
         return null;
     }
 
-    private function resolveReceivedAt(array $task, DateTime $fallback): DateTime
+    private function resolveReceivedAt(array $task, DateTime $fallback): ?DateTime
     {
         $processingValue = $task['processing_date'] ?? $task['processing_at'] ?? null;
 
-        if (empty($processingValue)) {
-            if (!empty($task['conduct_date'])) {
-                try {
-                    return new DateTime($task['conduct_date']);
-                } catch (Exception $exception) {
-                    Log::warning('Project12 Import Invalid conduct_date fallback for received_at', [
-                        'client_portal_id' => $task['id'] ?? null,
-                        'conduct_date' => $task['conduct_date'],
-                        'message' => $exception->getMessage(),
-                    ]);
-                }
+        if (!empty($processingValue)) {
+            try {
+                return new DateTime($processingValue);
+            } catch (Exception $exception) {
+                Log::warning('Project12 Import Invalid processing date', [
+                    'client_portal_id' => $task['id'] ?? null,
+                    'processing_date'  => $task['processing_date'] ?? null,
+                    'processing_at'    => $task['processing_at'] ?? null,
+                    'message'          => $exception->getMessage(),
+                ]);
             }
-
-            return clone $fallback;
         }
 
-        try {
-            return new DateTime($processingValue);
-        } catch (Exception $exception) {
-            Log::warning('Project12 Import Invalid processing date', [
-                'client_portal_id' => $task['id'] ?? null,
-                'processing_date' => $task['processing_date'] ?? null,
-                'processing_at' => $task['processing_at'] ?? null,
-                'message' => $exception->getMessage(),
-            ]);
-
-            if (!empty($task['conduct_date'])) {
-                try {
-                    return new DateTime($task['conduct_date']);
-                } catch (Exception $fallbackException) {
-                    Log::warning('Project12 Import Invalid conduct_date fallback for received_at', [
-                        'client_portal_id' => $task['id'] ?? null,
-                        'conduct_date' => $task['conduct_date'],
-                        'message' => $fallbackException->getMessage(),
-                    ]);
-                }
+        // Try conduct_date as secondary source
+        if (!empty($task['conduct_date'])) {
+            try {
+                return new DateTime($task['conduct_date']);
+            } catch (Exception $exception) {
+                Log::warning('Project12 Import Invalid conduct_date for received_at', [
+                    'client_portal_id' => $task['id'] ?? null,
+                    'conduct_date'     => $task['conduct_date'],
+                    'message'          => $exception->getMessage(),
+                ]);
             }
-
-            return clone $fallback;
         }
+
+        // No valid date found — return null so the caller can skip this record
+        return null;
     }
 
     private function resolveCreatedAt(array $task, DateTime $fallback): DateTime
