@@ -23,7 +23,10 @@ class DashboardController extends Controller
     ];
     // Projects whose due_in column stores naive UTC timestamps (not PKT)
     private const BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS = [2, 5];
-    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 7, 8, 42, 12, 11, 19];
+    // Intentionally empty: received_at is stored in PKT for all projects.
+    // Timezone-offset filtering shifts date boundaries and causes wrong counts.
+    // Only project 16 has special handling (see buildAssignmentDashboardProject16Range).
+    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [];
     private const ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS = [1, 3, 16, 12, 19];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS = [1, 3,];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE = 100;
@@ -4906,50 +4909,9 @@ if ($useDueInFirstOrdering) {
             return $this->buildAssignmentDashboardProject16Range($startDate, $endDate, $dateFilter, $appTimezone);
         }
 
-        if (!in_array($projectId, self::ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS, true)) {
-            return null;
-        }
-
-        $projectTimezone = $project->timezone;
-        if (empty($projectTimezone) || !in_array($projectTimezone, \DateTimeZone::listIdentifiers(), true)) {
-            return null;
-        }
-
-        if ($startDate || $endDate) {
-            if ($startDate && $endDate) {
-                return [
-                    'type' => 'between',
-                    'start' => \Carbon\Carbon::parse($startDate, $projectTimezone)->startOfDay()->setTimezone($appTimezone),
-                    'end' => \Carbon\Carbon::parse($endDate, $projectTimezone)->endOfDay()->setTimezone($appTimezone),
-                ];
-            }
-
-            if ($startDate) {
-                return [
-                    'type' => 'start',
-                    'start' => \Carbon\Carbon::parse($startDate, $projectTimezone)->startOfDay()->setTimezone($appTimezone),
-                ];
-            }
-
-            return [
-                'type' => 'end',
-                'end' => \Carbon\Carbon::parse($endDate, $projectTimezone)->endOfDay()->setTimezone($appTimezone),
-            ];
-        }
-
-        if ($dateFilter) {
-            return [
-                'type' => 'between',
-                'start' => \Carbon\Carbon::parse($dateFilter, $projectTimezone)->startOfDay()->setTimezone($appTimezone),
-                'end' => \Carbon\Carbon::parse($dateFilter, $projectTimezone)->endOfDay()->setTimezone($appTimezone),
-            ];
-        }
-
-        return [
-            'type' => 'between',
-            'start' => now($projectTimezone)->startOfDay()->setTimezone($appTimezone),
-            'end' => now($projectTimezone)->endOfDay()->setTimezone($appTimezone),
-        ];
+        // All non-project-16 projects use PKT (generic range) for every date case.
+        // received_at is stored in PKT, so any timezone offset produces wrong counts.
+        return null;
     }
 
     private function buildAssignmentDashboardProject16Range(
