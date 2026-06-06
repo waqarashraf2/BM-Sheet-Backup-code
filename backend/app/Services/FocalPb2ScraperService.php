@@ -461,10 +461,10 @@ class FocalPb2ScraperService
         $receivedAt = $this->parseDateTime($dateReceived);
 
         if ($receivedAt === null) {
-            // Keep inserts stable: if source datetime is unparseable, use current UTC.
-            $receivedAt = $this->currentUtcDateTimeString();
+            // Keep inserts stable: if source datetime is unparseable, use current PKT.
+            $receivedAt = $this->currentPktDateTimeString();
 
-            Log::warning('FocalPb2: Falling back received_at to current UTC while mapping order', [
+            Log::warning('FocalPb2: Falling back received_at to current PKT while mapping order', [
                 'raw_date_received' => $dateReceived,
                 'order_number' => $orderNumber,
                 'client_portal_id' => $clientPortalId,
@@ -473,7 +473,7 @@ class FocalPb2ScraperService
 
         $dueIn = $this->calculateDueInFromReceivedAt($receivedAt);
         if ($dueIn === null) {
-            $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+5 hours'));
+            $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('Asia/Karachi')))->modify('+5 hours'));
         }
 
         $mappedKeys  = ['Id', 'ID', 'Job Id', 'JobID', 'Order Number', 'Order No', 'Name', 'Job Name', 'Address', 'Property Address', 'Job Type', 'Type', 'Project Type', 'Date Received', 'Received', 'Created', 'Date Due', 'Due Date', 'Due', 'Time Left', 'Remaining Time'];
@@ -594,14 +594,15 @@ class FocalPb2ScraperService
             return null;
         }
 
-        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        // Store as PKT so dashboard date filters (which use PKT boundaries) work correctly.
+        return $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d H:i:s');
     }
 
     private function parseDueDate(?string $raw): ?string
     {
         $dt = $this->parsePortalDateTime($raw);
 
-        return $dt ? $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d') : null;
+        return $dt ? $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d') : null;
     }
 
     private function parseDueInWithManualOffset(?string $raw): ?string
@@ -612,23 +613,23 @@ class FocalPb2ScraperService
             return null;
         }
 
-        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        return $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d H:i:s');
     }
 
-    private function calculateDueInFromReceivedAt(?string $receivedAtUtc): ?string
+    private function calculateDueInFromReceivedAt(?string $receivedAtPkt): ?string
     {
-        if (!$receivedAtUtc) {
+        if (!$receivedAtPkt) {
             return null;
         }
 
         try {
-            $dt = new DateTime($receivedAtUtc, new \DateTimeZone('UTC'));
+            $dt = new DateTime($receivedAtPkt, new \DateTimeZone('Asia/Karachi'));
             $dt->modify('+5 hours');
 
             return $this->formatDueInForVarchar($dt);
         } catch (\Throwable $e) {
             Log::warning('FocalPb2: Failed to calculate due_in from received_at', [
-                'received_at' => $receivedAtUtc,
+                'received_at' => $receivedAtPkt,
                 'error' => $e->getMessage(),
             ]);
 
@@ -648,9 +649,9 @@ class FocalPb2ScraperService
         return $value;
     }
 
-    private function currentUtcDateTimeString(): string
+    private function currentPktDateTimeString(): string
     {
-        return (new DateTime('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+        return (new DateTime('now', new \DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
     }
 
     /**
