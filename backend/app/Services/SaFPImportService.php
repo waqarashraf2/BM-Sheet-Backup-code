@@ -212,11 +212,15 @@ class SaFPImportService
 
     private function resolveReceivedAt(array $task, DateTime $fallback): ?DateTime
     {
+        $pkt = new DateTimeZone('Asia/Karachi');
         $processingValue = $task['processing_date'] ?? $task['processing_at'] ?? null;
 
         if (!empty($processingValue)) {
             try {
-                return new DateTime($processingValue);
+                // API returns UTC timestamps (Z-suffix). Convert to PKT so DATE() comparisons work.
+                $dt = new DateTime($processingValue);
+                $dt->setTimezone($pkt);
+                return $dt;
             } catch (Exception $exception) {
                 Log::warning('Project12 Import Invalid processing date', [
                     'client_portal_id' => $task['id'] ?? null,
@@ -230,7 +234,9 @@ class SaFPImportService
         // Try conduct_date as secondary source
         if (!empty($task['conduct_date'])) {
             try {
-                return new DateTime($task['conduct_date']);
+                $dt = new DateTime($task['conduct_date']);
+                $dt->setTimezone($pkt);
+                return $dt;
             } catch (Exception $exception) {
                 Log::warning('Project12 Import Invalid conduct_date for received_at', [
                     'client_portal_id' => $task['id'] ?? null,
