@@ -23,7 +23,9 @@ class DashboardController extends Controller
     ];
     // Projects whose due_in column stores naive UTC timestamps (not PKT)
     private const BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS = [2, 5];
-    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 3, 7, 8, 42, 12, 11, 19];
+    // Project 12 (SA FP) is intentionally excluded: received_at is stored in PKT
+    // after the UTC→PKT migration, so the generic PKT filter is correct.
+    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 3, 7, 8, 42, 11, 19];
     private const ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS = [1, 3, 16, 12, 19];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS = [1, 3,];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE = 100;
