@@ -4908,47 +4908,9 @@ if ($useDueInFirstOrdering) {
             return $this->buildAssignmentDashboardProject16Range($startDate, $endDate, $dateFilter, $appTimezone);
         }
 
-        if (!in_array($projectId, self::ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS, true)) {
-            return null;
-        }
-
-        $projectTimezone = $project->timezone;
-        if (empty($projectTimezone) || !in_array($projectTimezone, \DateTimeZone::listIdentifiers(), true)) {
-            return null;
-        }
-
-        if ($startDate || $endDate) {
-            if ($startDate && $endDate) {
-                return [
-                    'type' => 'between',
-                    'start' => \Carbon\Carbon::parse($startDate, $projectTimezone)->startOfDay()->setTimezone($appTimezone),
-                    'end' => \Carbon\Carbon::parse($endDate, $projectTimezone)->endOfDay()->setTimezone($appTimezone),
-                ];
-            }
-
-            if ($startDate) {
-                return [
-                    'type' => 'start',
-                    'start' => \Carbon\Carbon::parse($startDate, $projectTimezone)->startOfDay()->setTimezone($appTimezone),
-                ];
-            }
-
-            return [
-                'type' => 'end',
-                'end' => \Carbon\Carbon::parse($endDate, $projectTimezone)->endOfDay()->setTimezone($appTimezone),
-            ];
-        }
-
-        if ($dateFilter) {
-            return [
-                'type' => 'between',
-                'start' => \Carbon\Carbon::parse($dateFilter, $projectTimezone)->startOfDay()->setTimezone($appTimezone),
-                'end' => \Carbon\Carbon::parse($dateFilter, $projectTimezone)->endOfDay()->setTimezone($appTimezone),
-            ];
-        }
-
-        // No explicit date selected — fall back to the generic PKT "today" range so the
-        // Pakistan team always sees today's orders regardless of client timezone.
+        // All non-project-16 projects use the generic PKT date range for every case
+        // (default today, explicit dateFilter, and start/end range). received_at is
+        // stored in PKT, so timezone-offset filtering shifts boundaries incorrectly.
         return null;
     }
 
