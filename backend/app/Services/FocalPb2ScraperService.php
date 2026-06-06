@@ -473,7 +473,7 @@ class FocalPb2ScraperService
 
         $dueIn = $this->calculateDueInFromReceivedAt($receivedAt);
         if ($dueIn === null) {
-            $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+4 hours'));
+            $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+5 hours'));
         }
 
         $mappedKeys  = ['Id', 'ID', 'Job Id', 'JobID', 'Order Number', 'Order No', 'Name', 'Job Name', 'Address', 'Property Address', 'Job Type', 'Type', 'Project Type', 'Date Received', 'Received', 'Created', 'Date Due', 'Due Date', 'Due', 'Time Left', 'Remaining Time'];
@@ -594,8 +594,6 @@ class FocalPb2ScraperService
             return null;
         }
 
-        $dt = $this->applyHourOffset($dt);
-
         return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 
@@ -614,9 +612,6 @@ class FocalPb2ScraperService
             return null;
         }
 
-        // Preserve existing business behavior (+1h target), but normalize to UTC.
-        $dt = $this->applyHourOffset($dt);
-
         return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 
@@ -628,7 +623,7 @@ class FocalPb2ScraperService
 
         try {
             $dt = new DateTime($receivedAtUtc, new \DateTimeZone('UTC'));
-            $dt->modify('+3 hours');
+            $dt->modify('+5 hours');
 
             return $this->formatDueInForVarchar($dt);
         } catch (\Throwable $e) {
@@ -656,14 +651,6 @@ class FocalPb2ScraperService
     private function currentUtcDateTimeString(): string
     {
         return (new DateTime('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
-    }
-
-    private function applyHourOffset(DateTime $dt): DateTime
-    {
-        $shifted = clone $dt;
-        $shifted->modify('+1 hour');
-
-        return $shifted;
     }
 
     /**
