@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Models\WorkItem;
 use App\Services\StateMachine;
 use App\Services\ProjectOrderService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -18,11 +19,11 @@ class DashboardController extends Controller
 {
     private const ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS = [
         16 => 2,
-        2  => 5,  // Project 2 (Focal PB) stores due_in as naive UTC; +5h converts to PKT for frontend
+        2  => 0,  // Project 2 (Focal PB) stores due_in as naive UTC; +5h converts to PKT for frontend
     ];
     // Projects whose due_in column stores naive UTC timestamps (not PKT)
     private const BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS = [2, 5];
-    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 7, 8, 42, 12, 11, 19];
+    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 3, 7, 8, 42, 12, 11, 19];
     private const ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS = [1, 3, 16, 12, 19];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS = [1, 3,];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE = 100;
@@ -4133,6 +4134,9 @@ $endDate = $request->input('end_date');
         $effectiveRoleSortColumn = $roleSortColumn ?? $roleSortColumnFromSortBy;
         $shouldPaginateOrders = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS));
         $hasSpecialPriorityProjects = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS));
+        $isDateRangeSelection = !empty($startDate) && !empty($endDate)
+            && Carbon::parse($startDate)->toDateString() !== Carbon::parse($endDate)->toDateString();
+        $useDueInFirstOrdering = $hasSpecialPriorityProjects && $isDateRangeSelection;
         $page = max((int) $request->input('page', 1), 1);
         $defaultPerPage = $shouldPaginateOrders ? self::ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE : 15;
         $requestedPerPage = max((int) $request->input('per_page', $defaultPerPage), 1);
@@ -4514,11 +4518,22 @@ if ($statusFilter === 'pending_by_drawer') {
                 ->orderBy($sortColumn, $sortOrder);
         }
 
-        $orderedQuery
-            ->orderByRaw("{$priorityOrderExpr} ASC")
-            ->orderByRaw("CASE WHEN due_in IS NOT NULL THEN TIMESTAMPDIFF(SECOND, NOW(), {$dueInOrderExpr}) ELSE 999999999 END ASC")
-            ->orderBy('received_at', 'asc')
-            ->orderBy('id', 'asc');
+if ($useDueInFirstOrdering) {
+    $orderedQuery->reorder();
+
+    $orderedQuery
+        ->orderByRaw("CASE WHEN due_in IS NULL THEN 1 ELSE 0 END ASC")
+        ->orderByRaw("CAST({$dueInOrderExpr} AS DATETIME) ASC")
+        ->orderByRaw("{$priorityOrderExpr} ASC")
+        ->orderBy('received_at', 'asc')
+        ->orderBy('id', 'asc');
+} else {
+            $orderedQuery
+                ->orderByRaw("{$priorityOrderExpr} ASC")
+                ->orderByRaw("CASE WHEN due_in IS NOT NULL THEN TIMESTAMPDIFF(SECOND, NOW(), {$dueInOrderExpr}) ELSE 999999999 END ASC")
+                ->orderBy('received_at', 'asc')
+                ->orderBy('id', 'asc');
+        }
 
         $orders = $orderedQuery->get();
 

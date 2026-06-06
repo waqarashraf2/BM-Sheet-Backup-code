@@ -10,6 +10,9 @@ use App\Models\Project;
 use App\Models\Team;
 use App\Services\ProjectOrderService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class ProjectController extends Controller
 {
@@ -88,8 +91,8 @@ class ProjectController extends Controller
 
         // Load order counts from the per-project dynamic table
         $tableName = \App\Services\ProjectOrderService::getTableName($project->id);
-        if (\Schema::hasTable($tableName)) {
-            $project->setAttribute('order_count', \DB::table($tableName)->count());
+        if (Schema::hasTable($tableName)) {
+            $project->setAttribute('order_count', DB::table($tableName)->count());
         }
 
         return response()->json([
@@ -161,10 +164,91 @@ class ProjectController extends Controller
     /**
      * Get teams for a project.
      */
-    public function teams(string $id)
+    public function teams(Request $request, string $id)
     {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json([
+                'message' => 'Unauthorized',
+            ], 401);
+        }
+
+        if (in_array($user->role, ['operations_manager', 'project_manager'], true)) {
+            $managedProjectIds = array_map('intval', $user->getManagedProjectIds());
+            if (!in_array((int) $id, $managedProjectIds, true)) {
+                return response()->json([
+                    'message' => 'Unauthorized',
+                ], 403);
+            }
+        }
+
         $project = Project::findOrFail($id);
         $teams = $project->teams()->with('users:id,name,email,role,team_id,is_active,is_absent')->get();
+
+        // Build team metrics only when the dynamic order table/columns exist.
+        $tableName = ProjectOrderService::getTableName((int) $project->id);
+        $metricsByTeam = collect();
+
+        try {
+            if (Schema::hasTable($tableName) && Schema::hasColumn($tableName, 'team_id')) {
+                $hasDrawerDone = Schema::hasColumn($tableName, 'drawer_done');
+                $hasCheckerDone = Schema::hasColumn($tableName, 'checker_done');
+                $hasFinalUpload = Schema::hasColumn($tableName, 'final_upload');
+                $hasWorkflowState = Schema::hasColumn($tableName, 'workflow_state');
+
+                $metricsQuery = DB::table($tableName)
+                    ->select('team_id')
+                    ->whereNotNull('team_id');
+
+                if ($hasDrawerDone) {
+                    $metricsQuery->selectRaw("SUM(CASE WHEN drawer_done = 'yes' THEN 1 ELSE 0 END) as raw_done");
+                } else {
+                    $metricsQuery->selectRaw('0 as raw_done');
+                }
+
+                if ($hasCheckerDone) {
+                    $metricsQuery->selectRaw("SUM(CASE WHEN checker_done = 'yes' THEN 1 ELSE 0 END) as check_done");
+                } else {
+                    $metricsQuery->selectRaw('0 as check_done');
+                }
+
+                if ($hasFinalUpload) {
+                    $metricsQuery->selectRaw("SUM(CASE WHEN final_upload = 'yes' THEN 1 ELSE 0 END) as qa_done");
+                } else {
+                    $metricsQuery->selectRaw('0 as qa_done');
+                }
+
+                if ($hasWorkflowState) {
+                    $metricsQuery->selectRaw("SUM(CASE WHEN workflow_state = 'DELIVERED' THEN 1 ELSE 0 END) as total_delivered_orders");
+                } else {
+                    $metricsQuery->selectRaw('0 as total_delivered_orders');
+                }
+
+                $metricsByTeam = $metricsQuery
+                    ->groupBy('team_id')
+                    ->get()
+                    ->keyBy('team_id');
+            }
+        } catch (\Throwable $e) {
+            // Fail safe: keep endpoint working even if dynamic metrics query breaks.
+            Log::warning('Project teams metrics fallback triggered', [
+                'project_id' => (int) $project->id,
+                'table' => $tableName,
+                'error' => $e->getMessage(),
+            ]);
+            $metricsByTeam = collect();
+        }
+
+        $teams = $teams->map(function ($team) use ($metricsByTeam) {
+            $metrics = $metricsByTeam->get($team->id);
+
+            $team->setAttribute('raw_done', (int) ($metrics->raw_done ?? 0));
+            $team->setAttribute('check_done', (int) ($metrics->check_done ?? 0));
+            $team->setAttribute('qa_done', (int) ($metrics->qa_done ?? 0));
+            $team->setAttribute('total_delivered_orders', (int) ($metrics->total_delivered_orders ?? 0));
+
+            return $team;
+        });
 
         return response()->json([
             'data' => $teams,

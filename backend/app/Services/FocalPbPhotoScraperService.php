@@ -326,7 +326,7 @@ class FocalPbPhotoScraperService
             'priority' => $this->resolvePriority($timeLeft),
             'received_at' => $this->parseDateTime($dateReceived),
             'due_date' => $this->parseDueDate($dateDue),
-            'due_in' => $this->parseDateTime($dateDue),
+            'due_in' => $this->parseDateTimeWithExtraHour($dateDue),
             'import_source' => 'cron',
             'created_at' => now(),
             'updated_at' => now(),
@@ -657,4 +657,35 @@ class FocalPbPhotoScraperService
 
         return null;
     }
+
+    private function parseDateTimeWithExtraHour(?string $raw): ?string
+    {
+        if (!$raw) {
+            return null;
+        }
+
+        $raw = str_replace(' Utc', '', trim($raw));
+
+        foreach (['m/d/Y H:i:s', 'd/m/Y H:i:s', 'm/d/Y', 'd/m/Y'] as $format) {
+            try {
+                $dt = DateTime::createFromFormat($format, $raw);
+                if ($dt === false) {
+                    continue;
+                }
+
+                $dt->modify('+1 hour');
+                return $dt->format('Y-m-d H:i:s');
+            } catch (\Throwable $e) {
+                Log::warning('FocalPbPhoto: Failed to parse and adjust due_in datetime', [
+                    'raw_value' => $raw,
+                    'format' => $format,
+                    'error' => $e->getMessage(),
+                ]);
+                continue;
+            }
+        }
+
+        return null;
+    }
 }
+

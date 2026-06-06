@@ -13,7 +13,7 @@ class BrPhotoPublicImportController extends Controller
 {
     private const PROJECT_ID = 17;
     private const PROJECT_NAME = 'BrPhoto';
-     private const SUBSCRIPTION_KEY = 'BrPh-X7k2$mNqL9#vRtZ4@wJcE3!pYs8^HdFa6&uQiO0';
+    private const SUBSCRIPTION_KEY = 'BrPh-X7k2$mNqL9#vRtZ4@wJcE3!pYs8^HdFa6&uQiO0';
 
     private const ALLOWED_FIELDS = [
         'order_number',

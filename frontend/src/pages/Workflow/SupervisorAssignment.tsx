@@ -482,16 +482,23 @@ export default function SupervisorAssignment() {
   const usesPrioritySummaryCount = projectId === 1 || projectId === 3;
   const visiblePaginationItems = useMemo<(number | 'ellipsis')[]>(() => {
     if (lastPage <= 1) return [];
-    if (lastPage <= 10) {
+    if (lastPage <= 11) {
       return Array.from({ length: lastPage }, (_, index) => index + 1);
     }
 
-    return [
-      ...Array.from({ length: 10 }, (_, index) => index + 1),
-      'ellipsis',
-      lastPage,
-    ];
-  }, [lastPage]);
+    const windowStart = currentPage <= 2 ? 1 : currentPage;
+    const windowEnd = Math.min(windowStart + 10, lastPage);
+    const pageWindow = Array.from(
+      { length: windowEnd - windowStart + 1 },
+      (_, index) => windowStart + index,
+    );
+
+    if (windowStart === 1) {
+      return pageWindow;
+    }
+
+    return [1, 'ellipsis', ...pageWindow];
+  }, [currentPage, lastPage]);
   const visiblePriorityCounts = useMemo(() => {
     const derivedCounts = displayedOrders.reduce(
       (acc, order) => {
@@ -781,7 +788,24 @@ export default function SupervisorAssignment() {
     }
     return null;
   }, [projectTz]);
-  const sortedOrders = useMemo(() => displayedOrders, [displayedOrders]);
+  const sortedOrders = useMemo(() => {
+    const shouldSortByRemainingTime = effectiveProjectId === 1 || effectiveProjectId === 2 || effectiveProjectId === 3;
+
+    if (!shouldSortByRemainingTime) {
+      return displayedOrders;
+    }
+
+    return [...displayedOrders].sort((a, b) => {
+      const aMs = parseDueIn(a.due_in, a.received_at);
+      const bMs = parseDueIn(b.due_in, b.received_at);
+
+      if (aMs == null && bMs == null) return 0;
+      if (aMs == null) return 1;
+      if (bMs == null) return -1;
+
+      return aMs - bMs;
+    });
+  }, [displayedOrders, effectiveProjectId, parseDueIn]);
 
   /** Render remaining time badge with colour coding */
   const RemainingBadge = ({ dueIn, receivedAt }: { dueIn: string | null; receivedAt?: string | null }) => {
