@@ -277,7 +277,13 @@ export default function ProjectManagement() {
               onChange={e => {
                 const country = e.target.value;
                 const tzList = COUNTRY_TIMEZONES[country] || [];
-                setFormData({ ...formData, country, timezone: tzList.length === 1 ? tzList[0].value : '' });
+                // Keep existing timezone if it's valid for the new country; otherwise auto-select
+                // if there's only one option, or clear so the user picks explicitly.
+                const keepTz = tzList.some(tz => tz.value === formData.timezone);
+                const newTimezone = keepTz
+                  ? formData.timezone
+                  : tzList.length === 1 ? tzList[0].value : '';
+                setFormData({ ...formData, country, timezone: newTimezone });
               }}
             >
               <option value="all">All Countries</option>
