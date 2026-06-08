@@ -67,7 +67,7 @@ class FocalPb2ScraperService
         $backfilled = DB::table($this->table)
             ->whereIn('id', $idsToBackfill)
             ->update([
-                'due_in' => DB::raw("DATE_FORMAT(DATE_ADD(`received_at`, INTERVAL 4 HOUR), '%Y-%m-%d %H:%i:%s')"),
+                'due_in' => DB::raw("DATE_FORMAT(DATE_ADD(`received_at`, INTERVAL 5 HOUR), '%Y-%m-%d %H:%i:%s')"),
                 'updated_at' => now(),
             ]);
 
@@ -107,6 +107,7 @@ class FocalPb2ScraperService
         Log::channel('daily')->info('FocalPb2: Fetching login page for CSRF token');
 
         $response = $this->http()->get($this->baseUrl . '/Identity/Account/Login');
+        $response->throw();
 
         $this->captureCookies($response);
 
@@ -149,6 +150,7 @@ class FocalPb2ScraperService
                 'Input.RememberMe'           => 'false',
             ]);
 
+        $response->throw();
         $this->captureCookies($response);
 
         if (!array_key_exists('.AspNetCore.Identity.Application', $this->cookies)) {
@@ -176,6 +178,7 @@ class FocalPb2ScraperService
 
         foreach ($paths as $path) {
             $response = $this->http()->get($this->baseUrl . $path);
+            $response->throw();
 
             $dom = new \DOMDocument();
             libxml_use_internal_errors(true);
@@ -473,11 +476,9 @@ class FocalPb2ScraperService
 
         $dueIn = $this->calculateDueInFromReceivedAt($receivedAt);
         if ($dueIn === null) {
-<<<<<<< HEAD
-            $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('Asia/Karachi')))->modify('+5 hours'));
-=======
-            $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+5 hours'));
->>>>>>> 86c5088 (Cubi Status Fixed)
+            $dueIn = $this->formatDueInForVarchar(
+                (new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+5 hours')
+            );
         }
 
         $mappedKeys  = ['Id', 'ID', 'Job Id', 'JobID', 'Order Number', 'Order No', 'Name', 'Job Name', 'Address', 'Property Address', 'Job Type', 'Type', 'Project Type', 'Date Received', 'Received', 'Created', 'Date Due', 'Due Date', 'Due', 'Time Left', 'Remaining Time'];
@@ -598,12 +599,8 @@ class FocalPb2ScraperService
             return null;
         }
 
-<<<<<<< HEAD
-        // Store as PKT so dashboard date filters (which use PKT boundaries) work correctly.
-        return $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d H:i:s');
-=======
-        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
->>>>>>> 86c5088 (Cubi Status Fixed)
+        // Preserve the exact clock time displayed by the client portal.
+        return $dt->format('Y-m-d H:i:s');
     }
 
     private function parseDueDate(?string $raw): ?string
@@ -613,39 +610,21 @@ class FocalPb2ScraperService
         return $dt ? $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d') : null;
     }
 
-    private function parseDueInWithManualOffset(?string $raw): ?string
+    private function calculateDueInFromReceivedAt(?string $receivedAt): ?string
     {
-        $dt = $this->parsePortalDateTime($raw);
-
-        if (!$dt) {
-            return null;
-        }
-
-<<<<<<< HEAD
-        return $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d H:i:s');
-=======
-        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
->>>>>>> 86c5088 (Cubi Status Fixed)
-    }
-
-    private function calculateDueInFromReceivedAt(?string $receivedAtPkt): ?string
-    {
-        if (!$receivedAtPkt) {
+        if (!$receivedAt) {
             return null;
         }
 
         try {
-<<<<<<< HEAD
-            $dt = new DateTime($receivedAtPkt, new \DateTimeZone('Asia/Karachi'));
-=======
-            $dt = new DateTime($receivedAtUtc, new \DateTimeZone('UTC'));
->>>>>>> 86c5088 (Cubi Status Fixed)
+            // Treat the stored portal clock value as neutral, then add exactly five hours.
+            $dt = new DateTime($receivedAt, new \DateTimeZone('UTC'));
             $dt->modify('+5 hours');
 
             return $this->formatDueInForVarchar($dt);
         } catch (\Throwable $e) {
             Log::warning('FocalPb2: Failed to calculate due_in from received_at', [
-                'received_at' => $receivedAtPkt,
+                'received_at' => $receivedAt,
                 'error' => $e->getMessage(),
             ]);
 
@@ -667,11 +646,7 @@ class FocalPb2ScraperService
 
     private function currentPktDateTimeString(): string
     {
-<<<<<<< HEAD
         return (new DateTime('now', new \DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
-=======
-        return (new DateTime('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
->>>>>>> 86c5088 (Cubi Status Fixed)
     }
 
     /**
@@ -719,9 +694,25 @@ class FocalPb2ScraperService
 
         foreach ($formats as $format) {
             $dt = DateTime::createFromFormat($format, $clean, $sourceTz);
-            if ($dt instanceof DateTime) {
+            $errors = DateTime::getLastErrors();
+            $hasErrors = is_array($errors)
+                && ($errors['warning_count'] > 0 || $errors['error_count'] > 0);
+
+            if ($dt instanceof DateTime && !$hasErrors) {
                 return $dt;
             }
+        }
+
+        $parsed = date_parse($clean);
+        if ($parsed['warning_count'] > 0 || $parsed['error_count'] > 0) {
+            Log::warning('FocalPb2: Rejected invalid portal datetime', [
+                'raw' => $raw,
+                'clean' => $clean,
+                'warnings' => $parsed['warnings'],
+                'errors' => $parsed['errors'],
+            ]);
+
+            return null;
         }
 
         // Final fallback for uncommon variants.
