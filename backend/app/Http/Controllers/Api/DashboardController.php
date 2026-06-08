@@ -57,6 +57,7 @@ class DashboardController extends Controller
     }
 
     
+    
 public function batchStatusReport(Request $request)
 {
     try {
@@ -89,11 +90,6 @@ if ($request->query('date')) {
         $selectedDatePkt = \Carbon\Carbon::parse($date, 'Asia/Karachi');
         $batchNowPkt = now('Asia/Karachi')->format('Y-m-d H:i:s');
 
-        // Projects that store due_in as naive UTC need UTC_TIMESTAMP() for correct TIMESTAMPDIFF
-        $isUtcDueInProject = $projectId && in_array((int) $projectId, self::BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS);
-        $batchNowSql   = $isUtcDueInProject ? 'UTC_TIMESTAMP()' : '?';
-        $batchNowParam = $isUtcDueInProject ? [] : [$batchNowPkt];
-
         // 29 10 PM
         $shiftStartPkt = $selectedDatePkt->copy()->subDay()->setTime(22, 0, 0);
 
@@ -109,9 +105,6 @@ if ($request->query('date')) {
         $shiftEndUtc = $shiftEndPkt->copy()->setTimezone('UTC');
         $shiftStartLocal = $shiftStartPkt->format('Y-m-d H:i:s');
         $shiftEndLocal = $shiftEndPkt->format('Y-m-d H:i:s');
-        // UTC strings for TIMESTAMP column comparisons (DB session is UTC)
-        $shiftStartUtcStr = $shiftStartUtc->format('Y-m-d H:i:s');
-        $shiftEndUtcStr   = $shiftEndUtc->format('Y-m-d H:i:s');
 
         /*
         |--------------------------------------------------------------------------
@@ -157,12 +150,12 @@ if ($request->query('date')) {
             ->selectRaw("
                 orders.*,
                 CASE
-                    WHEN due_in IS NOT NULL THEN GREATEST(TIMESTAMPDIFF(MINUTE, {$batchNowSql}, {$batchDueInExpr}), 0)
+                    WHEN due_in IS NOT NULL THEN GREATEST(TIMESTAMPDIFF(MINUTE, ?, {$batchDueInExpr}), 0)
                     ELSE NULL
                 END as batch_remaining_minutes
-            ", $batchNowParam)
-            ->where('received_at', '>=', $shiftStartUtcStr)
-            ->where('received_at', '<', $shiftEndUtcStr);
+            ", [$batchNowPkt])
+            ->where('received_at', '>=', $shiftStartLocal)
+            ->where('received_at', '<', $shiftEndLocal);
 
         if ($projectId) {
             $query->where('project_id', $projectId);
@@ -176,8 +169,8 @@ if ($request->query('date')) {
         |--------------------------------------------------------------------------
         */
         $statusWindowQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->where('received_at', '>=', $shiftStartUtcStr)
-            ->where('received_at', '<', $shiftEndUtcStr);
+            ->where('received_at', '>=', $shiftStartLocal)
+            ->where('received_at', '<', $shiftEndLocal);
 
         if ($projectId) {
             $statusWindowQuery->where('project_id', $projectId);
@@ -198,8 +191,8 @@ if ($request->query('date')) {
             ->map(function ($items, $batchNo) {
                 $minReceived = \Carbon\Carbon::parse(
                     $items->min('received_at'),
-                    'UTC'
-                )->setTimezone('Asia/Karachi');
+                    'Asia/Karachi'
+                );
 
                 $activeOrders = $items->filter(
                     fn($o) =>
@@ -264,20 +257,21 @@ if ($request->query('date')) {
             'sent_to_fixing' => $statusWindowOrders->where('workflow_state', 'PENDING_BY_DRAWER')->count(),
         ];
 
+        
         /*
         |--------------------------------------------------------------------------
         | Plans Remaining (Include pending orders from the last 5 days)
         |--------------------------------------------------------------------------
         */
-        $plansRemainingStartLocal = $shiftStartUtc
+        $plansRemainingStartLocal = $shiftStartPkt
             ->copy()
             ->subDays(2)
             ->format('Y-m-d H:i:s');
 
         $plansRemainingQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, {$batchNowSql}, {$batchDueInExpr}), 0) as remaining_hour_bucket", $batchNowParam)
+            ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, ?, {$batchDueInExpr}), 0) as remaining_hour_bucket", [$batchNowPkt])
             ->where('received_at', '>=', $plansRemainingStartLocal)
-            ->where('received_at', '<', $shiftEndUtcStr)
+            ->where('received_at', '<', $shiftEndLocal)
             ->whereNotNull('due_in')
             ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER']);
 
@@ -302,14 +296,14 @@ if ($request->query('date')) {
         | Hourly Received Orders
         |--------------------------------------------------------------------------
         */
-        $last24h = $shiftStartUtcStr;
+        $last24h = $shiftStartLocal;
 
         $doneOrdersLast24h = collect(
             DB::table(DB::raw("({$rawUnion}) as orders"))
                 ->where('workflow_state', 'DELIVERED')
                 ->whereNotNull('completed_at')
                 ->where('completed_at', '>=', $last24h)
-                ->where('completed_at', '<', $shiftEndUtcStr)
+                ->where('completed_at', '<', $shiftEndLocal)
                 ->when(
                     $projectId,
                     fn($q) => $q->where('project_id', $projectId)
@@ -338,8 +332,8 @@ if ($request->query('date')) {
                 ->filter(function ($o) use ($slot) {
                     $hour = \Carbon\Carbon::parse(
                         $o->completed_at,
-                        'UTC'
-                    )->setTimezone('Asia/Karachi')->hour;
+                        'Asia/Karachi'
+                    )->hour;
 
                     return $hour >= $slot['start']
                         && $hour < $slot['end'];

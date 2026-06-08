@@ -473,7 +473,11 @@ class FocalPb2ScraperService
 
         $dueIn = $this->calculateDueInFromReceivedAt($receivedAt);
         if ($dueIn === null) {
+<<<<<<< HEAD
             $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('Asia/Karachi')))->modify('+5 hours'));
+=======
+            $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+5 hours'));
+>>>>>>> 86c5088 (Cubi Status Fixed)
         }
 
         $mappedKeys  = ['Id', 'ID', 'Job Id', 'JobID', 'Order Number', 'Order No', 'Name', 'Job Name', 'Address', 'Property Address', 'Job Type', 'Type', 'Project Type', 'Date Received', 'Received', 'Created', 'Date Due', 'Due Date', 'Due', 'Time Left', 'Remaining Time'];
@@ -594,8 +598,12 @@ class FocalPb2ScraperService
             return null;
         }
 
+<<<<<<< HEAD
         // Store as PKT so dashboard date filters (which use PKT boundaries) work correctly.
         return $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d H:i:s');
+=======
+        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+>>>>>>> 86c5088 (Cubi Status Fixed)
     }
 
     private function parseDueDate(?string $raw): ?string
@@ -613,7 +621,11 @@ class FocalPb2ScraperService
             return null;
         }
 
+<<<<<<< HEAD
         return $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d H:i:s');
+=======
+        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+>>>>>>> 86c5088 (Cubi Status Fixed)
     }
 
     private function calculateDueInFromReceivedAt(?string $receivedAtPkt): ?string
@@ -623,7 +635,11 @@ class FocalPb2ScraperService
         }
 
         try {
+<<<<<<< HEAD
             $dt = new DateTime($receivedAtPkt, new \DateTimeZone('Asia/Karachi'));
+=======
+            $dt = new DateTime($receivedAtUtc, new \DateTimeZone('UTC'));
+>>>>>>> 86c5088 (Cubi Status Fixed)
             $dt->modify('+5 hours');
 
             return $this->formatDueInForVarchar($dt);
@@ -651,7 +667,11 @@ class FocalPb2ScraperService
 
     private function currentPktDateTimeString(): string
     {
+<<<<<<< HEAD
         return (new DateTime('now', new \DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
+=======
+        return (new DateTime('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+>>>>>>> 86c5088 (Cubi Status Fixed)
     }
 
     /**
