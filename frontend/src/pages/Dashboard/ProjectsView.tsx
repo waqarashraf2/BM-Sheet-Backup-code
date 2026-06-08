@@ -781,7 +781,7 @@ const ProjectsView: React.FC = () => {
                             <span className="text-[11px] font-medium text-slate-400">Live</span>
                         </div>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="max-h-[60vh] overflow-auto">
                         <table className="w-full border-collapse">
                             <thead>
                                 <tr>
