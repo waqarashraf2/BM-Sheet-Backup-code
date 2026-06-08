@@ -498,7 +498,7 @@ protected function parseDueIn(string $dueRaw): string
         $response = Http::timeout(60)
             ->withOptions(['curl' => [CURLOPT_PROXY => '']])
             ->withHeaders($headers)
-            ->withBasicAuth($auth[0], $auth[1])
+            ->withBasicAuth((string) ($auth[0] ?? ''), (string) ($auth[1] ?? ''))
             ->get($ordersUrl, $query);
 
         if ($response->successful()) {
@@ -724,11 +724,12 @@ protected function parseDueIn(string $dueRaw): string
      */
     public function run(): array
     {
-        $username = env('EXTERNAL_PORTAL_USERNAME');
-        $password = env('EXTERNAL_PORTAL_PASSWORD');
-        $projectId = (int) env('ROOMIO_PROJECT_ID', 15);
-        $table = (string) env('ROOMIO_TABLE', $projectId === 13 ? 'project_13_orders' : 'project_15_orders');
-        $fetchProcessing = filter_var(env('ROOMIO_FETCH_PROCESSING', true), FILTER_VALIDATE_BOOL);
+        // Use config() so values survive php artisan config:cache (env() returns null after caching).
+        $username = config('services.external_portal.username') ?? env('EXTERNAL_PORTAL_USERNAME');
+        $password = config('services.external_portal.password') ?? env('EXTERNAL_PORTAL_PASSWORD');
+        $projectId = (int) (config('services.roomio.project_id') ?? env('ROOMIO_PROJECT_ID', 15));
+        $table = (string) (config('services.roomio.table') ?? env('ROOMIO_TABLE', $projectId === 13 ? 'project_13_orders' : 'project_15_orders'));
+        $fetchProcessing = filter_var(config('services.roomio.fetch_processing') ?? env('ROOMIO_FETCH_PROCESSING', true), FILTER_VALIDATE_BOOL);
         $totalInserted = 0;
         $this->lastErrors = [];
         $this->sessionCookies = [];

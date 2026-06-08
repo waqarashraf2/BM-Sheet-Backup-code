@@ -67,7 +67,7 @@ class FocalPb2ScraperService
         $backfilled = DB::table($this->table)
             ->whereIn('id', $idsToBackfill)
             ->update([
-                'due_in' => DB::raw("DATE_FORMAT(DATE_ADD(`received_at`, INTERVAL 4 HOUR), '%Y-%m-%d %H:%i:%s')"),
+                'due_in' => DB::raw("DATE_FORMAT(DATE_ADD(`received_at`, INTERVAL 5 HOUR), '%Y-%m-%d %H:%i:%s')"),
                 'updated_at' => now(),
             ]);
 
@@ -107,6 +107,7 @@ class FocalPb2ScraperService
         Log::channel('daily')->info('FocalPb2: Fetching login page for CSRF token');
 
         $response = $this->http()->get($this->baseUrl . '/Identity/Account/Login');
+        $response->throw();
 
         $this->captureCookies($response);
 
@@ -149,6 +150,7 @@ class FocalPb2ScraperService
                 'Input.RememberMe'           => 'false',
             ]);
 
+        $response->throw();
         $this->captureCookies($response);
 
         if (!array_key_exists('.AspNetCore.Identity.Application', $this->cookies)) {
@@ -176,6 +178,7 @@ class FocalPb2ScraperService
 
         foreach ($paths as $path) {
             $response = $this->http()->get($this->baseUrl . $path);
+            $response->throw();
 
             $dom = new \DOMDocument();
             libxml_use_internal_errors(true);
@@ -461,10 +464,10 @@ class FocalPb2ScraperService
         $receivedAt = $this->parseDateTime($dateReceived);
 
         if ($receivedAt === null) {
-            // Keep inserts stable: if source datetime is unparseable, use current UTC.
-            $receivedAt = $this->currentUtcDateTimeString();
+            // Keep inserts stable: if source datetime is unparseable, use current PKT.
+            $receivedAt = $this->currentPktDateTimeString();
 
-            Log::warning('FocalPb2: Falling back received_at to current UTC while mapping order', [
+            Log::warning('FocalPb2: Falling back received_at to current PKT while mapping order', [
                 'raw_date_received' => $dateReceived,
                 'order_number' => $orderNumber,
                 'client_portal_id' => $clientPortalId,
@@ -473,7 +476,9 @@ class FocalPb2ScraperService
 
         $dueIn = $this->calculateDueInFromReceivedAt($receivedAt);
         if ($dueIn === null) {
-            $dueIn = $this->formatDueInForVarchar((new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+4 hours'));
+            $dueIn = $this->formatDueInForVarchar(
+                (new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+5 hours')
+            );
         }
 
         $mappedKeys  = ['Id', 'ID', 'Job Id', 'JobID', 'Order Number', 'Order No', 'Name', 'Job Name', 'Address', 'Property Address', 'Job Type', 'Type', 'Project Type', 'Date Received', 'Received', 'Created', 'Date Due', 'Due Date', 'Due', 'Time Left', 'Remaining Time'];
@@ -594,46 +599,32 @@ class FocalPb2ScraperService
             return null;
         }
 
-        $dt = $this->applyHourOffset($dt);
-
-        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        // Preserve the exact clock time displayed by the client portal.
+        return $dt->format('Y-m-d H:i:s');
     }
 
     private function parseDueDate(?string $raw): ?string
     {
         $dt = $this->parsePortalDateTime($raw);
 
-        return $dt ? $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d') : null;
+        return $dt ? $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d') : null;
     }
 
-    private function parseDueInWithManualOffset(?string $raw): ?string
+    private function calculateDueInFromReceivedAt(?string $receivedAt): ?string
     {
-        $dt = $this->parsePortalDateTime($raw);
-
-        if (!$dt) {
-            return null;
-        }
-
-        // Preserve existing business behavior (+1h target), but normalize to UTC.
-        $dt = $this->applyHourOffset($dt);
-
-        return $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
-    }
-
-    private function calculateDueInFromReceivedAt(?string $receivedAtUtc): ?string
-    {
-        if (!$receivedAtUtc) {
+        if (!$receivedAt) {
             return null;
         }
 
         try {
-            $dt = new DateTime($receivedAtUtc, new \DateTimeZone('UTC'));
-            $dt->modify('+3 hours');
+            // Treat the stored portal clock value as neutral, then add exactly five hours.
+            $dt = new DateTime($receivedAt, new \DateTimeZone('UTC'));
+            $dt->modify('+5 hours');
 
             return $this->formatDueInForVarchar($dt);
         } catch (\Throwable $e) {
             Log::warning('FocalPb2: Failed to calculate due_in from received_at', [
-                'received_at' => $receivedAtUtc,
+                'received_at' => $receivedAt,
                 'error' => $e->getMessage(),
             ]);
 
@@ -653,17 +644,9 @@ class FocalPb2ScraperService
         return $value;
     }
 
-    private function currentUtcDateTimeString(): string
+    private function currentPktDateTimeString(): string
     {
-        return (new DateTime('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
-    }
-
-    private function applyHourOffset(DateTime $dt): DateTime
-    {
-        $shifted = clone $dt;
-        $shifted->modify('+1 hour');
-
-        return $shifted;
+        return (new DateTime('now', new \DateTimeZone('Asia/Karachi')))->format('Y-m-d H:i:s');
     }
 
     /**
@@ -711,9 +694,25 @@ class FocalPb2ScraperService
 
         foreach ($formats as $format) {
             $dt = DateTime::createFromFormat($format, $clean, $sourceTz);
-            if ($dt instanceof DateTime) {
+            $errors = DateTime::getLastErrors();
+            $hasErrors = is_array($errors)
+                && ($errors['warning_count'] > 0 || $errors['error_count'] > 0);
+
+            if ($dt instanceof DateTime && !$hasErrors) {
                 return $dt;
             }
+        }
+
+        $parsed = date_parse($clean);
+        if ($parsed['warning_count'] > 0 || $parsed['error_count'] > 0) {
+            Log::warning('FocalPb2: Rejected invalid portal datetime', [
+                'raw' => $raw,
+                'clean' => $clean,
+                'warnings' => $parsed['warnings'],
+                'errors' => $parsed['errors'],
+            ]);
+
+            return null;
         }
 
         // Final fallback for uncommon variants.

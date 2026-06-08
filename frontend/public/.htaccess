@@ -1,0 +1,8 @@
+Options -MultiViews
+RewriteEngine On
+
+# Route all non-file, non-directory, non-apicrm requests to index.html (React SPA)
+RewriteCond %{REQUEST_URI} !^/apicrm
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]

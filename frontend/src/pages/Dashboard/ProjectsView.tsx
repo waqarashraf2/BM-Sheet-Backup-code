@@ -125,6 +125,8 @@ interface TeamWorkerStat {
     role?: string;
     team_id?: number;
     team_name?: string;
+    is_guest?: boolean;
+    home_team_name?: string;
     total_done?: number;
     total_done_selected_date?: number;
     wip?: number;
@@ -491,18 +493,77 @@ const ProjectsView: React.FC = () => {
         }
 
         let teams: TeamBreakdown[];
+        const configuredWorkerHome = new Map<string, { team_id: number; team_name: string }>();
+        projectTeams.forEach((team) => {
+            (team.users ?? []).forEach((user) => {
+                configuredWorkerHome.set(`id:${user.id}`, { team_id: team.id, team_name: team.name });
+                configuredWorkerHome.set(`name:${user.name.trim().toLowerCase()}`, { team_id: team.id, team_name: team.name });
+            });
+        });
 
-        const makeWorkers = (ptUsers: ProjectTeamUser[] | undefined, roleFilter: string): TeamWorkerStat[] =>
+        const makeWorkers = (ptUsers: ProjectTeamUser[] | undefined, roleFilter: string, displayTeamId: number, displayTeamName: string): TeamWorkerStat[] =>
             (ptUsers ?? [])
                 .filter((u) => (u.role || '').toLowerCase() === roleFilter)
-                .map((u) => ({ id: u.id, name: u.name, total_done: 0, total_done_selected_date: 0, wip: 0 }));
+                .map((u) => ({
+                    id: u.id,
+                    name: u.name,
+                    team_id: displayTeamId,
+                    team_name: displayTeamName,
+                    is_guest: false,
+                    total_done: 0,
+                    total_done_selected_date: 0,
+                    wip: 0,
+                }));
 
-        const mergeWorkers = (bdWorkers: TeamWorkerStat[] | undefined, ptUsers: ProjectTeamUser[] | undefined, roleFilter: string): TeamWorkerStat[] => {
+        const getWorkerHome = (worker: TeamWorkerStat) => {
+            if (worker.id != null) {
+                const byId = configuredWorkerHome.get(`id:${worker.id}`);
+                if (byId) return byId;
+            }
+            return configuredWorkerHome.get(`name:${worker.name.trim().toLowerCase()}`) ?? null;
+        };
+
+        const normalizeWorkerForDisplayedTeam = (worker: TeamWorkerStat, displayTeamId: number, forceGuest = false): TeamWorkerStat => {
+            const homeTeamId = worker.team_id == null ? null : Number(worker.team_id);
+            const configuredHome = getWorkerHome(worker);
+            const resolvedHomeTeamId = configuredHome?.team_id ?? homeTeamId;
+            const resolvedHomeTeamName = configuredHome?.team_name ?? worker.team_name;
+            const isGuest = forceGuest || (resolvedHomeTeamId != null && resolvedHomeTeamId !== Number(displayTeamId));
+
+            return {
+                ...worker,
+                is_guest: Boolean(worker.is_guest || isGuest),
+                home_team_name: isGuest ? resolvedHomeTeamName : worker.home_team_name,
+            };
+        };
+
+        const mergeWorkers = (bdWorkers: TeamWorkerStat[] | undefined, ptUsers: ProjectTeamUser[] | undefined, roleFilter: string, displayTeamId: number, displayTeamName: string): TeamWorkerStat[] => {
+            const configuredRoleUsers = (ptUsers ?? []).filter((u) => (u.role || '').toLowerCase() === roleFilter);
+            const configuredRoleIds = new Set(configuredRoleUsers.map((u) => u.id));
+            const configuredRoleNames = new Set(configuredRoleUsers.map((u) => u.name.trim().toLowerCase()));
             const existing = new Set((bdWorkers ?? []).map((w) => w.id));
-            const extra = (ptUsers ?? [])
-                .filter((u) => (u.role || '').toLowerCase() === roleFilter && !existing.has(u.id))
-                .map((u) => ({ id: u.id, name: u.name, total_done: 0, total_done_selected_date: 0, wip: 0 }));
-            return [...(bdWorkers ?? []), ...extra];
+            const extra = configuredRoleUsers
+                .filter((u) => !existing.has(u.id))
+                .map((u) => ({
+                    id: u.id,
+                    name: u.name,
+                    team_id: displayTeamId,
+                    team_name: displayTeamName,
+                    is_guest: false,
+                    total_done: 0,
+                    total_done_selected_date: 0,
+                    wip: 0,
+                }));
+            return [
+                ...(bdWorkers ?? []).map((worker) => {
+                    const belongsToDisplayedTeam = worker.id != null
+                        ? configuredRoleIds.has(worker.id)
+                        : configuredRoleNames.has(worker.name.trim().toLowerCase());
+                    const forceGuest = Array.isArray(ptUsers) && !belongsToDisplayedTeam;
+                    return normalizeWorkerForDisplayedTeam(worker, displayTeamId, forceGuest);
+                }),
+                ...extra,
+            ];
         };
 
         if (projectTeams.length > 0) {
@@ -513,9 +574,9 @@ const ProjectsView: React.FC = () => {
                     // Supplement breakdown workers with any missing team members
                     return {
                         ...bd,
-                        drawers: mergeWorkers(bd.drawers, pt.users, 'drawer'),
-                        checkers: mergeWorkers(bd.checkers, pt.users, 'checker'),
-                        qas: mergeWorkers(bd.qas, pt.users, 'qa'),
+                        drawers: mergeWorkers(bd.drawers, pt.users, 'drawer', pt.id, pt.name),
+                        checkers: mergeWorkers(bd.checkers, pt.users, 'checker', pt.id, pt.name),
+                        qas: mergeWorkers(bd.qas, pt.users, 'qa', pt.id, pt.name),
                     };
                 }
                 return {
@@ -526,13 +587,18 @@ const ProjectsView: React.FC = () => {
                     qa_done: 0,
                     total_done: 0,
                     total_done_selected_date: 0,
-                    drawers: makeWorkers(pt.users, 'drawer'),
-                    checkers: makeWorkers(pt.users, 'checker'),
-                    qas: makeWorkers(pt.users, 'qa'),
+                    drawers: makeWorkers(pt.users, 'drawer', pt.id, pt.name),
+                    checkers: makeWorkers(pt.users, 'checker', pt.id, pt.name),
+                    qas: makeWorkers(pt.users, 'qa', pt.id, pt.name),
                 } as TeamBreakdown;
             });
         } else {
-            teams = Array.from(breakdownMap.values());
+            teams = Array.from(breakdownMap.values()).map((team) => ({
+                ...team,
+                drawers: (team.drawers ?? []).map((worker) => normalizeWorkerForDisplayedTeam(worker, Number(team.team_id))),
+                checkers: (team.checkers ?? []).map((worker) => normalizeWorkerForDisplayedTeam(worker, Number(team.team_id))),
+                qas: (team.qas ?? []).map((worker) => normalizeWorkerForDisplayedTeam(worker, Number(team.team_id))),
+            }));
         }
 
         return teams.sort((a, b) =>
@@ -715,30 +781,30 @@ const ProjectsView: React.FC = () => {
                             <span className="text-[11px] font-medium text-slate-400">Live</span>
                         </div>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="max-h-[60vh] overflow-auto">
                         <table className="w-full border-collapse">
                             <thead>
                                 <tr>
-                                    <th rowSpan={2} className="px-4 py-2 text-left text-[9px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 border-b-2 border-slate-200 min-w-[150px] border-r border-slate-100">
+                                    <th rowSpan={2} className="sticky top-0 z-30 px-4 py-2 text-left text-[9px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 border-b-2 border-slate-200 min-w-[150px] border-r border-slate-100 shadow-sm">
                                         Project
                                     </th>
-                                    <th colSpan={5} className="px-3 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-[#2AA7A0] bg-[#2AA7A0]/5 border-b border-[#2AA7A0]/20">
+                                    <th colSpan={5} className="sticky top-0 z-30 px-3 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-[#2AA7A0] bg-[#f4fbfa] border-b border-[#2AA7A0]/20 shadow-sm">
                                         Orders
                                     </th>
-                                    <th colSpan={4} className="px-3 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-slate-400 bg-slate-50/80 border-b border-slate-200 border-l border-slate-100">
+                                    <th colSpan={4} className="sticky top-0 z-30 px-3 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-slate-400 bg-slate-50 border-b border-slate-200 border-l border-slate-100 shadow-sm">
                                         Workforce
                                     </th>
                                 </tr>
                                 <tr className="border-b-2 border-slate-200">
-                                    <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50/60 whitespace-nowrap">Received</th>
-                                    <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50/60 whitespace-nowrap">Pending</th>
-                                    <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50/60 whitespace-nowrap">Delayed Pend.</th>
-                                    <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50/60 whitespace-nowrap">Completed</th>
-                                    <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50/60 whitespace-nowrap border-r border-slate-100">Delayed Done</th>
-                                    <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-400 bg-slate-50/60 whitespace-nowrap">Total</th>
-                                    <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-400 bg-slate-50/60 whitespace-nowrap">Online</th>
-                                    <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-400 bg-slate-50/60 whitespace-nowrap">Present</th>
-                                    <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-400 bg-slate-50/60 whitespace-nowrap">Absent</th>
+                                    <th className="sticky top-[25px] z-20 px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50 whitespace-nowrap shadow-sm">Received</th>
+                                    <th className="sticky top-[25px] z-20 px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50 whitespace-nowrap shadow-sm">Pending</th>
+                                    <th className="sticky top-[25px] z-20 px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50 whitespace-nowrap shadow-sm">Delayed Pend.</th>
+                                    <th className="sticky top-[25px] z-20 px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50 whitespace-nowrap shadow-sm">Completed</th>
+                                    <th className="sticky top-[25px] z-20 px-3 py-2 text-center text-[10px] font-semibold text-slate-500 bg-slate-50 whitespace-nowrap border-r border-slate-100 shadow-sm">Delayed Done</th>
+                                    <th className="sticky top-[25px] z-20 px-3 py-2 text-center text-[10px] font-semibold text-slate-400 bg-slate-50 whitespace-nowrap shadow-sm">Total</th>
+                                    <th className="sticky top-[25px] z-20 px-3 py-2 text-center text-[10px] font-semibold text-slate-400 bg-slate-50 whitespace-nowrap shadow-sm">Online</th>
+                                    <th className="sticky top-[25px] z-20 px-3 py-2 text-center text-[10px] font-semibold text-slate-400 bg-slate-50 whitespace-nowrap shadow-sm">Present</th>
+                                    <th className="sticky top-[25px] z-20 px-3 py-2 text-center text-[10px] font-semibold text-slate-400 bg-slate-50 whitespace-nowrap shadow-sm">Absent</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -990,7 +1056,7 @@ const ProjectsView: React.FC = () => {
                                                                             {teamDetailTab !== 'batch' && (
                                                                                 <div className="grid grid-cols-1 xl:grid-cols-1 gap-3">
                                                                             {teamsForDisplay.map((team) => {
-                                                                                const teamDone = Number(team.total_done_selected_date ?? team.total_done ?? 0);
+                                                                                const teamDone = Number(team.checker_done ?? 0);
                                                                                 const teamPending = (team.drawers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0)
                                                                                     + (team.checkers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0);
                                                                                 const teamAssigned = teamDone + teamPending;
@@ -1007,7 +1073,7 @@ const ProjectsView: React.FC = () => {
                                                                                                 <div className="flex items-center gap-1">
                                                                                                     <span style={{ fontSize: '11px', fontWeight: '600', color: '#64748b' }}>{teamAssigned} assigned</span>
                                                                                                     <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>·</span>
-                                                                                                    <span style={{ fontSize: '11px', fontWeight: '700', color: '#0f766e', background: '#ccfbf1', borderRadius: '4px', padding: '1px 6px' }}>{teamDone} done</span>
+                                                                                                    <span style={{ fontSize: '11px', fontWeight: '700', color: '#0f766e', background: '#ccfbf1', borderRadius: '4px', padding: '1px 6px' }}>{teamDone} Done</span>
                                                                                                     <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>·</span>
                                                                                                     <span style={{ fontSize: '11px', fontWeight: '700', color: teamPending > 0 ? '#b45309' : '#94a3b8', background: teamPending > 0 ? '#fef3c7' : 'transparent', borderRadius: '4px', padding: teamPending > 0 ? '1px 6px' : '0' }}>{teamPending} pend</span>
                                                                                                 </div>
@@ -1036,10 +1102,13 @@ const ProjectsView: React.FC = () => {
                                                                                                             const dn = Number(w.total_done_selected_date ?? w.total_done ?? 0);
                                                                                                             const wip = Number(w.wip ?? 0);
                                                                                                             const assigned = dn + wip;
+                                                                                                            const isGuest = Boolean(w.is_guest);
                                                                                                             return (
-                                                                                                                <div key={`dr-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isOn ? '#f0fdfa' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
-                                                                                                                    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
-                                                                                                                    <span style={{ fontSize: '11px', fontWeight: '500', color: '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
+                                                                                                                <div key={`dr-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isGuest ? '#faf5ff' : isOn ? '#f0fdfa' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
+                                                                                                                    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isGuest ? '#a855f7' : isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
+                                                                                                                    <span title={isGuest && w.home_team_name ? `Home team: ${w.home_team_name}` : undefined} style={{ fontSize: '11px', fontWeight: '500', color: isGuest ? '#6d28d9' : '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                                                                        {w.name}{isGuest ? ' (Guest)' : ''}
+                                                                                                                    </span>
                                                                                                                     <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{assigned} assign</span>
                                                                                                                     <span style={{ fontSize: '11px', fontWeight: '700', color: dn > 0 ? '#0f766e' : '#94a3b8', background: dn > 0 ? '#ccfbf1' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>✓{dn}</span>
                                                                                                                     <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>

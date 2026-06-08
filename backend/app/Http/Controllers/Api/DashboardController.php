@@ -23,7 +23,10 @@ class DashboardController extends Controller
     ];
     // Projects whose due_in column stores naive UTC timestamps (not PKT)
     private const BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS = [2, 5];
-    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [1, 2, 3, 7, 8, 42, 12, 11, 19];
+    // Intentionally empty: received_at is stored in PKT for all projects.
+    // Timezone-offset filtering shifts date boundaries and causes wrong counts.
+    // Only project 16 has special handling (see buildAssignmentDashboardProject16Range).
+    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [];
     private const ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS = [1, 3, 16, 12, 19];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS = [1, 3,];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE = 100;
@@ -53,6 +56,7 @@ class DashboardController extends Controller
         return $cache;
     }
 
+    
     
 public function batchStatusReport(Request $request)
 {
@@ -86,11 +90,6 @@ if ($request->query('date')) {
         $selectedDatePkt = \Carbon\Carbon::parse($date, 'Asia/Karachi');
         $batchNowPkt = now('Asia/Karachi')->format('Y-m-d H:i:s');
 
-        // Projects that store due_in as naive UTC need UTC_TIMESTAMP() for correct TIMESTAMPDIFF
-        $isUtcDueInProject = $projectId && in_array((int) $projectId, self::BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS);
-        $batchNowSql   = $isUtcDueInProject ? 'UTC_TIMESTAMP()' : '?';
-        $batchNowParam = $isUtcDueInProject ? [] : [$batchNowPkt];
-
         // 29 10 PM
         $shiftStartPkt = $selectedDatePkt->copy()->subDay()->setTime(22, 0, 0);
 
@@ -106,9 +105,6 @@ if ($request->query('date')) {
         $shiftEndUtc = $shiftEndPkt->copy()->setTimezone('UTC');
         $shiftStartLocal = $shiftStartPkt->format('Y-m-d H:i:s');
         $shiftEndLocal = $shiftEndPkt->format('Y-m-d H:i:s');
-        // UTC strings for TIMESTAMP column comparisons (DB session is UTC)
-        $shiftStartUtcStr = $shiftStartUtc->format('Y-m-d H:i:s');
-        $shiftEndUtcStr   = $shiftEndUtc->format('Y-m-d H:i:s');
 
         /*
         |--------------------------------------------------------------------------
@@ -154,12 +150,12 @@ if ($request->query('date')) {
             ->selectRaw("
                 orders.*,
                 CASE
-                    WHEN due_in IS NOT NULL THEN GREATEST(TIMESTAMPDIFF(MINUTE, {$batchNowSql}, {$batchDueInExpr}), 0)
+                    WHEN due_in IS NOT NULL THEN GREATEST(TIMESTAMPDIFF(MINUTE, ?, {$batchDueInExpr}), 0)
                     ELSE NULL
                 END as batch_remaining_minutes
-            ", $batchNowParam)
-            ->where('received_at', '>=', $shiftStartUtcStr)
-            ->where('received_at', '<', $shiftEndUtcStr);
+            ", [$batchNowPkt])
+            ->where('received_at', '>=', $shiftStartLocal)
+            ->where('received_at', '<', $shiftEndLocal);
 
         if ($projectId) {
             $query->where('project_id', $projectId);
@@ -173,8 +169,8 @@ if ($request->query('date')) {
         |--------------------------------------------------------------------------
         */
         $statusWindowQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->where('received_at', '>=', $shiftStartUtcStr)
-            ->where('received_at', '<', $shiftEndUtcStr);
+            ->where('received_at', '>=', $shiftStartLocal)
+            ->where('received_at', '<', $shiftEndLocal);
 
         if ($projectId) {
             $statusWindowQuery->where('project_id', $projectId);
@@ -195,8 +191,8 @@ if ($request->query('date')) {
             ->map(function ($items, $batchNo) {
                 $minReceived = \Carbon\Carbon::parse(
                     $items->min('received_at'),
-                    'UTC'
-                )->setTimezone('Asia/Karachi');
+                    'Asia/Karachi'
+                );
 
                 $activeOrders = $items->filter(
                     fn($o) =>
@@ -261,20 +257,21 @@ if ($request->query('date')) {
             'sent_to_fixing' => $statusWindowOrders->where('workflow_state', 'PENDING_BY_DRAWER')->count(),
         ];
 
+        
         /*
         |--------------------------------------------------------------------------
         | Plans Remaining (Include pending orders from the last 5 days)
         |--------------------------------------------------------------------------
         */
-        $plansRemainingStartLocal = $shiftStartUtc
+        $plansRemainingStartLocal = $shiftStartPkt
             ->copy()
             ->subDays(2)
             ->format('Y-m-d H:i:s');
 
         $plansRemainingQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, {$batchNowSql}, {$batchDueInExpr}), 0) as remaining_hour_bucket", $batchNowParam)
+            ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, ?, {$batchDueInExpr}), 0) as remaining_hour_bucket", [$batchNowPkt])
             ->where('received_at', '>=', $plansRemainingStartLocal)
-            ->where('received_at', '<', $shiftEndUtcStr)
+            ->where('received_at', '<', $shiftEndLocal)
             ->whereNotNull('due_in')
             ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER']);
 
@@ -299,14 +296,14 @@ if ($request->query('date')) {
         | Hourly Received Orders
         |--------------------------------------------------------------------------
         */
-        $last24h = $shiftStartUtcStr;
+        $last24h = $shiftStartLocal;
 
         $doneOrdersLast24h = collect(
             DB::table(DB::raw("({$rawUnion}) as orders"))
                 ->where('workflow_state', 'DELIVERED')
                 ->whereNotNull('completed_at')
                 ->where('completed_at', '>=', $last24h)
-                ->where('completed_at', '<', $shiftEndUtcStr)
+                ->where('completed_at', '<', $shiftEndLocal)
                 ->when(
                     $projectId,
                     fn($q) => $q->where('project_id', $projectId)
@@ -335,8 +332,8 @@ if ($request->query('date')) {
                 ->filter(function ($o) use ($slot) {
                     $hour = \Carbon\Carbon::parse(
                         $o->completed_at,
-                        'UTC'
-                    )->setTimezone('Asia/Karachi')->hour;
+                        'Asia/Karachi'
+                    )->hour;
 
                     return $hour >= $slot['start']
                         && $hour < $slot['end'];
@@ -4120,6 +4117,8 @@ $endDate = $request->input('end_date');
             'drawer_name' => 'drawer_name',
             'checker' => 'checker_name',
             'checker_name' => 'checker_name',
+            'filler' => 'file_uploader_name',
+            'file_uploader_name' => 'file_uploader_name',
             'qa' => 'qa_name',
             'qa_name' => 'qa_name',
         ];
@@ -4127,6 +4126,7 @@ $endDate = $request->input('end_date');
         $roleSortableColumns = [
             'drawer' => 'drawer',
             'checker' => 'checker',
+            'filler' => 'filler',
             'qa' => 'qa',
         ];
         $roleSortColumn = $roleSortableColumns[$roleSortByInput] ?? null;
@@ -4477,6 +4477,7 @@ if ($statusFilter === 'pending_by_drawer') {
             $qaDoneExpr = "(TRIM(COALESCE(final_upload, '')) <> '' AND LOWER(TRIM(COALESCE(final_upload, ''))) NOT IN ('no', '0', 'false'))";
             $drawerNotDoneExpr = "(TRIM(COALESCE(drawer_done, '')) = '' OR LOWER(TRIM(COALESCE(drawer_done, ''))) IN ('no', '0', 'false'))";
             $checkerNotDoneExpr = "(TRIM(COALESCE(checker_done, '')) = '' OR LOWER(TRIM(COALESCE(checker_done, ''))) IN ('no', '0', 'false'))";
+            $fillerNotDoneExpr = "(TRIM(COALESCE(file_uploaded, '')) = '' OR LOWER(TRIM(COALESCE(file_uploaded, ''))) IN ('no', '0', 'false'))";
             $qaNotDoneExpr = "(TRIM(COALESCE(final_upload, '')) = '' OR LOWER(TRIM(COALESCE(final_upload, ''))) IN ('no', '0', 'false'))";
 
             // Sort the requested role's workflow queue globally before pagination.
@@ -4493,6 +4494,12 @@ if ($statusFilter === 'pending_by_drawer') {
                     AND (checker_id IS NULL OR checker_id = 0)
                     AND (checker_name IS NULL OR TRIM(checker_name) = '')
                     AND {$checkerNotDoneExpr}
+                )",
+                'filler' => "(
+                    {$checkerDoneExpr}
+                    AND (file_uploader_id IS NULL OR file_uploader_id = 0)
+                    AND (file_uploader_name IS NULL OR TRIM(file_uploader_name) = '')
+                    AND {$fillerNotDoneExpr}
                 )",
                 'qa' => "(
                     {$checkerDoneExpr}
@@ -4896,50 +4903,9 @@ if ($useDueInFirstOrdering) {
             return $this->buildAssignmentDashboardProject16Range($startDate, $endDate, $dateFilter, $appTimezone);
         }
 
-        if (!in_array($projectId, self::ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS, true)) {
-            return null;
-        }
-
-        $projectTimezone = $project->timezone;
-        if (empty($projectTimezone) || !in_array($projectTimezone, \DateTimeZone::listIdentifiers(), true)) {
-            return null;
-        }
-
-        if ($startDate || $endDate) {
-            if ($startDate && $endDate) {
-                return [
-                    'type' => 'between',
-                    'start' => \Carbon\Carbon::parse($startDate, $projectTimezone)->startOfDay()->setTimezone($appTimezone),
-                    'end' => \Carbon\Carbon::parse($endDate, $projectTimezone)->endOfDay()->setTimezone($appTimezone),
-                ];
-            }
-
-            if ($startDate) {
-                return [
-                    'type' => 'start',
-                    'start' => \Carbon\Carbon::parse($startDate, $projectTimezone)->startOfDay()->setTimezone($appTimezone),
-                ];
-            }
-
-            return [
-                'type' => 'end',
-                'end' => \Carbon\Carbon::parse($endDate, $projectTimezone)->endOfDay()->setTimezone($appTimezone),
-            ];
-        }
-
-        if ($dateFilter) {
-            return [
-                'type' => 'between',
-                'start' => \Carbon\Carbon::parse($dateFilter, $projectTimezone)->startOfDay()->setTimezone($appTimezone),
-                'end' => \Carbon\Carbon::parse($dateFilter, $projectTimezone)->endOfDay()->setTimezone($appTimezone),
-            ];
-        }
-
-        return [
-            'type' => 'between',
-            'start' => now($projectTimezone)->startOfDay()->setTimezone($appTimezone),
-            'end' => now($projectTimezone)->endOfDay()->setTimezone($appTimezone),
-        ];
+        // All non-project-16 projects use PKT (generic range) for every date case.
+        // received_at is stored in PKT, so any timezone offset produces wrong counts.
+        return null;
     }
 
     private function buildAssignmentDashboardProject16Range(
@@ -5192,10 +5158,3 @@ if ($useDueInFirstOrdering) {
         };
     }
 }
-
-
-
-
-
-
-

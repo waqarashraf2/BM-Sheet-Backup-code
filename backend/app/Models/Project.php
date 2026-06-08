@@ -11,7 +11,7 @@ class Project extends Model
 {
     use HasFactory, SoftDeletes;
 
-    private const CHECKER_COMPLETION_PROJECT_IDS = [1, 2, 3];
+    private const CHECKER_COMPLETION_PROJECT_IDS = [1, 2, 3, 16];
 
     protected $fillable = [
         'code', 'name', 'queue_name', 'country', 'department', 'client_name', 'status',

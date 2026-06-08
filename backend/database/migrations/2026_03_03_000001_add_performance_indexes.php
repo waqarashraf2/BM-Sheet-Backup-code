@@ -35,10 +35,8 @@ return new class extends Migration
 
                 // Daily operations: status + completed_at for date-range queries
                 if (Schema::hasColumn($table, 'status') && Schema::hasColumn($table, 'completed_at')) {
-                    try {
+                    if (!$this->hasIndexByName($table, "{$table}_status_completed_idx")) {
                         $t->index(['status', 'completed_at'], "{$table}_status_completed_idx");
-                    } catch (\Exception $e) {
-                        // Index may already exist
                     }
                 }
 
@@ -50,14 +48,11 @@ return new class extends Migration
         }
 
         // Users table: composite index for dashboard queries
-        Schema::table('users', function (Blueprint $t) {
-            // Dashboard aggregation: WHERE project_id = ? AND role = ? AND is_active = ?
-            try {
+        if (!$this->hasIndexByName('users', 'users_active_role_idx')) {
+            Schema::table('users', function (Blueprint $t) {
                 $t->index(['is_active', 'role'], 'users_active_role_idx');
-            } catch (\Exception $e) {
-                // May already exist
-            }
-        });
+            });
+        }
     }
 
     public function down(): void
@@ -85,6 +80,12 @@ return new class extends Migration
     private function hasIndex(string $table, string $column): bool
     {
         $indexes = \DB::select("SHOW INDEX FROM `{$table}` WHERE Column_name = ?", [$column]);
+        return count($indexes) > 0;
+    }
+
+    private function hasIndexByName(string $table, string $indexName): bool
+    {
+        $indexes = \DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName]);
         return count($indexes) > 0;
     }
 };

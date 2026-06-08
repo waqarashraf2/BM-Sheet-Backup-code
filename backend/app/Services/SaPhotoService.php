@@ -239,12 +239,19 @@ class SaPhotoService
             return clone $fallback;
         }
 
+        $pkt = new DateTimeZone('Asia/Karachi');
+
         try {
             if (!empty($task['processing_at'])) {
-                return new DateTime($task['processing_at']);
+                // API returns UTC timestamps (Z-suffix). Convert to PKT so date filters work correctly.
+                $dt = new DateTime($task['processing_at']);
+                $dt->setTimezone($pkt);
+                return $dt;
             }
 
-            return new DateTime($task['conduct_date']);
+            $dt = new DateTime($task['conduct_date']);
+            $dt->setTimezone($pkt);
+            return $dt;
         } catch (Exception $exception) {
             Log::warning('Project19 Photo Import Invalid received_at date', [
                 'client_portal_id' => $task['id'] ?? null,
@@ -264,7 +271,9 @@ class SaPhotoService
         }
 
         try {
-            return new DateTime($task['processing_at']);
+            $dt = new DateTime($task['processing_at']);
+            $dt->setTimezone(new DateTimeZone('Asia/Karachi'));
+            return $dt;
         } catch (Exception $exception) {
             Log::warning('Project19 Photo Import Invalid processing_at', [
                 'client_portal_id' => $task['id'] ?? null,
