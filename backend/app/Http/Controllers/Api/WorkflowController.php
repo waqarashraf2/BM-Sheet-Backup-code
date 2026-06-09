@@ -14,6 +14,7 @@ use App\Services\ProjectOrderService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 class WorkflowController extends Controller
@@ -356,10 +357,17 @@ public function myCurrent(Request $request)
 
         $includeExternal = (string) $request->query('include_external', '0') === '1';
         $externalLinks = collect();
+        $portalUploadStatus = null;
 
         // External assetdetail links are currently available for FocalCRM photo jobs (project 22).
         if ($includeExternal && in_array(22, $candidateProjectIds, true)) {
             $externalLinks = $this->fetchFocalAssetDetailLinks($jobOrderId);
+        }
+
+        // Project 1 workers must be able to confirm that the completed floor-plan
+        // file exists in the client portal before finishing drawer/checker work.
+        if (in_array(1, $candidateProjectIds, true)) {
+            $portalUploadStatus = $this->getProjectOnePortalUploadStatus($jobOrderId);
         }
 
         $allLinks = $tableLinks
@@ -373,9 +381,242 @@ public function myCurrent(Request $request)
             'requested_project_id' => $requestedProjectId > 0 ? $requestedProjectId : null,
             'matched_project_ids' => $projectsWithData,
             'include_external' => $includeExternal,
+            'portal_upload_status' => $portalUploadStatus,
             'count' => $allLinks->count(),
             'links' => $allLinks,
         ]);
+    }
+
+    private function getProjectOnePortalUploadStatus(string $jobOrderId, bool $checkFailedJobs = true): array
+    {
+        $apiUrl = (string) env('FOCAL_CRM_API_URL', 'https://api.focalagent.com/supplier-enhancement/v3/jobs');
+        $supplierSecret = (string) env('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu');
+        $subscriptionKey = (string) env('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1');
+        $headers = [
+            'Accept' => '*/*',
+            'Supplier-Secret' => $supplierSecret,
+            'Ocp-Apim-Subscription-Key' => $subscriptionKey,
+        ];
+        $failedJobsUrl = rtrim(
+            (string) env(
+                'FOCAL_CRM_STATUS_API_URL',
+                str_replace('/v3/jobs', '/v2/jobs', $apiUrl)
+            ),
+            '/'
+        ) . '?jobstatus=Failed';
+        $endpoints = [
+            rtrim($apiUrl, '/') . '/' . rawurlencode($jobOrderId) . '/assetdetail',
+            str_replace('/v3/', '/v2/', rtrim($apiUrl, '/')) . '/' . rawurlencode($jobOrderId) . '/assetdetail',
+        ];
+
+        try {
+            if ($checkFailedJobs) {
+                $failedJobsResponse = Http::timeout(30)
+                    ->withHeaders($headers)
+                    ->get($failedJobsUrl);
+
+                if (!$failedJobsResponse->successful()) {
+                    return [
+                        'required' => true,
+                        'checked' => false,
+                        'uploaded' => false,
+                        'failed' => false,
+                        'job_status' => null,
+                        'uploaded_count' => 0,
+                        'message' => 'Focal job status could not be checked. Please retry before submitting.',
+                    ];
+                }
+
+                $failedJob = collect((array) (($failedJobsResponse->json() ?? [])['jobs'] ?? []))
+                    ->first(function ($job) use ($jobOrderId) {
+                        if (!is_array($job)) {
+                            return false;
+                        }
+
+                        return trim((string) ($job['Id'] ?? $job['id'] ?? '')) === $jobOrderId
+                            && strtolower(trim((string) ($job['ProductOption'] ?? $job['productOption'] ?? ''))) === 'propertyvision';
+                    });
+
+                if (is_array($failedJob)) {
+                    $jobStatus = trim((string) ($failedJob['JobStatus'] ?? $failedJob['jobStatus'] ?? 'Failed')) ?: 'Failed';
+
+                    return [
+                        'required' => true,
+                        'checked' => true,
+                        'uploaded' => false,
+                        'failed' => true,
+                        'job_status' => $jobStatus,
+                        'uploaded_count' => 0,
+                        'message' => 'Failed by Client Portal. Upload the corrected file and submit again.',
+                    ];
+                }
+            }
+
+            foreach (array_unique($endpoints) as $url) {
+                $response = Http::timeout(30)
+                    ->withHeaders($headers)
+                    ->get($url);
+
+                if (!$response->successful()) {
+                    continue;
+                }
+
+                $assets = collect((array) (($response->json() ?? [])['Assets'] ?? []))
+                    ->filter(function ($asset) {
+                        if (!is_array($asset)) {
+                            return false;
+                        }
+
+                        return !empty($asset['Url'] ?? $asset['url'] ?? $asset['URL'] ?? null)
+                            || !empty($asset['FileName'] ?? $asset['file_name'] ?? null);
+                    })
+                    ->values();
+                $uploadedCount = $assets->count();
+
+                return [
+                    'required' => true,
+                    'checked' => true,
+                    'uploaded' => $uploadedCount > 0,
+                    'failed' => false,
+                    'job_status' => $uploadedCount > 0 ? 'Uploaded' : 'Not Uploaded',
+                    'uploaded_count' => $uploadedCount,
+                    'message' => $uploadedCount > 0
+                        ? 'File uploaded successfully on the Focal client portal.'
+                        : 'No completed file is uploaded on the Focal client portal yet.',
+                ];
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
+        return [
+            'required' => true,
+            'checked' => false,
+            'uploaded' => false,
+            'failed' => false,
+            'job_status' => null,
+            'uploaded_count' => 0,
+            'message' => 'Client portal could not be checked. Please retry before submitting.',
+        ];
+    }
+
+    private function submitProjectOneToClientPortal(string $jobOrderId): array
+    {
+        $apiBase = rtrim(
+            (string) env(
+                'FOCAL_CRM_SUBMIT_API_URL',
+                'https://api.focalagent.com/supplier-enhancement/v2/jobs'
+            ),
+            '/'
+        );
+        $supplierSecret = (string) env('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu');
+        $subscriptionKey = (string) env('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1');
+
+        try {
+            // Match the proven legacy cURL request exactly: POST with an empty
+            // body. Sending Laravel's default JSON [] can be rejected by Focal.
+            $response = Http::timeout(60)
+                ->withHeaders([
+                    'Accept' => '*/*',
+                    'Content-Type' => 'application/json',
+                    'Supplier-Secret' => $supplierSecret,
+                    'Ocp-Apim-Subscription-Key' => $subscriptionKey,
+                ])
+                ->withBody('', 'application/json')
+                ->post($apiBase . '/' . rawurlencode($jobOrderId) . '/submit');
+
+            $responseBody = trim($response->body());
+            $responseJson = $response->json();
+            $normalizedBody = strtolower($responseBody);
+            $alreadySubmitted = str_contains($normalizedBody, 'already submitted')
+                || str_contains($normalizedBody, 'already been submitted')
+                || str_contains($normalizedBody, 'already completed')
+                || str_contains($normalizedBody, 'already been completed');
+            $portalRejected = is_array($responseJson) && (
+                (array_key_exists('success', $responseJson) && $responseJson['success'] === false)
+                || (array_key_exists('isSuccess', $responseJson) && $responseJson['isSuccess'] === false)
+                || strtolower(trim((string) ($responseJson['status'] ?? $responseJson['JobStatus'] ?? ''))) === 'failed'
+                || !empty($responseJson['error'] ?? null)
+            ) && !$alreadySubmitted;
+
+            Log::info('Project 1 Focal client portal submit response', [
+                'job_order_id' => $jobOrderId,
+                'http_status' => $response->status(),
+                'successful' => $response->successful(),
+                'already_submitted' => $alreadySubmitted,
+                'portal_rejected' => $portalRejected,
+                'response_body' => mb_substr($responseBody, 0, 2000),
+            ]);
+
+            return [
+                'submitted' => true,
+                'status' => $response->status(),
+                'already_submitted' => $alreadySubmitted,
+                'response_indicated_failure' => $portalRejected,
+                'response' => $responseBody !== '' ? $responseBody : null,
+                'message' => $alreadySubmitted
+                    ? 'Order was already submitted on Client Portal.'
+                    : 'Client Portal submission request was sent.',
+            ];
+        } catch (\Throwable $e) {
+            Log::error('Project 1 Focal client portal submit exception', [
+                'job_order_id' => $jobOrderId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'submitted' => false,
+                'status' => null,
+                'message' => 'Client Portal could not be reached. The internal order was not submitted.',
+            ];
+        }
+    }
+
+    private function checkProjectOneFailedJob(string $jobOrderId): array
+    {
+        $apiUrl = (string) env('FOCAL_CRM_API_URL', 'https://api.focalagent.com/supplier-enhancement/v3/jobs');
+        $failedJobsUrl = rtrim(
+            (string) env(
+                'FOCAL_CRM_STATUS_API_URL',
+                str_replace('/v3/jobs', '/v2/jobs', $apiUrl)
+            ),
+            '/'
+        ) . '?jobstatus=Failed';
+        $supplierSecret = (string) env('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu');
+        $subscriptionKey = (string) env('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1');
+
+        try {
+            $response = Http::timeout(30)
+                ->withHeaders([
+                    'Accept' => '*/*',
+                    'Supplier-Secret' => $supplierSecret,
+                    'Ocp-Apim-Subscription-Key' => $subscriptionKey,
+                ])
+                ->get($failedJobsUrl);
+
+            if (!$response->successful()) {
+                return ['checked' => false, 'failed' => false];
+            }
+
+            $failed = collect((array) (($response->json() ?? [])['jobs'] ?? []))
+                ->contains(function ($job) use ($jobOrderId) {
+                    if (!is_array($job)) {
+                        return false;
+                    }
+
+                    return trim((string) ($job['Id'] ?? $job['id'] ?? '')) === $jobOrderId
+                        && strtolower(trim((string) ($job['ProductOption'] ?? $job['productOption'] ?? ''))) === 'propertyvision';
+                });
+
+            return ['checked' => true, 'failed' => $failed];
+        } catch (\Throwable $e) {
+            Log::warning('Project 1 Focal failed-list check exception', [
+                'job_order_id' => $jobOrderId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ['checked' => false, 'failed' => false];
+        }
     }
 
     private function fetchProjectTableLinks(int $projectId, string $jobOrderId)
@@ -699,6 +940,61 @@ public function myCurrent(Request $request)
         // Check project isolation
         if (!in_array((int) $order->project_id, self::queueProjectIdsForUser($user), true)) {
             return response()->json(['message' => 'Project isolation violation.'], 403);
+        }
+
+        if ((int) $order->project_id === 1 && $user->role === 'checker') {
+            $jobOrderId = trim((string) ($order->client_portal_id ?? $order->order_number ?? ''));
+            if ($jobOrderId === '') {
+                return response()->json([
+                    'message' => 'Client portal file check failed because the portal job ID is missing.',
+                ], 422);
+            }
+
+            // Project 1 checker is the final stage. Submit to Focal before the
+            // internal transition; an explicit Failed-list match blocks it.
+            $portalSubmit = $this->submitProjectOneToClientPortal($jobOrderId);
+            if (!$portalSubmit['submitted']) {
+                return response()->json([
+                    'message' => $portalSubmit['message'],
+                    'client_portal_submit' => $portalSubmit,
+                ], 422);
+            }
+
+            $failedStatus = ['checked' => false, 'failed' => false];
+            for ($attempt = 1; $attempt <= 3; $attempt++) {
+                $failedStatus = $this->checkProjectOneFailedJob($jobOrderId);
+                if ($failedStatus['failed']) {
+                    break;
+                }
+
+                if ($attempt < 3) {
+                    usleep(750000);
+                }
+            }
+
+            if ($failedStatus['failed']) {
+                return response()->json([
+                    'message' => 'Failed by Client Portal. The internal order was not submitted.',
+                    'portal_upload_status' => [
+                        'required' => true,
+                        'checked' => true,
+                        'uploaded' => false,
+                        'failed' => true,
+                        'job_status' => 'Failed',
+                        'uploaded_count' => 0,
+                        'message' => 'Failed by Client Portal. The internal order was not submitted.',
+                    ],
+                    'client_portal_submit' => $portalSubmit,
+                ], 422);
+            }
+
+            if (!$failedStatus['checked']) {
+                Log::warning('Project 1 Focal failed-list verification unavailable after successful submit', [
+                    'job_order_id' => $jobOrderId,
+                    'role' => $user->role,
+                    'submit_status' => $portalSubmit['status'] ?? null,
+                ]);
+            }
         }
 
         $comments = $request->input('comments');

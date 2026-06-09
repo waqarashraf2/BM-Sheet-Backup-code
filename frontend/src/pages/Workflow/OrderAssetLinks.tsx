@@ -21,6 +21,15 @@ type OrderAssetLinksResponse = {
     requested_project_id: number | null;
     matched_project_ids: number[];
     include_external: boolean;
+    portal_upload_status?: {
+        required: boolean;
+        checked: boolean;
+        uploaded: boolean;
+        failed: boolean;
+        job_status: string | null;
+        uploaded_count: number;
+        message: string;
+    } | null;
     count: number;
     links: OrderAssetLink[];
 };
@@ -68,14 +77,18 @@ export default function OrderAssetLinks() {
 
         setLoading(true);
         setError(null);
+        const parsedProjectId = Number(projectIdFromQuery);
+        const requestedProjectId = Number.isFinite(parsedProjectId) && parsedProjectId > 0
+            ? parsedProjectId
+            : undefined;
 
         try {
-            const primary = await workflowService.orderAssetLinks(jobOrderId);
+            const primary = await workflowService.orderAssetLinks(jobOrderId, requestedProjectId);
             setData(primary.data);
             setBrokenImageIds({});
         } catch (primaryError) {
             try {
-                const fallback = await workflowService.orderImageLinks(jobOrderId);
+                const fallback = await workflowService.orderImageLinks(jobOrderId, requestedProjectId);
                 setData(fallback.data);
                 setBrokenImageIds({});
             } catch {
@@ -171,6 +184,7 @@ export default function OrderAssetLinks() {
     const matchedProjectIds = Array.isArray(data?.matched_project_ids)
         ? data?.matched_project_ids
         : [];
+    const portalStatus = data?.portal_upload_status;
 
     return (
         <AnimatedPage>
@@ -247,6 +261,37 @@ export default function OrderAssetLinks() {
             {error && (
                 <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-4 mb-5 text-sm">
                     {error}
+                </div>
+            )}
+
+            {portalStatus?.required && (
+                <div className={`rounded-xl border p-4 mb-5 ${
+                    portalStatus.uploaded
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : portalStatus.failed
+                            ? 'bg-rose-50 border-rose-200 text-rose-800'
+                            : portalStatus.checked
+                                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                            : 'bg-amber-50 border-amber-200 text-amber-800'
+                }`}>
+                    <div className="flex items-start justify-between gap-4">
+                        <div>
+                            <h2 className="text-sm font-semibold">Client Portal File Check</h2>
+                            <p className="text-sm mt-1">{portalStatus.message}</p>
+                        </div>
+                        <StatusBadge
+                            status={
+                                portalStatus.uploaded
+                                    ? 'uploaded'
+                                    : portalStatus.failed
+                                        ? 'failed'
+                                        : portalStatus.checked
+                                            ? 'not uploaded'
+                                            : 'check unavailable'
+                            }
+                            size="sm"
+                        />
+                    </div>
                 </div>
             )}
 

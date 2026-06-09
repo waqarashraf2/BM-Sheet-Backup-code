@@ -1456,7 +1456,7 @@ export default function WorkerDashboard() {
                                       onClick={() => openOrderAssetsPage(order)}
                                       icon={<ImageIcon className="h-3.5 w-3.5" />}
                                     >
-                                      Images
+                                      {order.project_id === 1 ? 'Files / Portal Check' : 'Images'}
                                     </Button>
                                   )}
                                 </div>
@@ -1578,7 +1578,7 @@ export default function WorkerDashboard() {
                         onClick={() => openOrderAssetsPage(currentOrder)}
                         icon={<ImageIcon className="h-4 w-4" />}
                       >
-                        View Images
+                        {currentOrder.project_id === 1 ? 'Files / Portal Check' : 'View Images'}
                       </Button>
                     )}
                     {canReject && (

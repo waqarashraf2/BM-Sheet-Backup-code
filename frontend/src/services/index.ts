@@ -139,12 +139,21 @@ export const workflowService = {
     api.get<{ work_items: WorkItem[] }>(`/workflow/work-items/${orderId}`),
 
   // Order assets/images by external job_order_id value (order_number or client order number)
-  orderAssetLinks: (jobOrderId: string) =>
+  orderAssetLinks: (jobOrderId: string, projectId?: number) =>
     api.get<{
       job_order_id: string;
       requested_project_id: number | null;
       matched_project_ids: number[];
       include_external: boolean;
+      portal_upload_status?: {
+        required: boolean;
+        checked: boolean;
+        uploaded: boolean;
+        failed: boolean;
+        job_status: string | null;
+        uploaded_count: number;
+        message: string;
+      } | null;
       count: number;
       links: Array<{
         source: string;
@@ -157,15 +166,26 @@ export const workflowService = {
         link_type: string;
         meta: Record<string, unknown> | null;
       }>;
-    }>(`/workflow/orders/links/${encodeURIComponent(jobOrderId)}`),
+    }>(`/workflow/orders/links/${encodeURIComponent(jobOrderId)}`, {
+      params: projectId ? { project_id: projectId } : undefined,
+    }),
 
   // Backward-compatible alias for order assets endpoint
-  orderImageLinks: (jobOrderId: string) =>
+  orderImageLinks: (jobOrderId: string, projectId?: number) =>
     api.get<{
       job_order_id: string;
       requested_project_id: number | null;
       matched_project_ids: number[];
       include_external: boolean;
+      portal_upload_status?: {
+        required: boolean;
+        checked: boolean;
+        uploaded: boolean;
+        failed: boolean;
+        job_status: string | null;
+        uploaded_count: number;
+        message: string;
+      } | null;
       count: number;
       links: Array<{
         source: string;
@@ -178,7 +198,9 @@ export const workflowService = {
         link_type: string;
         meta: Record<string, unknown> | null;
       }>;
-    }>(`/workflow/orders/images/${encodeURIComponent(jobOrderId)}`),
+    }>(`/workflow/orders/images/${encodeURIComponent(jobOrderId)}`, {
+      params: projectId ? { project_id: projectId } : undefined,
+    }),
 
   // Optional helper: submit to client portal (separate from internal submitWork)
   submitOrderToClientPortal: (jobOrderId: string, orderId?: number) =>
