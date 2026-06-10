@@ -21,7 +21,8 @@ const COUNTRY_TIMEZONES: Record<string, { value: string; label: string }[]> = {
     { value: 'Australia/Darwin', label: 'Darwin (ACST)' },
   ],
   UK: [
-    { value: 'Europe/London', label: 'London (GMT/BST)' },
+    { value: 'Etc/GMT', label: 'London GMT+0 (05:00 PKT)' },
+    { value: 'Etc/GMT-1', label: 'London GMT+1 (04:00 PKT)' },
   ],
   Canada: [
     { value: 'America/Toronto', label: 'Toronto (EST/EDT)' },

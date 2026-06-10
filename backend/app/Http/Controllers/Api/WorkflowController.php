@@ -19,6 +19,17 @@ use Illuminate\Support\Facades\Schema;
 
 class WorkflowController extends Controller
 {
+    private static array $tableExistsCache = [];
+
+    private static function tableExists(string $table): bool
+    {
+        if (!array_key_exists($table, self::$tableExistsCache)) {
+            self::$tableExistsCache[$table] = Schema::hasTable($table);
+        }
+
+        return self::$tableExistsCache[$table];
+    }
+
     // ═══════════════════════════════════════════
     // SMART POLLING — Lightweight change detection
     // ═══════════════════════════════════════════
@@ -42,12 +53,14 @@ class WorkflowController extends Controller
         $lastHash = $request->input('last_hash', '');
 
         // Determine which project IDs to check
-        $projectIds = $request->input('project_ids', []);
-        if (empty($projectIds)) {
-            // Auto-detect from user role
-            $projectIds = $this->resolveProjectIds($user);
-        }
-        $projectIds = array_map('intval', (array) $projectIds);
+        $allowedProjectIds = array_values(array_unique(array_map('intval', $this->resolveProjectIds($user))));
+        $requestedProjectIds = array_values(array_unique(array_filter(
+            array_map('intval', (array) $request->input('project_ids', [])),
+            fn (int $projectId) => $projectId > 0
+        )));
+        $projectIds = empty($requestedProjectIds)
+            ? $allowedProjectIds
+            : array_values(array_intersect($requestedProjectIds, $allowedProjectIds));
 
         $timestamps = [];
 
@@ -55,19 +68,21 @@ class WorkflowController extends Controller
         if (in_array($scope, ['orders', 'all'])) {
             foreach ($projectIds as $pid) {
                 $table = ProjectOrderService::getTableName($pid);
-                if (Schema::hasTable($table)) {
-                    $maxAt = DB::table($table)->max('updated_at');
-                    $count = DB::table($table)->count();
-                    $timestamps[] = "{$pid}:{$maxAt}:{$count}";
+                if (self::tableExists($table)) {
+                    $tableVersion = DB::table($table)
+                        ->selectRaw('MAX(updated_at) as max_updated_at, COUNT(*) as row_count')
+                        ->first();
+                    $timestamps[] = "{$pid}:{$tableVersion->max_updated_at}:{$tableVersion->row_count}";
                 }
             }
         }
 
         // Check users table
         if (in_array($scope, ['users', 'all'])) {
-            $maxUserAt = DB::table('users')->max('updated_at');
-            $userCount = DB::table('users')->where('is_active', true)->count();
-            $timestamps[] = "users:{$maxUserAt}:{$userCount}";
+            $userVersion = DB::table('users')
+                ->selectRaw('MAX(updated_at) as max_updated_at, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active_count')
+                ->first();
+            $timestamps[] = "users:{$userVersion->max_updated_at}:{$userVersion->active_count}";
         }
 
         $hash = md5(implode('|', $timestamps));
@@ -2418,12 +2433,18 @@ public function startTimer(Request $request, int $id)
             ? StateMachine::PH_STATES
             : StateMachine::FP_STATES;
 
+        $stateRows = Order::forProject($projectId)
+            ->selectRaw('workflow_state, COUNT(*) as state_count, MIN(received_at) as oldest_received_at')
+            ->groupBy('workflow_state')
+            ->get()
+            ->keyBy('workflow_state');
+
         $counts = [];
         foreach ($states as $state) {
-            $query = Order::forProject($projectId)->where('workflow_state', $state);
+            $stateRow = $stateRows->get($state);
             $counts[$state] = [
-                'count' => $query->count(),
-                'oldest' => $query->min('received_at'),
+                'count' => (int) ($stateRow->state_count ?? 0),
+                'oldest' => $stateRow->oldest_received_at ?? null,
             ];
         }
 
@@ -2434,17 +2455,18 @@ public function startTimer(Request $request, int $id)
             ->where('due_date', '<', now())
             ->count();
 
+        $totalPending = $stateRows
+            ->filter(fn ($row, $state) => $state !== null && !in_array($state, ['DELIVERED', 'CANCELLED'], true))
+            ->sum(fn ($row) => (int) $row->state_count);
+        $totalDelivered = (int) data_get($stateRows->get('DELIVERED'), 'state_count', 0);
+
         return response()->json([
             'project_id' => $projectId,
             'workflow_type' => $project->workflow_type,
             'state_counts' => $counts,
             'sla_breaches' => $slaBreaches,
-            'total_pending' => Order::forProject($projectId)
-                ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
-                ->count(),
-            'total_delivered' => Order::forProject($projectId)
-                ->where('workflow_state', 'DELIVERED')
-                ->count(),
+            'total_pending' => $totalPending,
+            'total_delivered' => $totalDelivered,
         ]);
     }
 
@@ -2457,13 +2479,19 @@ public function startTimer(Request $request, int $id)
         $project = Project::findOrFail($projectId);
 
         $stages = StateMachine::getStages($project->workflow_type);
+        $roles = array_values(array_unique(array_map(
+            fn (string $stage) => StateMachine::STAGE_TO_ROLE[$stage],
+            $stages
+        )));
+        $usersByRole = \App\Models\User::where('project_id', $projectId)
+            ->whereIn('role', $roles)
+            ->get(['id', 'name', 'role', 'team_id', 'is_active', 'is_absent', 'wip_count', 'today_completed', 'last_activity', 'daily_target'])
+            ->groupBy('role');
         $staffing = [];
 
         foreach ($stages as $stage) {
             $role = StateMachine::STAGE_TO_ROLE[$stage];
-            $users = \App\Models\User::where('project_id', $projectId)
-                ->where('role', $role)
-                ->get(['id', 'name', 'role', 'team_id', 'is_active', 'is_absent', 'wip_count', 'today_completed', 'last_activity', 'daily_target']);
+            $users = $usersByRole->get($role, collect());
 
             $staffing[$stage] = [
                 'role' => $role,

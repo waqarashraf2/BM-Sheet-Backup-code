@@ -385,7 +385,8 @@ const ProjectsView: React.FC = () => {
 
             // Build params based on filter type, including project_id
             const params: Record<string, string> = {
-                project_id: project.project_id.toString()
+                project_id: project.project_id.toString(),
+                detail_only: '1',
             };
 
             if (dateFilterType === 'single_date') {

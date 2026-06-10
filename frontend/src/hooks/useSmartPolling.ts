@@ -45,6 +45,7 @@ export function useSmartPolling({
   const errorCountRef = useRef(0);
   const currentIntervalRef = useRef(interval);
   const isVisibleRef = useRef(!document.hidden);
+  const isPollingRef = useRef(false);
   const onDataChangedRef = useRef(onDataChanged);
 
   // Keep callback ref up to date without re-creating interval
@@ -54,7 +55,9 @@ export function useSmartPolling({
 
   const poll = useCallback(async () => {
     // Skip if tab hidden or not authenticated
-    if (!isVisibleRef.current || !isAuthenticated) return;
+    if (!isVisibleRef.current || !isAuthenticated || isPollingRef.current) return;
+
+    isPollingRef.current = true;
 
     try {
       const { data } = await workflowService.checkUpdates({
@@ -92,6 +95,8 @@ export function useSmartPolling({
         MAX_INTERVAL
       );
       restartInterval();
+    } finally {
+      isPollingRef.current = false;
     }
   }, [isAuthenticated, projectIds.join(','), scope, interval]);
 

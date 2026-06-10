@@ -68,7 +68,9 @@ class ProjectController extends Controller
      */
     public function store(StoreProjectRequest $request)
     {
-        $project = Project::create($request->validated());
+        $data = $request->validated();
+        $data['timezone'] = trim((string) ($data['timezone'] ?? '')) ?: 'Asia/Karachi';
+        $project = Project::create($data);
 
         // Create per-project order table
         ProjectOrderService::createTableForProject($project);
@@ -108,7 +110,11 @@ class ProjectController extends Controller
         $project = Project::findOrFail($id);
         $oldValues = $project->toArray();
 
-        $project->update($request->validated());
+        $data = $request->validated();
+        if (array_key_exists('timezone', $data)) {
+            $data['timezone'] = trim((string) $data['timezone']) ?: 'Asia/Karachi';
+        }
+        $project->update($data);
 
         ActivityLog::log('updated_project', Project::class, $project->id, $oldValues, $project->toArray());
         \App\Services\AuditService::logProjectUpdated($project->id, $oldValues, $project->fresh()->toArray());

@@ -122,6 +122,7 @@ export default function SupervisorAssignment() {
   /* Filters */
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [selectedWorker, setSelectedWorker] = useState<number | null>(null);
@@ -162,6 +163,9 @@ export default function SupervisorAssignment() {
   const [projectTeams, setProjectTeams] = useState<Team[]>([]);
   const [contextMenu, setContextMenu] = useState<{ order: AssignmentOrder; x: number; y: number } | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<number | null>(null);
+  const activeDashboardRequestKeyRef = useRef<string | null>(null);
+  const latestDashboardRequestIdRef = useRef(0);
+  const dashboardFilterKeyRef = useRef<string | null>(null);
 
   const isProject16 = projectId === 16;
   const showTeamNameColumn = projectId != null && TEAM_NAME_COLUMN_PROJECT_IDS.includes(projectId);
@@ -219,21 +223,39 @@ export default function SupervisorAssignment() {
     }).catch(() => { });
   }, []);
 
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim());
+    }, 450);
+
+    return () => window.clearTimeout(timeout);
+  }, [searchQuery]);
+
   /* Main data loader */
   const loadData = useCallback(async (page = 1, isRefresh = false) => {
     if (!selectedQueue) return;
+    const params: any = { page, per_page: 100 };
+    if (statusFilter !== 'all' && statusFilter !== 'cancelled' && statusFilter !== 'unassigned' && statusFilter !== 'pending') {
+      params.status = statusFilter;
+    }
+    if (debouncedSearchQuery) params.search = debouncedSearchQuery;
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
+    if (selectedWorker) params.assigned_to = selectedWorker;
+    if (globalRoleSort) params.role_sort_by = globalRoleSort;
+
+    const requestKey = JSON.stringify([selectedQueue, params]);
+    if (activeDashboardRequestKeyRef.current === requestKey) return;
+
+    const requestId = latestDashboardRequestIdRef.current + 1;
+    latestDashboardRequestIdRef.current = requestId;
+    activeDashboardRequestKeyRef.current = requestKey;
+
     try {
       isRefresh ? setRefreshing(true) : setLoading(true);
-      const params: any = { page, per_page: 100 };
-      if (statusFilter !== 'all' && statusFilter !== 'cancelled' && statusFilter !== 'unassigned' && statusFilter !== 'pending') {
-        params.status = statusFilter;
-      }
-      if (searchQuery) params.search = searchQuery;
-      if (startDate) params.start_date = startDate;
-      if (endDate) params.end_date = endDate;
-      if (selectedWorker) params.assigned_to = selectedWorker;
-      if (globalRoleSort) params.role_sort_by = globalRoleSort;
       const res = await dashboardService.assignmentDashboard(selectedQueue, params);
+      if (requestId !== latestDashboardRequestIdRef.current) return;
+
       const d = res.data;
       const dashboardOrders = (d.orders?.data ?? []) as AssignmentOrder[];
       const nextProject = (d.project || {}) as {
@@ -304,22 +326,57 @@ export default function SupervisorAssignment() {
       setRoleCompletions(d.role_completions || {});
       setQueueInfo(d.queue || null);
       setProjectLabel(d.project ? `${d.project.name} (${d.project.country})` : '');
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); setRefreshing(false); }
-  }, [selectedQueue, shouldUseAssignmentPagination, statusFilter, searchQuery, startDate, endDate, selectedWorker, globalRoleSort]);
+    } catch (e) {
+      if (requestId === latestDashboardRequestIdRef.current) {
+        console.error(e);
+      }
+    } finally {
+      if (activeDashboardRequestKeyRef.current === requestKey) {
+        activeDashboardRequestKeyRef.current = null;
+      }
+      if (requestId === latestDashboardRequestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, [selectedQueue, statusFilter, debouncedSearchQuery, startDate, endDate, selectedWorker, globalRoleSort]);
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [selectedQueue, statusFilter, searchQuery, startDate, endDate, selectedWorker, globalRoleSort]);
+    const filterKey = JSON.stringify([
+      selectedQueue,
+      statusFilter,
+      debouncedSearchQuery,
+      startDate,
+      endDate,
+      selectedWorker,
+      globalRoleSort,
+    ]);
+    const filtersChanged = dashboardFilterKeyRef.current !== filterKey;
+    dashboardFilterKeyRef.current = filterKey;
 
-  useEffect(() => {
+    if (filtersChanged && currentPage !== 1) {
+      setCurrentPage(1);
+      return;
+    }
+
     loadData(currentPage);
-  }, [currentPage, loadData]);
+  }, [
+    currentPage,
+    debouncedSearchQuery,
+    endDate,
+    globalRoleSort,
+    loadData,
+    selectedQueue,
+    selectedWorker,
+    startDate,
+    statusFilter,
+  ]);
 
   /* Smart polling: auto-refresh when data changes */
   useSmartPolling({
+    projectIds: selectedQueueInfo?.projects?.map((project) => project.id) ?? [],
     scope: 'orders',
-    interval: 45_000,
+    interval: 90_000,
     onDataChanged: () => loadData(currentPage, true),
     enabled: !!selectedQueue,
   });

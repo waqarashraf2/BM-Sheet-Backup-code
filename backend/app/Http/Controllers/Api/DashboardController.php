@@ -12,22 +12,20 @@ use App\Services\StateMachine;
 use App\Services\ProjectOrderService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class DashboardController extends Controller
 {
+    private const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
+    private const ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE = 'Asia/Karachi';
     private const ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS = [
         16 => 2,
         2  => 0,  // Project 2 (Focal PB) stores due_in as naive UTC; +5h converts to PKT for frontend
     ];
     // Projects whose due_in column stores naive UTC timestamps (not PKT)
     private const BATCH_STATUS_UTC_DUE_IN_PROJECT_IDS = [2, 5];
-    // Intentionally empty: received_at is stored in PKT for all projects.
-    // Timezone-offset filtering shifts date boundaries and causes wrong counts.
-    // Only project 16 has special handling (see buildAssignmentDashboardProject16Range).
-    private const ASSIGNMENT_DASHBOARD_TIMEZONE_PROJECT_IDS = [];
-    private const ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS = [1, 3, 16, 12, 19];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS = [1, 3,];
     private const ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE = 100;
 
@@ -1219,6 +1217,10 @@ if ($request->query('date')) {
         $startDate = $request->query('start_date', $request->input('start_date'));
         $endDate = $request->query('end_date', $request->input('end_date'));
         $selectedProjectId = $request->query('project_id');
+        $selectedProjectId = is_numeric($selectedProjectId) && (int) $selectedProjectId > 0
+            ? (int) $selectedProjectId
+            : null;
+        $detailOnly = $selectedProjectId !== null && $request->boolean('detail_only');
         $selectedRole = strtolower(trim((string) $request->query('role', $request->input('role', ''))));
         $selectedRole = in_array($selectedRole, ['drawer', 'designer', 'checker', 'qa', 'filler'], true) ? $selectedRole : null;
 
@@ -1241,10 +1243,74 @@ if ($request->query('date')) {
         $dateFormatted = \Carbon\Carbon::parse($startDate)->format('d-m-Y');
         $endDateFormatted = \Carbon\Carbon::parse($endDate)->format('d-m-Y');
 
+        $selectedProject = $selectedProjectId !== null
+            ? Project::where('status', 'active')->find($selectedProjectId)
+            : null;
+
+        if ($selectedProject) {
+            $selectedWorkflowType = $selectedProject->workflow_type ?? 'FP_3_LAYER';
+
+            if ($selectedWorkflowType === 'PH_2_LAYER' && $selectedRole === 'drawer') {
+                $selectedRole = 'designer';
+            } elseif ($selectedWorkflowType !== 'PH_2_LAYER' && $selectedRole === 'designer') {
+                $selectedRole = 'drawer';
+            }
+        }
+
         // Cache key includes date range, selected project and role
-        $cacheKey = 'ceo_pstats:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0') . ':' . ($selectedRole ?? 'all');
+        $cacheKey = 'ceo_pstats:v2:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0')
+            . ':' . ($selectedRole ?? 'all') . ':' . ($detailOnly ? 'detail' : 'summary');
         if (\Illuminate\Support\Facades\Cache::has($cacheKey)) {
             return response()->json(\Illuminate\Support\Facades\Cache::get($cacheKey));
+        }
+
+        if ($detailOnly) {
+            $breakdown = $selectedProject
+                ? $this->buildProjectDoneBreakdown($selectedProjectId, $startDate, $endDate, $selectedRole)
+                : [
+                    'project_id' => $selectedProjectId,
+                    'project_name' => null,
+                    'selected_date' => $startDate,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                    'date_filter_type' => $dateFilterType,
+                    'selected_role' => $selectedRole,
+                    'total_received_done_orders' => 0,
+                    'total_done_orders' => 0,
+                    'roles' => [],
+                ];
+
+            $responseData = [
+                'success' => true,
+                'selected_date' => $startDate,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'date_filter_type' => $dateFilterType,
+                'selected_role' => $selectedRole,
+                'totals' => [
+                    'total_projects' => $selectedProject ? 1 : 0,
+                    'raw_total_projects' => $selectedProject ? 1 : 0,
+                    'country_count' => $selectedProject ? 1 : 0,
+                    'received_orders_today' => 0,
+                    'received_done_orders' => 0,
+                    'done_orders' => 0,
+                    'delayed_pending_orders' => 0,
+                    'delayed_done_orders' => 0,
+                    'delayed_orders' => 0,
+                    'total_staff' => 0,
+                    'present_staff' => 0,
+                    'absent_staff' => 0,
+                    'online_staff' => 0,
+                ],
+                'online_users' => [],
+                'projects' => [],
+                'countries' => [],
+                'selected_project_breakdown' => $breakdown,
+            ];
+
+            \Illuminate\Support\Facades\Cache::put($cacheKey, $responseData, 60);
+
+            return response()->json($responseData);
         }
 
         $applyTimestampRange = function ($query, string $column) use ($startDate, $endDate) {
@@ -1281,19 +1347,10 @@ if ($request->query('date')) {
 
         $nowTs = now()->toDateTimeString();
 
-        $projects = Project::where('status', 'active')->get();
+        $projects = Project::where('status', 'active')
+            ->when($selectedProjectId !== null, fn ($query) => $query->whereKey($selectedProjectId))
+            ->get();
         $projectIds = $projects->pluck('id')->toArray();
-
-        if ($selectedProjectId) {
-            $selectedProject = $projects->firstWhere('id', (int) $selectedProjectId);
-            $selectedWorkflowType = $selectedProject?->workflow_type ?? 'FP_3_LAYER';
-
-            if ($selectedWorkflowType === 'PH_2_LAYER' && $selectedRole === 'drawer') {
-                $selectedRole = 'designer';
-            } elseif ($selectedWorkflowType !== 'PH_2_LAYER' && $selectedRole === 'designer') {
-                $selectedRole = 'drawer';
-            }
-        }
 
         // Separate project 16 from others
         $otherProjectIds = array_filter($projectIds, fn($id) => $id != 16);
@@ -4028,6 +4085,85 @@ $userCounts = User::whereIn('project_id', $projectIds)
     public function assignmentDashboard(Request $request, string $queueName)
     {
         $user = $request->user();
+        $accessScope = match ($user->role) {
+            'ceo', 'director' => [],
+            'operations_manager', 'project_manager' => $user->getManagedProjectIds(),
+            'qa', 'live_qa' => [$user->project_id],
+            default => [$user->id],
+        };
+        $accessScope = array_values(array_unique(array_map('intval', array_filter($accessScope))));
+        sort($accessScope);
+
+        $queryParams = $request->query();
+        unset($queryParams['_'], $queryParams['cache_bust']);
+        $this->sortAssignmentDashboardCacheParams($queryParams);
+
+        $cacheKey = 'assignment_dashboard:v2:' . sha1(json_encode([
+            'queue' => urldecode($queueName),
+            'role' => $user->role,
+            'scope' => $accessScope,
+            'query' => $queryParams,
+        ]));
+
+        try {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                return response()->json($cached);
+            }
+        } catch (\Throwable $e) {
+            // Cache failure must never block the live dashboard.
+        }
+
+        $lock = null;
+        try {
+            $lock = Cache::lock($cacheKey . ':lock', 15);
+            if (!$lock->get()) {
+                for ($attempt = 0; $attempt < 10; $attempt++) {
+                    usleep(100000);
+                    $cached = Cache::get($cacheKey);
+                    if (is_array($cached)) {
+                        return response()->json($cached);
+                    }
+                }
+                $lock = null;
+            } else {
+                $cached = Cache::get($cacheKey);
+                if (is_array($cached)) {
+                    $lock->release();
+                    return response()->json($cached);
+                }
+            }
+        } catch (\Throwable $e) {
+            $lock = null;
+        }
+
+        try {
+            $response = $this->buildAssignmentDashboardResponse($request, $queueName);
+
+            if ($response->getStatusCode() === 200) {
+                $responseData = $response->getData(true);
+                try {
+                    Cache::put($cacheKey, $responseData, now()->addSeconds(5));
+                } catch (\Throwable $e) {
+                    // Fall back to the uncached response when the cache store is unavailable.
+                }
+            }
+
+            return $response;
+        } finally {
+            if ($lock) {
+                try {
+                    $lock->release();
+                } catch (\Throwable $e) {
+                    // The response is still valid if releasing the cache lock fails.
+                }
+            }
+        }
+    }
+
+    private function buildAssignmentDashboardResponse(Request $request, string $queueName)
+    {
+        $user = $request->user();
         $queueName = urldecode($queueName);
 
         // ─── Find all projects in this queue ───
@@ -4132,7 +4268,7 @@ $endDate = $request->input('end_date');
         $roleSortColumn = $roleSortableColumns[$roleSortByInput] ?? null;
         $roleSortColumnFromSortBy = $roleSortableColumns[$sortByInput] ?? null;
         $effectiveRoleSortColumn = $roleSortColumn ?? $roleSortColumnFromSortBy;
-        $shouldPaginateOrders = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_PAGINATED_PROJECT_IDS));
+        $shouldPaginateOrders = true;
         $hasSpecialPriorityProjects = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS));
         $isDateRangeSelection = !empty($startDate) && !empty($endDate)
             && Carbon::parse($startDate)->toDateString() !== Carbon::parse($endDate)->toDateString();
@@ -4164,8 +4300,42 @@ $endDate = $request->input('end_date');
             'it_datetime',
         ];
 
-        // Build a UNION of all project tables
-        $rawUnion = $this->buildQueueUnionQuery($projectIds, $selectCols, $optionalCols);
+        // Push the received_at range into each project SELECT so MySQL can use
+        // per-table indexes before building the UNION. The outer date filter
+        // remains in place as a correctness guard.
+        $appTimezone = config('app.timezone');
+        $genericRange = $this->buildAssignmentDashboardGenericRange(
+            $startDate,
+            $endDate,
+            $dateFilter,
+            $appTimezone
+        );
+        $projectReceivedAtRanges = [];
+        foreach ($projects as $project) {
+            $projectReceivedAtRanges[(int) $project->id] =
+                $this->buildAssignmentDashboardProjectRange(
+                    $project,
+                    $startDate,
+                    $endDate,
+                    $dateFilter,
+                    $appTimezone
+                ) ?? $genericRange;
+        }
+
+        // Keep an unfiltered UNION for the independent seven-day summary.
+        $rawUnionForDateStats = $this->buildQueueUnionQuery(
+            $projectIds,
+            $selectCols,
+            $optionalCols
+        );
+
+        // Build a date-filtered UNION for the current sheet and worker metrics.
+        $rawUnion = $this->buildQueueUnionQuery(
+            $projectIds,
+            $selectCols,
+            $optionalCols,
+            $projectReceivedAtRanges
+        );
 
         // Overlay CRM assignments (survives external cron truncation of project tables)
         // LEFT JOIN crm_order_assignments and COALESCE to prefer CRM values
@@ -4198,24 +4368,23 @@ $endDate = $request->input('end_date');
             . "qo.received_at, qo.delivered_at, qo.created_at "
             . "FROM ({$rawUnion}) as qo "
             . "LEFT JOIN crm_order_assignments coa ON qo.project_id = coa.project_id AND qo.order_number = coa.order_number";
+        $unionQueryForDateStats = str_replace($rawUnion, $rawUnionForDateStats, $unionQuery);
 
-        // Build live worker metrics from queue/order data instead of stale user counters.
-        // Scope to selected date/date range when provided; otherwise default to current day.
-        $appTimezone = config('app.timezone');
+        // Work item timestamps keep their existing application-timezone behavior.
         if ($startDate || $endDate) {
             if ($startDate && $endDate) {
-                $workerDateStart = \Carbon\Carbon::parse($startDate, $appTimezone)->startOfDay();
-                $workerDateEnd = \Carbon\Carbon::parse($endDate, $appTimezone)->endOfDay();
+                $workerDateStart = Carbon::parse($startDate, $appTimezone)->startOfDay();
+                $workerDateEnd = Carbon::parse($endDate, $appTimezone)->endOfDay();
             } elseif ($startDate) {
-                $workerDateStart = \Carbon\Carbon::parse($startDate, $appTimezone)->startOfDay();
+                $workerDateStart = Carbon::parse($startDate, $appTimezone)->startOfDay();
                 $workerDateEnd = now($appTimezone)->endOfDay();
             } else {
                 $workerDateStart = now($appTimezone)->startOfDay();
-                $workerDateEnd = \Carbon\Carbon::parse($endDate, $appTimezone)->endOfDay();
+                $workerDateEnd = Carbon::parse($endDate, $appTimezone)->endOfDay();
             }
         } elseif ($dateFilter) {
-            $workerDateStart = \Carbon\Carbon::parse($dateFilter, $appTimezone)->startOfDay();
-            $workerDateEnd = \Carbon\Carbon::parse($dateFilter, $appTimezone)->endOfDay();
+            $workerDateStart = Carbon::parse($dateFilter, $appTimezone)->startOfDay();
+            $workerDateEnd = Carbon::parse($dateFilter, $appTimezone)->endOfDay();
         } else {
             $workerDateStart = now($appTimezone)->startOfDay();
             $workerDateEnd = now($appTimezone)->endOfDay();
@@ -4272,25 +4441,6 @@ $endDate = $request->input('end_date');
                 ->groupBy('assigned_user_id')
                 ->pluck('cnt', 'assigned_user_id');
         }
-
-        $drawerWipByWorker = DB::table(DB::raw("({$unionQuery}) as queue_orders"))
-            ->whereNotNull('drawer_id')
-            ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
-            ->where(function ($q) {
-                $q->whereNull('drawer_done')
-                  ->orWhere('drawer_done', '!=', 'yes');
-            })
-            ->selectRaw('drawer_id as worker_id, COUNT(*) as wip_count')
-            ->groupBy('drawer_id')
-            ->pluck('wip_count', 'worker_id');
-        $this->applyAssignmentDashboardDateFilter(
-            DB::table(DB::raw("({$unionQuery}) as queue_orders")),
-            $projects,
-            $projectIds,
-            $dateFilter,
-            $startDate,
-            $endDate
-        );
 
         $drawerWipByWorkerQuery = DB::table(DB::raw("({$unionQuery}) as queue_orders"))
             ->whereNotNull('drawer_id')
@@ -4542,6 +4692,24 @@ if ($useDueInFirstOrdering) {
                 ->orderBy('id', 'asc');
         }
 
+        $priorityCountsRow = (clone $query)->selectRaw("
+            COUNT(*) as total_count,
+            SUM(CASE WHEN priority = 'normal' THEN 1 ELSE 0 END) as normal_count,
+            SUM(CASE WHEN priority = 'high' THEN 1 ELSE 0 END) as high_count,
+            SUM(CASE WHEN priority = 'priority' THEN 1 ELSE 0 END) as priority_count,
+            SUM(CASE WHEN priority IN ('urgent', 'rush') THEN 1 ELSE 0 END) as urgent_count
+        ")->first();
+
+        $total = (int) ($priorityCountsRow->total_count ?? 0);
+        $normalPriorityCount = (int) ($priorityCountsRow->normal_count ?? 0);
+        $highPriorityCount = (int) ($priorityCountsRow->high_count ?? 0);
+        $priorityPriorityCount = (int) ($priorityCountsRow->priority_count ?? 0);
+        $urgentPriorityCount = (int) ($priorityCountsRow->urgent_count ?? 0);
+
+        if ($shouldPaginateOrders) {
+            $orderedQuery->forPage($page, $perPage);
+        }
+
         $orders = $orderedQuery->get();
 
         $assignmentCommentMap = $this->buildAssignmentDashboardCommentMap($orders);
@@ -4568,23 +4736,7 @@ if ($useDueInFirstOrdering) {
             return $order;
         });
 
-        $total = $orders->count();
-
-        $ordersResponseData = $shouldPaginateOrders
-            ? $orders->forPage($page, $perPage)->values()
-            : $orders;
-
-        $priorityCountsRow = (clone $query)->selectRaw("
-            SUM(CASE WHEN priority = 'normal' THEN 1 ELSE 0 END) as normal_count,
-            SUM(CASE WHEN priority = 'high' THEN 1 ELSE 0 END) as high_count,
-            SUM(CASE WHEN priority = 'priority' THEN 1 ELSE 0 END) as priority_count,
-            SUM(CASE WHEN priority IN ('urgent', 'rush') THEN 1 ELSE 0 END) as urgent_count
-        ")->first();
-
-        $normalPriorityCount = (int) ($priorityCountsRow->normal_count ?? 0);
-        $highPriorityCount = (int) ($priorityCountsRow->high_count ?? 0);
-        $priorityPriorityCount = (int) ($priorityCountsRow->priority_count ?? 0);
-        $urgentPriorityCount = (int) ($priorityCountsRow->urgent_count ?? 0);
+        $ordersResponseData = $orders->values();
 
         // ─── 3. Counts (single aggregation query instead of 6 separate queries) ───
         $baseQ = DB::table(DB::raw("({$unionQuery}) as queue_orders"));
@@ -4614,7 +4766,8 @@ if ($useDueInFirstOrdering) {
             SUM(CASE WHEN amend = 'yes' THEN 1 ELSE 0 END) as amends,
             SUM(CASE WHEN assigned_to IS NOT NULL AND workflow_state NOT IN ('DELIVERED','CANCELLED') THEN 1 ELSE 0 END) as assigned,
             SUM(CASE WHEN drawer_id IS NULL AND workflow_state NOT IN ('DELIVERED','CANCELLED') THEN 1 ELSE 0 END) as unassigned,
-            SUM(CASE WHEN workflow_state LIKE '%REJECT%' THEN 1 ELSE 0 END) as rejected
+            SUM(CASE WHEN workflow_state LIKE '%REJECT%' THEN 1 ELSE 0 END) as rejected,
+            SUM(CASE WHEN workflow_state = 'PENDING_BY_DRAWER' THEN 1 ELSE 0 END) as pending_by_drawer
         ")->first();
 
         $todayTotal = (int) ($countsRow->total ?? 0);
@@ -4624,12 +4777,13 @@ if ($useDueInFirstOrdering) {
         $assignedCount = (int) ($countsRow->assigned ?? 0);
         $unassignedCount = (int) ($countsRow->unassigned ?? 0);
         $rejectedCount = (int) ($countsRow->rejected ?? 0);
+        $pendingByDrawerCount = (int) ($countsRow->pending_by_drawer ?? 0);
 
         // ─── 4. Date-wise summary (last 7 days) — 2 bulk queries instead of 42+ ───
         $sevenDaysAgo = today()->subDays(6)->toDateString();
 
         // Received stats by date — single query with conditional aggregation
-        $receivedByDate = DB::table(DB::raw("({$unionQuery}) as queue_orders"))
+        $receivedByDate = DB::table(DB::raw("({$unionQueryForDateStats}) as queue_orders"))
             ->where('received_at', '>=', $sevenDaysAgo)
             ->selectRaw("
                 DATE(received_at) as the_date,
@@ -4648,7 +4802,7 @@ if ($useDueInFirstOrdering) {
             ->keyBy('the_date');
 
         // Delivered stats by date — separate query since it uses delivered_at
-        $deliveredByDate = DB::table(DB::raw("({$unionQuery}) as queue_orders"))
+        $deliveredByDate = DB::table(DB::raw("({$unionQueryForDateStats}) as queue_orders"))
             ->where('workflow_state', 'DELIVERED')
             ->where('delivered_at', '>=', $sevenDaysAgo)
             ->selectRaw('DATE(delivered_at) as the_date, COUNT(*) as cnt')
@@ -4707,10 +4861,6 @@ if ($useDueInFirstOrdering) {
             ];
         }
 
-        $pendingByDrawerCount = (clone $baseQ)
-    ->where('workflow_state', 'PENDING_BY_DRAWER')
-    ->count();
-
         // ─── Build queue info for response ───
         $queueInfo = [
             'queue_name' => $queueName,
@@ -4737,7 +4887,7 @@ if ($useDueInFirstOrdering) {
             $counts['priority_priority'] = $priorityPriorityCount;
         }
 
-        return response()->json([
+        $responseData = [
             'queue' => $queueInfo,
             // Keep backward compat: 'project' key returns first project info
             'project' => $primaryProject->only(['id', 'code', 'name', 'country', 'department', 'workflow_type', 'timezone']),
@@ -4752,7 +4902,9 @@ if ($useDueInFirstOrdering) {
             'counts' => $counts,
             'date_stats' => $dateStats,
             'role_completions' => $roleCompletions,
-        ]);
+        ];
+
+        return response()->json($this->sanitizeAssignmentDashboardJson($responseData));
     }
 
  
@@ -4768,7 +4920,12 @@ if ($useDueInFirstOrdering) {
      * Each project has its own table (project_{id}_orders), so no project_id filter needed.
      * We override project_id in SELECT to ensure correctness (imported data may have legacy IDs).
      */
-    private function buildQueueUnionQuery(array $projectIds, string $selectCols, array $optionalCols = []): string
+    private function buildQueueUnionQuery(
+        array $projectIds,
+        string $selectCols,
+        array $optionalCols = [],
+        array $receivedAtRanges = []
+    ): string
     {
         $parts = [];
         foreach ($projectIds as $pid) {
@@ -4784,7 +4941,10 @@ if ($useDueInFirstOrdering) {
                         $cols .= ", NULL as {$optCol}";
                     }
                 }
-                $parts[] = "SELECT {$cols} FROM `{$tableName}`";
+                $rangeSql = isset($receivedAtRanges[(int) $pid])
+                    ? $this->buildAssignmentDashboardRangeSql($receivedAtRanges[(int) $pid])
+                    : '';
+                $parts[] = "SELECT {$cols} FROM `{$tableName}`{$rangeSql}";
             }
         }
         if (empty($parts)) {
@@ -4797,6 +4957,41 @@ if ($useDueInFirstOrdering) {
             return "SELECT {$fallbackCols} FROM `{$firstTable}` WHERE 1=0";
         }
         return implode(' UNION ALL ', $parts);
+    }
+
+    private function buildAssignmentDashboardRangeSql(array $range): string
+    {
+        $type = $range['type'] ?? 'between';
+        $quote = fn ($value) => DB::connection()->getPdo()->quote(
+            $value instanceof \DateTimeInterface
+                ? $value->format('Y-m-d H:i:s')
+                : (string) $value
+        );
+
+        if ($type === 'start') {
+            return ' WHERE `received_at` >= ' . $quote($range['start']);
+        }
+
+        if ($type === 'end') {
+            return ' WHERE `received_at` <= ' . $quote($range['end']);
+        }
+
+        return ' WHERE `received_at` BETWEEN '
+            . $quote($range['start'])
+            . ' AND '
+            . $quote($range['end']);
+    }
+
+    private function sortAssignmentDashboardCacheParams(array &$params): void
+    {
+        ksort($params);
+
+        foreach ($params as &$value) {
+            if (is_array($value)) {
+                $this->sortAssignmentDashboardCacheParams($value);
+            }
+        }
+        unset($value);
     }
 
     private function applyAssignmentDashboardDateFilter(
@@ -4897,75 +5092,66 @@ if ($useDueInFirstOrdering) {
         ?string $dateFilter,
         string $appTimezone
     ): ?array {
-        $projectId = (int) $project->id;
+        $projectTimezone = $this->resolveAssignmentDashboardProjectTimezone($project->timezone);
+        $storageTimezone = self::ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE;
+        $toStorageTimezone = fn (Carbon $date) => $date->setTimezone($storageTimezone);
 
-        if ($projectId === 16) {
-            return $this->buildAssignmentDashboardProject16Range($startDate, $endDate, $dateFilter, $appTimezone);
-        }
-
-        // All non-project-16 projects use PKT (generic range) for every date case.
-        // received_at is stored in PKT, so any timezone offset produces wrong counts.
-        return null;
-    }
-
-    private function buildAssignmentDashboardProject16Range(
-        ?string $startDate,
-        ?string $endDate,
-        ?string $dateFilter,
-        string $appTimezone
-    ): array {
         if ($startDate || $endDate) {
             if ($startDate && $endDate) {
                 return [
                     'type' => 'between',
-                    'start' => \Carbon\Carbon::parse($startDate, 'Asia/Karachi')
-                        ->subDay()
-                        ->setTime(22, 0, 0)
-                        ->setTimezone($appTimezone),
-                    'end' => \Carbon\Carbon::parse($endDate, 'Asia/Karachi')
-                        ->setTime(22, 0, 0)
-                        ->setTimezone($appTimezone),
+                    'start' => $toStorageTimezone(Carbon::parse($startDate, $projectTimezone)->startOfDay()),
+                    'end' => $toStorageTimezone(Carbon::parse($endDate, $projectTimezone)->endOfDay()),
                 ];
             }
 
             if ($startDate) {
                 return [
                     'type' => 'start',
-                    'start' => \Carbon\Carbon::parse($startDate, 'Asia/Karachi')
-                        ->subDay()
-                        ->setTime(22, 0, 0)
-                        ->setTimezone($appTimezone),
+                    'start' => $toStorageTimezone(Carbon::parse($startDate, $projectTimezone)->startOfDay()),
                 ];
             }
 
             return [
                 'type' => 'end',
-                'end' => \Carbon\Carbon::parse($endDate, 'Asia/Karachi')
-                    ->setTime(22, 0, 0)
-                    ->setTimezone($appTimezone),
+                'end' => $toStorageTimezone(Carbon::parse($endDate, $projectTimezone)->endOfDay()),
             ];
         }
 
         if ($dateFilter) {
-            $selectedDate = \Carbon\Carbon::parse($dateFilter, 'Asia/Karachi');
+            $selectedDate = Carbon::parse($dateFilter, $projectTimezone);
 
             return [
                 'type' => 'between',
-                'start' => $selectedDate->copy()->subDay()->setTime(22, 0, 0)->setTimezone($appTimezone),
-                'end' => $selectedDate->copy()->setTime(22, 0, 0)->setTimezone($appTimezone),
+                'start' => $toStorageTimezone($selectedDate->copy()->startOfDay()),
+                'end' => $toStorageTimezone($selectedDate->copy()->endOfDay()),
             ];
         }
 
-        $pkNow = now('Asia/Karachi');
-        $windowAnchor = $pkNow->hour >= 22
-            ? $pkNow->copy()->addDay()
-            : $pkNow->copy();
+        $projectNow = now($projectTimezone);
 
         return [
             'type' => 'between',
-            'start' => $windowAnchor->copy()->subDay()->setTime(22, 0, 0)->setTimezone($appTimezone),
-            'end' => $windowAnchor->copy()->setTime(22, 0, 0)->setTimezone($appTimezone),
+            'start' => $toStorageTimezone($projectNow->copy()->startOfDay()),
+            'end' => $toStorageTimezone($projectNow->copy()->endOfDay()),
         ];
+    }
+
+    private function resolveAssignmentDashboardProjectTimezone(?string $timezone): string
+    {
+        $timezone = trim((string) $timezone);
+
+        if ($timezone === '') {
+            return self::DEFAULT_PROJECT_TIMEZONE;
+        }
+
+        try {
+            new \DateTimeZone($timezone);
+
+            return $timezone;
+        } catch (\Throwable $e) {
+            return self::DEFAULT_PROJECT_TIMEZONE;
+        }
     }
 
     private function applyAssignmentDashboardRangeConstraint($query, array $range): void
@@ -5123,10 +5309,43 @@ if ($useDueInFirstOrdering) {
         }
 
         if (is_numeric($area)) {
-            return (float) $area;
+            $numericArea = (float) $area;
+
+            return is_finite($numericArea) ? $numericArea : $area;
         }
 
         return $area;
+    }
+
+    private function sanitizeAssignmentDashboardJson($value)
+    {
+        if (is_float($value)) {
+            return is_finite($value) ? $value : null;
+        }
+
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                $value[$key] = $this->sanitizeAssignmentDashboardJson($item);
+            }
+
+            return $value;
+        }
+
+        if ($value instanceof \Illuminate\Support\Collection) {
+            return $value->map(fn ($item) => $this->sanitizeAssignmentDashboardJson($item));
+        }
+
+        if ($value instanceof \JsonSerializable) {
+            return $this->sanitizeAssignmentDashboardJson($value->jsonSerialize());
+        }
+
+        if (is_object($value)) {
+            foreach (get_object_vars($value) as $key => $item) {
+                $value->{$key} = $this->sanitizeAssignmentDashboardJson($item);
+            }
+        }
+
+        return $value;
     }
 
     private function extractImageCountFromAssignmentComment(?string $comments, string $label): ?int
@@ -5158,3 +5377,4 @@ if ($useDueInFirstOrdering) {
         };
     }
 }
+
