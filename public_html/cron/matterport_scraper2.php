@@ -461,7 +461,7 @@ function rowToRecord(array $row): array
     // TODO: revisit at DST changeover (Oct 2026) — set back to 0 when UK is on GMT.
     $dueIn        = parseDateTime($dueDateRaw);
     if ($dueIn) {
-        $dueIn = (new DateTime($dueIn))->modify('+1 hour')->format('Y-m-d H:i:s');
+        $dueIn = (new DateTime($dueIn))->modify('+0 hour')->format('Y-m-d H:i:s');
     }
     $dueIn        = $dueIn ?: ($dueDateRaw ?: null);
 
