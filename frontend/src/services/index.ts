@@ -55,7 +55,10 @@ export const workflowService = {
   startNext: () => api.post<{ order: Order; message: string }>('/workflow/start-next'),
 
   // Worker: Get current assigned order
-  myCurrent: () => api.get<{ order: Order | null }>('/workflow/my-current'),
+  myCurrent: (options?: { includePaused?: boolean }) =>
+    api.get<{ order: Order | null }>('/workflow/my-current', {
+      params: options?.includePaused === false ? { include_paused: 0 } : undefined,
+    }),
 
   // Worker: Get queue of orders assigned to worker
   getQueue: () => api.get<{ orders: Order[] }>('/workflow/my-queue'),
@@ -83,7 +86,10 @@ export const workflowService = {
     api.post<{ order: Order; message: string }>(`/workflow/orders/${orderId}/submit`, { comments }),
 
   // Worker: My daily stats
-  myStats: () => api.get<{ today_completed: number; daily_target: number; wip_count: number; queue_count: number; is_absent: boolean }>('/workflow/my-stats'),
+  myStats: (options?: { includeQueueCount?: boolean }) =>
+    api.get<{ today_completed: number; daily_target: number; wip_count: number; queue_count: number; is_absent: boolean }>('/workflow/my-stats', {
+      params: options?.includeQueueCount === false ? { include_queue_count: 0 } : undefined,
+    }),
 
   // Worker: Reassign order back to queue
   reassignToQueue: (orderId: number, reason?: string) =>
@@ -817,7 +823,7 @@ export const liveQAService = {
 
   // GET /live-qa/orders/{projectId} - Orders ready for Live QA per layer (legacy)
   getOrders: (projectId: number, params: Record<string, any> = {}) =>
-    api.get<LiveQAWorkerOrdersResponse>(`/live-qa/orders/${projectId}?debug=true`, { params }),
+    api.get<LiveQAWorkerOrdersResponse>(`/live-qa/orders/${projectId}`, { params }),
 
   // ─── Review Workflow ────────────────────────────────────────────────────
   // GET /live-qa/review/{projectId}/{orderNumber}/{layer} - Fetch review checklist
@@ -838,7 +844,7 @@ export const liveQAService = {
   // ─── Reports & Analytics ───────────────────────────────────────────────
   // GET /live-qa/stats/{projectId} - QA stats (optional layer filter)
   getStats: (projectId: number, layer?: string, params: Record<string, any> = {}) =>
-    api.get<LiveQAStats>(`/live-qa/stats/${projectId}?debug=true`, {
+    api.get<LiveQAStats>(`/live-qa/stats/${projectId}`, {
       params: {
         ...(layer ? { layer } : {}),
         ...params,
@@ -847,11 +853,11 @@ export const liveQAService = {
 
   // GET /live-qa/mistake-summary/{projectId}/{layer} - Mistake summary by team/worker
   getMistakeSummary: (projectId: number, layer: string, params: Record<string, any> = {}) =>
-    api.get<MistakeSummaryResponse>(`/live-qa/mistake-summary/${projectId}/${layer}?debug=true`, { params }),
+    api.get<MistakeSummaryResponse>(`/live-qa/mistake-summary/${projectId}/${layer}`, { params }),
 
   // ─── Internal QA ─────────────────────────────────────────────────────────
   getInternalQaOrders: (projectId: number, params: Record<string, any> = {}) =>
-    api.get<{ success: boolean; data: any[]; pagination: any }>(`/live-qa/internal-qa/orders/${projectId}`, { params: { ...params, debug: true } }),
+    api.get<{ success: boolean; data: any[]; pagination: any }>(`/live-qa/internal-qa/orders/${projectId}`, { params }),
 
   getInternalQaReview: (projectId: number, orderNumber: string) =>
     api.get<any>(`/live-qa/internal-qa/review/${projectId}/${encodeURIComponent(String(orderNumber))}`),

@@ -19,6 +19,10 @@ class AuditService
         ?array $before = null,
         ?array $after = null
     ): ActivityLog {
+        if (!config('audit.enabled', false)) {
+            return new ActivityLog();
+        }
+
         return ActivityLog::create([
             'user_id'     => $actorId ?? Auth::id(),
             'action'      => $action,

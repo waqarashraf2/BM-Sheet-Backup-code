@@ -616,9 +616,6 @@ export default function LiveQADashboard() {
       console.error('❌ Cannot open review modal - missing parameters:', { orderNumber, layer });
       return;
     }
-    console.log('🎯 Opening review modal:', { orderNumber, layer, projectId: selectedProject });
-    console.log('🎯 Order number type:', typeof orderNumber, 'value:', JSON.stringify(orderNumber));
-    console.log('🎯 Layer type:', typeof layer, 'value:', JSON.stringify(layer));
     setReviewModal({ open: true, orderNumber, layer });
   };
 
@@ -1220,7 +1217,6 @@ export default function LiveQADashboard() {
                               {hasDrawerDone ? (
                                 <button
                                   onClick={() => {
-                                    console.log('🖱️ Drawer review button clicked:', { order, orderNumber: order?.order_number });
                                     if (!order?.order_number) {
                                       console.error('❌ Order number is missing:', order);
                                       return;
@@ -1264,7 +1260,6 @@ export default function LiveQADashboard() {
                               {hasCheckerDone ? (
                                 <button
                                   onClick={() => {
-                                    console.log('🖱️ Checker review button clicked:', { order, orderNumber: order?.order_number });
                                     if (!order?.order_number) {
                                       console.error('❌ Order number is missing:', order);
                                       return;
@@ -1307,7 +1302,6 @@ export default function LiveQADashboard() {
                               {order.qa_name ? (
                                 <button
                                   onClick={() => {
-                                    console.log('🖱️ QA review button clicked:', { order, orderNumber: order?.order_number });
                                     if (!order?.order_number) {
                                       console.error('❌ Order number is missing:', order);
                                       return;
@@ -1351,7 +1345,6 @@ export default function LiveQADashboard() {
                                 {checklistLayer && (
                                   <button
                                     onClick={() => {
-                                      console.log('🖱️ Checklist review button clicked:', { order, orderNumber: order?.order_number, checklistLayer });
                                       if (!order?.order_number) {
                                         console.error('❌ Order number is missing:', order);
                                         return;

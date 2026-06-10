@@ -4,7 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use App\Models\UserSession;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnforceSingleSession
@@ -31,12 +31,30 @@ class EnforceSingleSession
             }
         }
 
-        // Update last activity
-        $session = UserSession::where('user_id', $user->id)->first();
-        if ($session) {
-            $session->update(['last_activity' => now()]);
+        // Activity timestamps are informational, so avoid two writes on every
+        // authenticated API request. Query-builder updates also leave
+        // users.updated_at unchanged, preventing polling hashes from changing
+        // because of heartbeat traffic.
+        $activityCutoff = now()->subMinute();
+        if (!$user->last_activity || $user->last_activity->lt($activityCutoff)) {
+            $activityTime = now();
+
+            DB::table('user_sessions')
+                ->where('user_id', $user->id)
+                ->where(function ($query) use ($activityCutoff) {
+                    $query->whereNull('last_activity')
+                        ->orWhere('last_activity', '<', $activityCutoff);
+                })
+                ->update(['last_activity' => $activityTime]);
+
+            DB::table('users')
+                ->where('id', $user->id)
+                ->where(function ($query) use ($activityCutoff) {
+                    $query->whereNull('last_activity')
+                        ->orWhere('last_activity', '<', $activityCutoff);
+                })
+                ->update(['last_activity' => $activityTime]);
         }
-        $user->update(['last_activity' => now()]);
 
         return $next($request);
     }

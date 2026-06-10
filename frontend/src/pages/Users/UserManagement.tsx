@@ -87,9 +87,7 @@ export default function UserManagement() {
     try {
       setLoadingTeams(true);
       const res = await projectService.teams(Number(pid));
-      console.log('[Teams] raw response for project', pid, res.data);
       const t = res.data?.data || res.data;
-      console.log('[Teams] parsed teams:', t);
       setFormTeams(Array.isArray(t) ? t : []);
     } catch (e: any) {
       console.error('[Teams] fetch failed for project', pid, e?.response?.status, e?.response?.data || e?.message);

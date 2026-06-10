@@ -49,6 +49,10 @@ class ActivityLog extends Model
      */
     public static function log($action, $modelType = null, $modelId = null, $oldValues = null, $newValues = null)
     {
+        if (!config('audit.enabled', false)) {
+            return new static();
+        }
+
         return static::create([
             'user_id' => auth()->id(),
             'action' => $action,

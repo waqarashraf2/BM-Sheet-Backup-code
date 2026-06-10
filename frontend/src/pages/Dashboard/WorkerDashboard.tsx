@@ -435,8 +435,8 @@ export default function WorkerDashboard() {
   const loadCritical = useCallback(async () => {
     try {
       const promises: Promise<any>[] = [
-        workflowService.myStats(),
-        workflowService.myCurrent(),
+        workflowService.myStats({ includeQueueCount: false }),
+        workflowService.myCurrent({ includePaused: false }),
       ];
       // Checkers & QA: also fetch full queue so we can show all assigned orders
       if (isQueueWorker) {
@@ -503,21 +503,26 @@ export default function WorkerDashboard() {
 
       // Determine if order is already started (timer running or time spent)
       if (apiOrder) {
-        try {
-          const detailsRes = await workflowService.orderFullDetails(apiOrder.id);
+        const workflowState = apiOrder.workflow_state || '';
 
-          if (
-            detailsRes.data?.timer_running ||
-            (detailsRes.data?.current_time_seconds ?? 0) > 0
-          ) {
-            setOrderStarted(true);
-            setCurrentOrder(apiOrder); // ensure restore after refresh
-          }
-        } catch {
-          const ws = apiOrder.workflow_state || '';
-          if (ws.startsWith('IN_')) {
-            setOrderStarted(true);
-            setCurrentOrder(apiOrder);
+        if (workflowState.startsWith('IN_')) {
+          setOrderStarted(true);
+          setCurrentOrder(apiOrder);
+        } else {
+          try {
+            const detailsRes = await workflowService.orderFullDetails(apiOrder.id);
+
+            if (
+              detailsRes.data?.timer_running ||
+              (detailsRes.data?.current_time_seconds ?? 0) > 0
+            ) {
+              setOrderStarted(true);
+              setCurrentOrder(apiOrder); // ensure restore after refresh
+            } else {
+              setOrderStarted(false);
+            }
+          } catch {
+            setOrderStarted(false);
           }
         }
       } else {
@@ -567,8 +572,9 @@ export default function WorkerDashboard() {
 
   /* ── Smart Polling: only reload critical data when data changes ── */
   useSmartPolling({
-    scope: 'all',
-    interval: 45_000, // 60 seconds
+    projectIds: user?.project?.id ? [user.project.id] : [],
+    scope: 'orders',
+    interval: 45_000,
     onDataChanged: loadCritical,
     enabled: !showDrawerForm && !showCheckerForm && !showFillerForm && !showQAForm && !showDesignerForm,
   });
@@ -590,7 +596,7 @@ export default function WorkerDashboard() {
         // Protect manual assignment from polling override for 5 seconds
         setManualOrderAssigned(true);
         setManualOrderTimestamp(Date.now());
-        loadData();
+        loadCritical();
       }
     } catch (e) { console.error(e); }
     finally { setAutoAssigning(false); }

@@ -38,9 +38,6 @@ function getChecklistMatchKey(item: Partial<ReviewChecklistItem>): string {
 
 export default function LiveQAChecklistModal({ open, onClose, projectId, orderNumber, layer, onSaved, isInternalQa = false }: Props) {
   const user = useSelector((state: RootState) => state.auth.user);
-  console.log('📋 Modal props received:', { open, projectId, orderNumber, layer });
-  console.log('📋 Order number type:', typeof orderNumber, 'value:', JSON.stringify(orderNumber));
-  console.log('📋 Layer type:', typeof layer, 'value:', JSON.stringify(layer));
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -81,12 +78,8 @@ export default function LiveQAChecklistModal({ open, onClose, projectId, orderNu
   // comments (text_value) and mistake counts (count_value)
   const fetchReview = useCallback(async () => {
     if (!open || !orderNumber || !layer) {
-      console.log('🚫 Skipping fetch - missing params:', { open, orderNumber, layer });
       return;
     }
-
-    console.log('🔍 Fetching review:', { projectId, orderNumber, layer });
-    console.log('📡 API URL will be:', `/live-qa/review/${projectId}/${orderNumber}/${layer}`);
 
     setLoading(true);
     setError('');
@@ -238,9 +231,6 @@ export default function LiveQAChecklistModal({ open, onClose, projectId, orderNu
           text_value: item.text_value || '',
         })),
       };
-
-      console.log('💾 Submitting review:', { projectId, orderNumber, layer });
-      console.log('📤 Payload:', payload);
 
       const res = isInternalQa
         ? await liveQAService.submitInternalQaReview(projectId, orderNumber, payload)
