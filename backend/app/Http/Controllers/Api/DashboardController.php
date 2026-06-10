@@ -5094,27 +5094,34 @@ if ($useDueInFirstOrdering) {
     ): ?array {
         $projectTimezone = $this->resolveAssignmentDashboardProjectTimezone($project->timezone);
         $storageTimezone = self::ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE;
-        $toStorageTimezone = fn (Carbon $date) => $date->setTimezone($storageTimezone);
+        // received_at is stored as the project's local wall-clock value.
+        // Preserve that date/time while attaching the DB storage timezone;
+        // converting the instant would move orders into a different local day.
+        $toStoredLocalTime = fn (Carbon $date) => Carbon::createFromFormat(
+            'Y-m-d H:i:s',
+            $date->format('Y-m-d H:i:s'),
+            $storageTimezone
+        );
 
         if ($startDate || $endDate) {
             if ($startDate && $endDate) {
                 return [
                     'type' => 'between',
-                    'start' => $toStorageTimezone(Carbon::parse($startDate, $projectTimezone)->startOfDay()),
-                    'end' => $toStorageTimezone(Carbon::parse($endDate, $projectTimezone)->endOfDay()),
+                    'start' => $toStoredLocalTime(Carbon::parse($startDate, $projectTimezone)->startOfDay()),
+                    'end' => $toStoredLocalTime(Carbon::parse($endDate, $projectTimezone)->endOfDay()),
                 ];
             }
 
             if ($startDate) {
                 return [
                     'type' => 'start',
-                    'start' => $toStorageTimezone(Carbon::parse($startDate, $projectTimezone)->startOfDay()),
+                    'start' => $toStoredLocalTime(Carbon::parse($startDate, $projectTimezone)->startOfDay()),
                 ];
             }
 
             return [
                 'type' => 'end',
-                'end' => $toStorageTimezone(Carbon::parse($endDate, $projectTimezone)->endOfDay()),
+                'end' => $toStoredLocalTime(Carbon::parse($endDate, $projectTimezone)->endOfDay()),
             ];
         }
 
@@ -5123,8 +5130,8 @@ if ($useDueInFirstOrdering) {
 
             return [
                 'type' => 'between',
-                'start' => $toStorageTimezone($selectedDate->copy()->startOfDay()),
-                'end' => $toStorageTimezone($selectedDate->copy()->endOfDay()),
+                'start' => $toStoredLocalTime($selectedDate->copy()->startOfDay()),
+                'end' => $toStoredLocalTime($selectedDate->copy()->endOfDay()),
             ];
         }
 
@@ -5132,8 +5139,8 @@ if ($useDueInFirstOrdering) {
 
         return [
             'type' => 'between',
-            'start' => $toStorageTimezone($projectNow->copy()->startOfDay()),
-            'end' => $toStorageTimezone($projectNow->copy()->endOfDay()),
+            'start' => $toStoredLocalTime($projectNow->copy()->startOfDay()),
+            'end' => $toStoredLocalTime($projectNow->copy()->endOfDay()),
         ];
     }
 
