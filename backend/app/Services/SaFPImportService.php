@@ -82,9 +82,9 @@ class SaFPImportService
                 $queuedClientPortalIds[$clientPortalId] = true;
 
                 // TIME RULES
-                // processing_date / processing_at -> received_at
+                // Store the client portal processing_at value exactly as received.
                 // conduct_date -> created_at
-                $receivedAt = $this->resolveReceivedAt($task, $nowPK);
+                $receivedAt = $this->resolveReceivedAt($task);
 
                 // Skip records that have no received_at — only import tasks with a real date
                 if ($receivedAt === null) {
@@ -210,42 +210,40 @@ class SaFPImportService
         return null;
     }
 
-    private function resolveReceivedAt(array $task, DateTime $fallback): ?DateTime
+    private function resolveReceivedAt(array $task): ?DateTime
     {
-        $pkt = new DateTimeZone('Asia/Karachi');
-        $processingValue = $task['processing_date'] ?? $task['processing_at'] ?? null;
+        $processingValue = $task['processing_at'] ?? null;
 
         if (!empty($processingValue)) {
             try {
-                // API returns UTC timestamps (Z-suffix). Convert to PKT so DATE() comparisons work.
-                $dt = new DateTime($processingValue);
-                $dt->setTimezone($pkt);
-                return $dt;
+                // Keep the API's date and time unchanged (for example 17:05:40 stays 17:05:40).
+                return new DateTime($processingValue);
             } catch (Exception $exception) {
-                Log::warning('Project12 Import Invalid processing date', [
+                Log::warning('Project12 Import Invalid processing_at', [
                     'client_portal_id' => $task['id'] ?? null,
-                    'processing_date'  => $task['processing_date'] ?? null,
                     'processing_at'    => $task['processing_at'] ?? null,
                     'message'          => $exception->getMessage(),
                 ]);
             }
         }
 
-        // Try conduct_date as secondary source
-        if (!empty($task['conduct_date'])) {
+        foreach (['processing_date', 'conduct_date'] as $fallbackField) {
+            if (empty($task[$fallbackField])) {
+                continue;
+            }
+
             try {
-                $dt = new DateTime($task['conduct_date']);
-                $dt->setTimezone($pkt);
-                return $dt;
+                return new DateTime($task[$fallbackField]);
             } catch (Exception $exception) {
-                Log::warning('Project12 Import Invalid conduct_date for received_at', [
+                Log::warning("Project12 Import Invalid {$fallbackField} for received_at", [
                     'client_portal_id' => $task['id'] ?? null,
-                    'conduct_date'     => $task['conduct_date'],
+                    $fallbackField     => $task[$fallbackField],
                     'message'          => $exception->getMessage(),
                 ]);
             }
         }
 
+        // Never replace the client portal received time with a current timestamp.
         // No valid date found — return null so the caller can skip this record
         return null;
     }

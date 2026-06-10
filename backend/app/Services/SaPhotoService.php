@@ -235,33 +235,25 @@ class SaPhotoService
 
     private function resolveReceivedAt(array $task, DateTime $fallback): DateTime
     {
-        if (empty($task['processing_at']) && empty($task['conduct_date'])) {
-            return clone $fallback;
-        }
-
-        $pkt = new DateTimeZone('Asia/Karachi');
-
-        try {
-            if (!empty($task['processing_at'])) {
-                // API returns UTC timestamps (Z-suffix). Convert to PKT so date filters work correctly.
-                $dt = new DateTime($task['processing_at']);
-                $dt->setTimezone($pkt);
-                return $dt;
+        foreach (['processing_at', 'conduct_date'] as $field) {
+            if (empty($task[$field])) {
+                continue;
             }
 
-            $dt = new DateTime($task['conduct_date']);
-            $dt->setTimezone($pkt);
-            return $dt;
-        } catch (Exception $exception) {
-            Log::warning('Project19 Photo Import Invalid received_at date', [
-                'client_portal_id' => $task['id'] ?? null,
-                'processing_at' => $task['processing_at'] ?? null,
-                'conduct_date' => $task['conduct_date'] ?? null,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return clone $fallback;
+            try {
+                // Preserve the client portal's date and time exactly; do not shift timezones.
+                return new DateTime($task[$field]);
+            } catch (Exception $exception) {
+                Log::warning("Project19 Photo Import Invalid {$field} for received_at", [
+                    'client_portal_id' => $task['id'] ?? null,
+                    $field => $task[$field],
+                    'message' => $exception->getMessage(),
+                ]);
+            }
         }
+
+        // Keep the order importable even when the portal sends no usable timestamp.
+        return clone $fallback;
     }
 
     private function resolveCreatedAt(array $task, DateTime $fallback): DateTime
