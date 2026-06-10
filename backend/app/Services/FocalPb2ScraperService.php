@@ -43,37 +43,13 @@ class FocalPb2ScraperService
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Backfill: heal existing rows that have NULL due_in
+    // due_in must come from the portal's Date Due value. It cannot be safely
+    // reconstructed from received_at because the portal deadline is independent.
     // ─────────────────────────────────────────────────────────────────────────
 
     private function backfillDueIn(): int
     {
-        $idsToBackfill = DB::table($this->table)
-            ->whereNull('due_in')
-            ->whereNotNull('received_at')
-            ->orderByDesc('id')
-            ->limit(10)
-            ->pluck('id')
-            ->all();
-
-        $count = count($idsToBackfill);
-
-        if ($count === 0) {
-            return 0;
-        }
-
-        Log::channel('daily')->info("FocalPb2: Backfilling due_in for latest {$count} existing row(s) with NULL due_in");
-
-        $backfilled = DB::table($this->table)
-            ->whereIn('id', $idsToBackfill)
-            ->update([
-                'due_in' => DB::raw("DATE_FORMAT(DATE_ADD(`received_at`, INTERVAL 5 HOUR), '%Y-%m-%d %H:%i:%s')"),
-                'updated_at' => now(),
-            ]);
-
-        Log::channel('daily')->info("FocalPb2: Backfilled due_in for {$backfilled} row(s)");
-
-        return $backfilled;
+        return 0;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -474,11 +450,11 @@ class FocalPb2ScraperService
             ]);
         }
 
-        $dueIn = $this->calculateDueInFromReceivedAt($receivedAt);
-        if ($dueIn === null) {
-            $dueIn = $this->formatDueInForVarchar(
-                (new DateTime($receivedAt, new \DateTimeZone('UTC')))->modify('+5 hours')
-            );
+        // Match the standalone scraper: preserve the exact Date Due clock value
+        // displayed by the client portal. Do not derive or timezone-shift it.
+        $dueIn = $this->parseDateTime($dueDateRaw);
+        if ($dueIn === null && $dueDateRaw !== null && trim($dueDateRaw) !== '') {
+            $dueIn = $this->formatDueInForVarcharValue(trim($dueDateRaw));
         }
 
         $mappedKeys  = ['Id', 'ID', 'Job Id', 'JobID', 'Order Number', 'Order No', 'Name', 'Job Name', 'Address', 'Property Address', 'Job Type', 'Type', 'Project Type', 'Date Received', 'Received', 'Created', 'Date Due', 'Due Date', 'Due', 'Time Left', 'Remaining Time'];
@@ -607,34 +583,12 @@ class FocalPb2ScraperService
     {
         $dt = $this->parsePortalDateTime($raw);
 
-        return $dt ? $dt->setTimezone(new \DateTimeZone('Asia/Karachi'))->format('Y-m-d') : null;
+        return $dt ? $dt->format('Y-m-d') : null;
     }
 
-    private function calculateDueInFromReceivedAt(?string $receivedAt): ?string
+    private function formatDueInForVarcharValue(string $value): ?string
     {
-        if (!$receivedAt) {
-            return null;
-        }
-
-        try {
-            // Treat the stored portal clock value as neutral, then add exactly five hours.
-            $dt = new DateTime($receivedAt, new \DateTimeZone('UTC'));
-            $dt->modify('+5 hours');
-
-            return $this->formatDueInForVarchar($dt);
-        } catch (\Throwable $e) {
-            Log::warning('FocalPb2: Failed to calculate due_in from received_at', [
-                'received_at' => $receivedAt,
-                'error' => $e->getMessage(),
-            ]);
-
-            return null;
-        }
-    }
-
-    private function formatDueInForVarchar(DateTime $dt): ?string
-    {
-        $value = $dt->format('Y-m-d H:i:s');
+        $value = trim($value);
 
         // due_in is VARCHAR(255); persist as a stable datetime-like string.
         if ($value === '' || strlen($value) > 255) {
