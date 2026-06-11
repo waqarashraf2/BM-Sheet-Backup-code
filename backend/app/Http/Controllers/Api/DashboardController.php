@@ -228,10 +228,10 @@ if ($request->query('date')) {
                     'received_time_full' => $minReceived->format('h:i:s A'),
                     'remaining_minutes' => $minRemaining,
                     'remaining_time' =>
-                        floor($minDueDuration / 60) . 'h ' .
-                        ($minDueDuration % 60) . 'm - ' .
-                        floor($maxDueDuration / 60) . 'h ' .
-                        ($maxDueDuration % 60) . 'm',
+                        floor($minRemaining / 60) . 'h ' .
+                        ($minRemaining % 60) . 'm - ' .
+                        floor($maxRemaining / 60) . 'h ' .
+                        ($maxRemaining % 60) . 'm',
                     'plans' => $items->count(),
                     'done' => $items->where('workflow_state', 'DELIVERED')->count(),
                     'pending' => $items->filter(
