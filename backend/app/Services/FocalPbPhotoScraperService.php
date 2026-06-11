@@ -673,10 +673,9 @@ class FocalPbPhotoScraperService
                     continue;
                 }
 
-                $dt->modify('+1 hour');
                 return $dt->format('Y-m-d H:i:s');
             } catch (\Throwable $e) {
-                Log::warning('FocalPbPhoto: Failed to parse and adjust due_in datetime', [
+                Log::warning('FocalPbPhoto: Failed to parse due_in datetime', [
                     'raw_value' => $raw,
                     'format' => $format,
                     'error' => $e->getMessage(),

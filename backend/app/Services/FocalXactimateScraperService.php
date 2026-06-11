@@ -495,7 +495,6 @@ class FocalXactimateScraperService
         }
 
         $dt = new DateTime($parsed);
-        $dt->modify('+1 hour');
 
         return $dt->format('Y-m-d H:i:s');
     }
