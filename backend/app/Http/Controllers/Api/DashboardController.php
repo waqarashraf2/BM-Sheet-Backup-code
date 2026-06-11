@@ -20,6 +20,8 @@ class DashboardController extends Controller
 {
     private const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
     private const ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE = 'Asia/Karachi';
+    private const ASSIGNMENT_DASHBOARD_VIETNAM_PROJECT_ID = 16;
+    private const ASSIGNMENT_DASHBOARD_VIETNAM_TIMEZONE = 'Asia/Ho_Chi_Minh';
     private const ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS = [
         16 => 2,
         2  => 0,  // Project 2 (Focal PB) stores due_in as naive UTC; +5h converts to PKT for frontend
@@ -5092,8 +5094,18 @@ if ($useDueInFirstOrdering) {
         ?string $dateFilter,
         string $appTimezone
     ): ?array {
-        $projectTimezone = $this->resolveAssignmentDashboardProjectTimezone($project->timezone);
         $storageTimezone = self::ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE;
+
+        if ((int) $project->id === self::ASSIGNMENT_DASHBOARD_VIETNAM_PROJECT_ID) {
+            return $this->buildAssignmentDashboardVietnamRange(
+                $startDate,
+                $endDate,
+                $dateFilter,
+                $storageTimezone
+            );
+        }
+
+        $projectTimezone = $this->resolveAssignmentDashboardProjectTimezone($project->timezone);
         // received_at is stored as the project's local wall-clock value.
         // Preserve that date/time while attaching the DB storage timezone;
         // converting the instant would move orders into a different local day.
@@ -5141,6 +5153,48 @@ if ($useDueInFirstOrdering) {
             'type' => 'between',
             'start' => $toStoredLocalTime($projectNow->copy()->startOfDay()),
             'end' => $toStoredLocalTime($projectNow->copy()->endOfDay()),
+        ];
+    }
+
+    private function buildAssignmentDashboardVietnamRange(
+        ?string $startDate,
+        ?string $endDate,
+        ?string $dateFilter,
+        string $storageTimezone
+    ): array {
+        $vietnamTimezone = self::ASSIGNMENT_DASHBOARD_VIETNAM_TIMEZONE;
+        $toStoredTime = fn (Carbon $date) => $date->copy()->setTimezone($storageTimezone);
+
+        if ($startDate || $endDate) {
+            if ($startDate && $endDate) {
+                return [
+                    'type' => 'between',
+                    'start' => $toStoredTime(Carbon::parse($startDate, $vietnamTimezone)->startOfDay()),
+                    'end' => $toStoredTime(Carbon::parse($endDate, $vietnamTimezone)->endOfDay()),
+                ];
+            }
+
+            if ($startDate) {
+                return [
+                    'type' => 'start',
+                    'start' => $toStoredTime(Carbon::parse($startDate, $vietnamTimezone)->startOfDay()),
+                ];
+            }
+
+            return [
+                'type' => 'end',
+                'end' => $toStoredTime(Carbon::parse($endDate, $vietnamTimezone)->endOfDay()),
+            ];
+        }
+
+        $selectedDate = $dateFilter
+            ? Carbon::parse($dateFilter, $vietnamTimezone)
+            : now($vietnamTimezone);
+
+        return [
+            'type' => 'between',
+            'start' => $toStoredTime($selectedDate->copy()->startOfDay()),
+            'end' => $toStoredTime($selectedDate->copy()->endOfDay()),
         ];
     }
 

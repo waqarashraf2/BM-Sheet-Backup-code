@@ -3062,12 +3062,14 @@ public function startTimer(Request $request, int $id)
             : Order::findOrFailGlobal($id);
         $drawerUser = \App\Models\User::findOrFail($request->input('drawer_user_id'));
 
-        // QA supervisor can assign, or management
+        // QA/checker supervisors can assign their team's drawer, as can management.
         $isQASupervisor = $actor->role === 'qa' && $order->qa_supervisor_id === $actor->id;
+        $isAssignedChecker = $actor->role === 'checker'
+            && self::isOrderAssignedToUser($order, $actor);
         $isManagement = in_array($actor->role, ['operations_manager', 'director', 'ceo']);
         
-        if (!$isQASupervisor && !$isManagement) {
-            return response()->json(['message' => 'Only the assigned QA supervisor or management can assign to drawers.'], 403);
+        if (!$isQASupervisor && !$isAssignedChecker && !$isManagement) {
+            return response()->json(['message' => 'Only the assigned QA/checker supervisor or management can assign to drawers.'], 403);
         }
 
         // Verify drawer user role
@@ -3076,7 +3078,7 @@ public function startTimer(Request $request, int $id)
         }
 
         // Verify order state
-        if (!in_array($order->workflow_state, ['PENDING_QA_REVIEW', 'QUEUED_DRAW', 'REJECTED_BY_CHECK'])) {
+        if (!in_array($order->workflow_state, ['RECEIVED', 'PENDING_QA_REVIEW', 'QUEUED_DRAW', 'IN_DRAW', 'REJECTED_BY_CHECK'])) {
             return response()->json(['message' => 'Order cannot be assigned to drawer from its current state.'], 422);
         }
 
@@ -3239,7 +3241,7 @@ public function qaTeamMembers(Request $request)
         }
 
         $page    = max((int) $request->input('page', 1), 1);
-        $perPage = min((int) $request->input('per_page', 50), 200);
+        $perPage = min((int) $request->input('per_page', 200), 200);
 
         if (!$user->project_id) {
             return response()->json([
@@ -3249,27 +3251,99 @@ public function qaTeamMembers(Request $request)
             ]);
         }
 
-        $checkerStates = ['QUEUED_CHECK', 'IN_CHECK', 'QUEUED_QA', 'IN_QA', 'QUEUED_FILLER', 'IN_FILLER'];
+        // A checker can be assigned before drawing starts. Pull every active
+        // draw/check stage order across the checker's queue and overlay the
+        // durable CRM assignment, which survives external project-table sync.
+        $checkerStates = [
+            'RECEIVED', 'PENDING_QA_REVIEW',
+            'QUEUED_DRAW', 'IN_DRAW', 'PENDING_BY_DRAWER', 'SUBMITTED_DRAW',
+            'QUEUED_CHECK', 'IN_CHECK', 'REJECTED_BY_CHECK',
+        ];
+        $projectIds = self::queueProjectIdsForUser($user);
+        $crmAssignments = DB::table('crm_order_assignments')
+            ->whereIn('project_id', $projectIds)
+            ->where('checker_id', $user->id)
+            ->get()
+            ->keyBy(fn ($assignment) => ((int) $assignment->project_id) . ':' . $assignment->order_number);
 
-        $baseQuery = Order::forProject($user->project_id)
-            ->where('checker_supervisor_id', $user->id)
-            ->whereIn('workflow_state', $checkerStates);
+        $orders = collect();
 
-        $pendingCount    = (clone $baseQuery)->whereNull('checker_id')->count();
-        $inProgressCount = (clone $baseQuery)->whereIn('workflow_state', ['IN_CHECK'])->count();
+        foreach ($projectIds as $projectId) {
+            $table = ProjectOrderService::getTableName((int) $projectId);
+            if (!Schema::hasTable($table)) {
+                continue;
+            }
 
-        $paginated = $baseQuery
-            ->with(['project', 'team', 'assignedUser'])
-            ->orderBy('priority', 'desc')
-            ->orderBy('created_at', 'asc')
-            ->paginate($perPage, ['*'], 'page', $page);
+            $crmOrderNumbers = $crmAssignments
+                ->filter(fn ($assignment) => (int) $assignment->project_id === (int) $projectId)
+                ->pluck('order_number')
+                ->values();
+
+            $projectOrders = Order::forProject((int) $projectId)
+                ->where(function ($query) use ($user, $table, $crmOrderNumbers) {
+                    $query->where('checker_id', $user->id);
+
+                    if (Schema::hasColumn($table, 'checker_supervisor_id')) {
+                        $query->orWhere('checker_supervisor_id', $user->id);
+                    }
+
+                    if ($crmOrderNumbers->isNotEmpty()) {
+                        $query->orWhereIn('order_number', $crmOrderNumbers);
+                    }
+                })
+                ->with(['project', 'team', 'assignedUser'])
+                ->get();
+
+            foreach ($projectOrders as $order) {
+                $crm = $crmAssignments->get(((int) $projectId) . ':' . $order->order_number);
+
+                if ($crm) {
+                    foreach ([
+                        'assigned_to', 'drawer_id', 'drawer_name', 'checker_id', 'checker_name',
+                        'workflow_state', 'dassign_time', 'cassign_time', 'drawer_done',
+                        'checker_done', 'drawer_date', 'checker_date',
+                    ] as $column) {
+                        if (isset($crm->{$column}) && $crm->{$column} !== '') {
+                            $order->setAttribute($column, $crm->{$column});
+                        }
+                    }
+                }
+
+                $effectiveState = (string) ($order->workflow_state ?? '');
+                $checkerIsDone = strtolower(trim((string) ($order->checker_done ?? ''))) === 'yes';
+
+                if (in_array($effectiveState, $checkerStates, true) && !$checkerIsDone) {
+                    $orders->push($order);
+                }
+            }
+        }
+
+        $orders = $orders
+            ->sortBy([
+                [fn ($order) => match (strtolower((string) ($order->priority ?? 'normal'))) {
+                    'urgent', 'rush' => 0,
+                    'high' => 1,
+                    'normal' => 2,
+                    'low' => 3,
+                    default => 4,
+                }, 'asc'],
+                ['created_at', 'asc'],
+            ])
+            ->values();
+
+        $total = $orders->count();
+        $pageOrders = $orders->forPage($page, $perPage)->values();
+        $pendingCount = $orders->filter(
+            fn ($order) => empty($order->drawer_id) && empty($order->drawer_name)
+        )->count();
+        $inProgressCount = $orders->whereIn('workflow_state', ['QUEUED_CHECK', 'IN_CHECK'])->count();
 
         return response()->json([
-            'orders'             => $paginated->items(),
-            'current_page'       => $paginated->currentPage(),
-            'per_page'           => $paginated->perPage(),
-            'total'              => $paginated->total(),
-            'last_page'          => $paginated->lastPage(),
+            'orders'             => $pageOrders,
+            'current_page'       => $page,
+            'per_page'           => $perPage,
+            'total'              => $total,
+            'last_page'          => max(1, (int) ceil($total / $perPage)),
             'pending_assignment' => $pendingCount,
             'in_progress'        => $inProgressCount,
         ]);
@@ -3287,17 +3361,25 @@ public function qaTeamMembers(Request $request)
             return response()->json(['message' => 'Only checker supervisors can access this endpoint.'], 403);
         }
 
-        $members = \App\Models\User::where('project_id', $user->project_id)
-            ->where('team_id', $user->team_id)
-            ->where('role', 'checker')
+        // Return the full active drawer pool for this project. The frontend
+        // uses is_own_team to separate regular members from guest drawers
+        // assigned from another team.
+        $drawers = \App\Models\User::where('project_id', $user->project_id)
+            ->where('role', 'drawer')
             ->where('is_active', true)
             ->select(['id', 'name', 'email', 'role', 'team_id', 'wip_count', 'wip_limit', 'today_completed', 'is_absent'])
+            ->orderByRaw('CASE WHEN team_id = ? THEN 0 ELSE 1 END', [$user->team_id])
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->map(function ($drawer) use ($user) {
+                $drawer->setAttribute('is_own_team', (int) $drawer->team_id === (int) $user->team_id);
+                return $drawer;
+            })
+            ->values();
 
         return response()->json([
-            'checkers' => $members,
-            'total'    => $members->count(),
+            'drawers' => $drawers,
+            'total'   => $drawers->count(),
         ]);
     }
 
@@ -3605,6 +3687,8 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
     DB::transaction(function () use ($order, $user, $cols, $actor, $role, $targetState) {
 
         $oldAssignedTo = $order->assigned_to;
+        $drawerIsDone = strtolower(trim((string) ($order->drawer_done ?? ''))) === 'yes';
+        $isCheckerPreAssignment = $role === 'checker' && !$drawerIsDone;
 
         // =========================
         // ALWAYS UPDATE ASSIGNMENT
@@ -3612,8 +3696,18 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
         $updates = [
             $cols['id_col']   => $user->id,
             $cols['name_col'] => $user->name,
-            'assigned_to'     => $user->id, // 🔥 FIXED (CRITICAL)
         ];
+
+        // Checker can be reserved before drawing starts without becoming the
+        // active worker or advancing the order past the drawer.
+        if (!$isCheckerPreAssignment) {
+            $updates['assigned_to'] = $user->id;
+        }
+
+        if ($role === 'checker' && Schema::hasColumn($order->getTable(), 'checker_supervisor_id')) {
+            $updates['checker_supervisor_id'] = $user->id;
+        }
+
         if ($role === 'filler') {
             $updates['current_layer'] = 'filler';
         } elseif ($role === 'designer') {
@@ -3631,7 +3725,7 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
 
         // If role is changed, move to the role's working state even when currently IN_*.
         // This prevents checker->drawer reassignment from staying in IN_CHECK.
-        if ($currentState !== $targetState) {
+        if (!$isCheckerPreAssignment && $currentState !== $targetState) {
             $updates['workflow_state'] = $targetState;
             $updates['status'] = 'in-progress';
             $updates['started_at'] = now();
@@ -3642,7 +3736,7 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
         // =========================
         // WIP MANAGEMENT (ALWAYS ON REASSIGN)
         // =========================
-        if ($oldAssignedTo && (int)$oldAssignedTo !== (int)$user->id) {
+        if (!$isCheckerPreAssignment && $oldAssignedTo && (int)$oldAssignedTo !== (int)$user->id) {
 
             \App\Models\User::where('id', $oldAssignedTo)
                 ->where('wip_count', '>', 0)
@@ -3663,14 +3757,16 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
         // =========================
         // UPDATE WORK ITEMS (🔥 VERY IMPORTANT)
         // =========================
-// Only update assigned_user_id, keep timers intact
-\App\Models\WorkItem::where('order_id', $order->id)
-    ->where('project_id', $order->project_id)
-    ->where('assigned_user_id', $oldAssignedTo)
-    ->where('status', 'in_progress')
-    ->update([
-        'assigned_user_id' => $user->id,
-    ]);
+        if (!$isCheckerPreAssignment) {
+            // Only update assigned_user_id, keep timers intact.
+            \App\Models\WorkItem::where('order_id', $order->id)
+                ->where('project_id', $order->project_id)
+                ->where('assigned_user_id', $oldAssignedTo)
+                ->where('status', 'in_progress')
+                ->update([
+                    'assigned_user_id' => $user->id,
+                ]);
+        }
 
         // =========================
         // AUDIT LOG
