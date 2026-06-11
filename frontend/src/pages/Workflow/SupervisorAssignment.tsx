@@ -123,7 +123,9 @@ export default function SupervisorAssignment() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [startDate, setStartDate] = useState('');
+  const [startDate, setStartDate] = useState(() =>
+    new Date().toLocaleDateString('en-CA', { timeZone: DEFAULT_PROJECT_TIMEZONE })
+  );
   const [endDate, setEndDate] = useState('');
   const [selectedWorker, setSelectedWorker] = useState<number | null>(null);
   const [workerRoleFilter, setWorkerRoleFilter] = useState<string | null>(null);
