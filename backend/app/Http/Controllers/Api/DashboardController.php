@@ -1329,14 +1329,16 @@ if ($request->query('date')) {
         }
 
         $applyTimestampRange = function ($query, string $column) use ($startDate, $endDate) {
-            if ($startDate === $endDate) {
-                $query->whereDate($column, $startDate);
-                return;
-            }
+            // Same jugaar as assignment dashboard: always use PKT timezone
+            // received_at values are stored as PKT display strings, so filter using PKT boundaries
+            $storageTimezone = 'Asia/Karachi';
+
+            $parsedStart = \Carbon\Carbon::parse($startDate, $storageTimezone)->startOfDay();
+            $parsedEnd   = \Carbon\Carbon::parse($endDate, $storageTimezone)->endOfDay();
 
             $query->whereBetween($column, [
-                $startDate . ' 00:00:00',
-                $endDate . ' 23:59:59',
+                $parsedStart->toDateTimeString(),
+                $parsedEnd->toDateTimeString(),
             ]);
         };
 
@@ -1353,8 +1355,11 @@ if ($request->query('date')) {
         };
 
         $applyProject16DeliveredRange = function ($query, string $column) use ($startDate, $endDate) {
-            $rangeStart = \Carbon\Carbon::parse($startDate)->subDay()->setTime(22, 0, 0);
-            $rangeEnd = \Carbon\Carbon::parse($endDate)->setTime(22, 0, 0);
+            // Same jugaar as assignment dashboard: use PKT timezone
+            $storageTimezone = 'Asia/Karachi';
+
+            $rangeStart = \Carbon\Carbon::parse($startDate, $storageTimezone)->subDay()->setTime(22, 0, 0);
+            $rangeEnd = \Carbon\Carbon::parse($endDate, $storageTimezone)->setTime(22, 0, 0);
 
             $query->where($column, '>=', $rangeStart->toDateTimeString())
                 ->where($column, '<', $rangeEnd->toDateTimeString());
