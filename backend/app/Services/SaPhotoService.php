@@ -80,11 +80,8 @@ class SaPhotoService
 
                 $queuedOrderNumbers[$orderNumber] = true;
 
-                // TIME RULES
-                // processing_at -> received_at
-                // conduct_date -> fallback for older payloads
-                // processing_at -> created_at
-                // These can be different or the same depending on the API data.
+                // Store the client portal's wall-clock values exactly as sent.
+                // A trailing Z/offset must not shift these timestamps to PKT.
                 $receivedAt = $this->resolveReceivedAt($task, $nowPK);
                 $dueIn = (clone $receivedAt)->modify('+6 hours');
                 $createdAt = $this->resolveCreatedAt($task, $nowPK);
@@ -241,8 +238,7 @@ class SaPhotoService
             }
 
             try {
-                // Preserve the client portal's date and time exactly; do not shift timezones.
-                return new DateTime($task[$field]);
+                return $this->parsePortalWallClock((string) $task[$field]);
             } catch (Exception $exception) {
                 Log::warning("Project19 Photo Import Invalid {$field} for received_at", [
                     'client_portal_id' => $task['id'] ?? null,
@@ -263,9 +259,7 @@ class SaPhotoService
         }
 
         try {
-            $dt = new DateTime($task['processing_at']);
-            $dt->setTimezone(new DateTimeZone('Asia/Karachi'));
-            return $dt;
+            return $this->parsePortalWallClock((string) $task['processing_at']);
         } catch (Exception $exception) {
             Log::warning('Project19 Photo Import Invalid processing_at', [
                 'client_portal_id' => $task['id'] ?? null,
@@ -275,6 +269,38 @@ class SaPhotoService
 
             return clone $fallback;
         }
+    }
+
+    private function parsePortalWallClock(string $value): DateTime
+    {
+        $value = trim($value);
+
+        if (preg_match('/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/', $value, $matches)) {
+            $dateTime = DateTime::createFromFormat(
+                '!Y-m-d H:i:s',
+                "{$matches[1]} {$matches[2]}",
+                new DateTimeZone('UTC')
+            );
+
+            if ($dateTime !== false) {
+                return $dateTime;
+            }
+        }
+
+        // Older payloads may use another parseable format. Parse it, then
+        // detach the timezone while preserving the displayed date and time.
+        $parsed = new DateTime($value);
+        $dateTime = DateTime::createFromFormat(
+            '!Y-m-d H:i:s',
+            $parsed->format('Y-m-d H:i:s'),
+            new DateTimeZone('UTC')
+        );
+
+        if ($dateTime === false) {
+            throw new Exception("Invalid client portal timestamp: {$value}");
+        }
+
+        return $dateTime;
     }
 
     private function normalizeInstructionForInsert(?string $instruction, ?int $maxLength): ?string
