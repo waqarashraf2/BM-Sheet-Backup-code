@@ -5102,7 +5102,10 @@ if ($useDueInFirstOrdering) {
             );
         }
 
-        $projectTimezone = $this->resolveAssignmentDashboardProjectTimezone($project->timezone);
+        // received_at is stored as PKT display values for all projects (after migrations).
+        // Using project display timezone (e.g. Etc/GMT, Europe/London) shifts the boundary
+        // by 1–5h, causing early-morning PKT orders to fall on the wrong date.
+        $projectTimezone = $storageTimezone; // Always PKT — matches actual storage
         $toStorageTimezone = fn (Carbon $date) => $date->setTimezone($storageTimezone);
 
         if ($startDate || $endDate) {

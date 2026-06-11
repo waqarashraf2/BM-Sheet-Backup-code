@@ -223,9 +223,11 @@ export default function SupervisorAssignment() {
     }).catch(() => { });
   }, []);
 
-  // When project changes, reset date to today in that project's timezone
+  // Reset date to today in PKT (storage timezone) whenever project changes.
+  // All received_at values are stored as PKT display strings, so the date
+  // picker must use PKT boundaries — not the project's display timezone.
   useEffect(() => {
-    const today = getProjectDateValue(projectTz);
+    const today = getProjectDateValue(DEFAULT_PROJECT_TIMEZONE);
     setStartDate(today);
     setEndDate(today);
   }, [projectTz]);
