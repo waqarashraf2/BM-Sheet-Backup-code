@@ -1580,7 +1580,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     now(self::DEFAULT_PROJECT_TIMEZONE)->format('Y-m-d H:i:s')
                 );
                 $applyTimestampRange($q, 'received_at');
-                $q->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+                $q->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER'])
                     ->whereNotNull('due_in');
 
                 if ($offsetHours !== 0) {
@@ -1604,7 +1604,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
                         now(self::DEFAULT_PROJECT_TIMEZONE)->format('Y-m-d H:i:s')
                     );
                     $applyProject16DateRange($q, 'date');
-                    $q->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+                    $q->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER'])
                         ->whereNotNull('due_in');
 
                     if ($offsetHours !== 0) {
