@@ -83,7 +83,7 @@ class SaPhotoService
                 // Store the client portal's wall-clock values exactly as sent.
                 // A trailing Z/offset must not shift these timestamps to PKT.
                 $receivedAt = $this->resolveReceivedAt($task, $nowPK);
-                $dueIn = (clone $receivedAt)->modify('+6 hours');
+                $dueIn = (clone $receivedAt)->modify('+12 hours');
                 $createdAt = $this->resolveCreatedAt($task, $nowPK);
 
                 $clerkArea = $task['clerk_area'] ?? null;

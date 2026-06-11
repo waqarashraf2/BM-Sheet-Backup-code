@@ -3119,11 +3119,18 @@ public function startTimer(Request $request, int $id)
                 \App\Models\User::where('id', $oldAssignee)->where('wip_count', '>', 0)->decrement('wip_count');
             }
 
-            // Transition to QUEUED_DRAW first (if needed), then assign
-            // Note: StateMachine clears assigned_to on QUEUED_ transitions,
-            // so we must set the assignment AFTER the transition.
-            if ($order->workflow_state === 'PENDING_QA_REVIEW') {
-                StateMachine::transition($order, 'QUEUED_DRAW', $actor->id);
+            self::pauseActiveWorkItemsForAssignment($order, $oldAssignee);
+
+            // Assignment queues drawing. Starting work is the only action that moves it to IN_DRAW.
+            if ($order->workflow_state !== 'QUEUED_DRAW') {
+                if (StateMachine::canTransition($order, 'QUEUED_DRAW')) {
+                    $order = StateMachine::transition($order, 'QUEUED_DRAW', $actor->id);
+                } else {
+                    $order->update([
+                        'workflow_state' => 'QUEUED_DRAW',
+                        'status' => 'pending',
+                    ]);
+                }
             }
 
             // Now assign to the specific drawer — set role-specific columns
@@ -3509,6 +3516,38 @@ public function qaTeamMembers(Request $request)
         return $config['legacy_state'] ?? null;
     }
 
+    private static function getRoleQueueState(string $role): ?string
+    {
+        $config = self::getRoleStageConfig($role);
+
+        return $config['queue_state'] ?? null;
+    }
+
+    private static function pauseActiveWorkItemsForAssignment(Order $order, ?int $assignedUserId): void
+    {
+        if (!$assignedUserId) {
+            return;
+        }
+
+        $workItems = WorkItem::where('order_id', $order->id)
+            ->where('project_id', $order->project_id)
+            ->where('assigned_user_id', $assignedUserId)
+            ->where('status', 'in_progress')
+            ->get();
+
+        foreach ($workItems as $workItem) {
+            $elapsed = $workItem->last_timer_start
+                ? max(0, now()->diffInSeconds($workItem->last_timer_start))
+                : 0;
+
+            $workItem->update([
+                'time_spent_seconds' => (int) $workItem->time_spent_seconds + $elapsed,
+                'last_timer_start' => null,
+                'status' => 'paused',
+            ]);
+        }
+    }
+
     private static function getRoleStageConfig(string $role): array
     {
         $defaults = self::getDefaultRoleStageConfig();
@@ -3530,6 +3569,7 @@ public function qaTeamMembers(Request $request)
                 'assign_time_column' => 'dassign_time',
                 'done_column' => 'drawer_done',
                 'done_date_column' => 'drawer_date',
+                'queue_state' => 'QUEUED_DRAW',
                 'in_progress_state' => 'IN_DRAW',
                 'legacy_state' => 'DRAW',
             ],
@@ -3539,6 +3579,7 @@ public function qaTeamMembers(Request $request)
                 'assign_time_column' => 'dassign_time',
                 'done_column' => 'drawer_done',
                 'done_date_column' => 'drawer_date',
+                'queue_state' => 'QUEUED_DESIGN',
                 'in_progress_state' => 'IN_DESIGN',
                 'legacy_state' => 'DESIGN',
             ],
@@ -3548,6 +3589,7 @@ public function qaTeamMembers(Request $request)
                 'assign_time_column' => 'cassign_time',
                 'done_column' => 'checker_done',
                 'done_date_column' => 'checker_date',
+                'queue_state' => 'QUEUED_CHECK',
                 'in_progress_state' => 'IN_CHECK',
                 'legacy_state' => 'CHECK',
             ],
@@ -3557,6 +3599,7 @@ public function qaTeamMembers(Request $request)
                 'assign_time_column' => 'fassign_time',
                 'done_column' => 'file_uploaded',
                 'done_date_column' => 'file_upload_date',
+                'queue_state' => 'QUEUED_FILLER',
                 'in_progress_state' => 'IN_FILLER',
                 'legacy_state' => 'FILLER',
             ],
@@ -3566,6 +3609,7 @@ public function qaTeamMembers(Request $request)
                 'assign_time_column' => null,
                 'done_column' => 'final_upload',
                 'done_date_column' => 'ausFinaldate',
+                'queue_state' => 'QUEUED_QA',
                 'in_progress_state' => 'IN_QA',
                 'legacy_state' => 'QA',
             ],
@@ -3751,7 +3795,11 @@ public function assignRole(Request $request, int $id)
 
     // DONE LOCK
 // DONE LOCK (optional warning only, does not block assignment)
-[, $doneCol, $targetState] = self::getRoleColumns($role);
+[, $doneCol] = self::getRoleColumns($role);
+$queuedState = self::getRoleQueueState($role);
+if (!$queuedState) {
+    return response()->json(['message' => 'Invalid role configuration.'], 422);
+}
 if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
     // Log a warning instead of blocking
     \Log::warning("Reassigning {$role} for order #{$order->id} which is already done.");
@@ -3760,7 +3808,7 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
 
     $cols = self::getRoleAssignmentColumns($role);
 
-    DB::transaction(function () use ($order, $user, $cols, $actor, $role, $targetState) {
+    DB::transaction(function () use ($order, $user, $cols, $actor, $role, $queuedState) {
 
         $oldAssignedTo = $order->assigned_to;
         $drawerIsDone = strtolower(trim((string) ($order->drawer_done ?? ''))) === 'yes';
@@ -3799,12 +3847,10 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
         // =========================
         $currentState = $order->workflow_state;
 
-        // If role is changed, move to the role's working state even when currently IN_*.
-        // This prevents checker->drawer reassignment from staying in IN_CHECK.
-        if (!$isCheckerPreAssignment && $currentState !== $targetState) {
-            $updates['workflow_state'] = $targetState;
-            $updates['status'] = 'in-progress';
-            $updates['started_at'] = now();
+        // Assignment only queues the stage. The worker's start action moves it to IN_*.
+        if (!$isCheckerPreAssignment) {
+            $updates['workflow_state'] = $queuedState;
+            $updates['status'] = 'pending';
         }
 
         $order->update($updates);
@@ -3834,14 +3880,7 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
         // UPDATE WORK ITEMS (🔥 VERY IMPORTANT)
         // =========================
         if (!$isCheckerPreAssignment) {
-            // Only update assigned_user_id, keep timers intact.
-            \App\Models\WorkItem::where('order_id', $order->id)
-                ->where('project_id', $order->project_id)
-                ->where('assigned_user_id', $oldAssignedTo)
-                ->where('status', 'in_progress')
-                ->update([
-                    'assigned_user_id' => $user->id,
-                ]);
+            self::pauseActiveWorkItemsForAssignment($order, $oldAssignedTo);
         }
 
         // =========================
@@ -3916,4 +3955,3 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
 
 
 }
-

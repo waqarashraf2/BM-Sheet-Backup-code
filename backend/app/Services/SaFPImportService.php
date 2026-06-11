@@ -96,7 +96,7 @@ class SaFPImportService
                     continue;
                 }
 
-                $dueIn = (clone $receivedAt)->modify('+6 hours');
+                $dueIn = (clone $receivedAt)->modify('+12 hours');
                 $createdAt = $this->resolveCreatedAt($task, $nowPK);
                 $storedOrderNumber = $this->resolveStoredOrderNumber($sourceOrderNumber, $clientPortalId);
 
