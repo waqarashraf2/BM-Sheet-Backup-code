@@ -123,9 +123,7 @@ export default function SupervisorAssignment() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [startDate, setStartDate] = useState(() =>
-    new Date().toLocaleDateString('en-CA', { timeZone: DEFAULT_PROJECT_TIMEZONE })
-  );
+  const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [selectedWorker, setSelectedWorker] = useState<number | null>(null);
   const [workerRoleFilter, setWorkerRoleFilter] = useState<string | null>(null);
@@ -224,6 +222,11 @@ export default function SupervisorAssignment() {
       if (list.length > 0) setSelectedQueue(list[0].queue_name);
     }).catch(() => { });
   }, []);
+
+  // When project changes, reset date to today in that project's timezone
+  useEffect(() => {
+    setStartDate(getProjectDateValue(projectTz));
+  }, [projectTz]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
