@@ -225,7 +225,9 @@ export default function SupervisorAssignment() {
 
   // When project changes, reset date to today in that project's timezone
   useEffect(() => {
-    setStartDate(getProjectDateValue(projectTz));
+    const today = getProjectDateValue(projectTz);
+    setStartDate(today);
+    setEndDate(today);
   }, [projectTz]);
 
   useEffect(() => {

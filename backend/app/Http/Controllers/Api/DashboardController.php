@@ -5051,24 +5051,21 @@ if ($useDueInFirstOrdering) {
         string $appTimezone
     ): array {
         if ($startDate || $endDate) {
-            if ($startDate && $endDate) {
-                return [
-                    'type' => 'between',
-                    'start' => \Carbon\Carbon::parse($startDate, $appTimezone)->startOfDay(),
-                    'end' => \Carbon\Carbon::parse($endDate, $appTimezone)->endOfDay(),
-                ];
-            }
+            $parsedStart = $startDate ? \Carbon\Carbon::parse($startDate, $appTimezone)->startOfDay() : null;
+            $parsedEnd   = $endDate   ? \Carbon\Carbon::parse($endDate,   $appTimezone)->endOfDay()   : null;
 
-            if ($startDate) {
-                return [
-                    'type' => 'start',
-                    'start' => \Carbon\Carbon::parse($startDate, $appTimezone)->startOfDay(),
-                ];
+            // Single date: treat as full day
+            if ($parsedStart && !$parsedEnd) {
+                $parsedEnd = \Carbon\Carbon::parse($startDate, $appTimezone)->endOfDay();
+            }
+            if ($parsedEnd && !$parsedStart) {
+                $parsedStart = \Carbon\Carbon::parse($endDate, $appTimezone)->startOfDay();
             }
 
             return [
-                'type' => 'end',
-                'end' => \Carbon\Carbon::parse($endDate, $appTimezone)->endOfDay(),
+                'type'  => 'between',
+                'start' => $parsedStart,
+                'end'   => $parsedEnd,
             ];
         }
 
@@ -5109,24 +5106,21 @@ if ($useDueInFirstOrdering) {
         $toStorageTimezone = fn (Carbon $date) => $date->setTimezone($storageTimezone);
 
         if ($startDate || $endDate) {
-            if ($startDate && $endDate) {
-                return [
-                    'type' => 'between',
-                    'start' => $toStorageTimezone(Carbon::parse($startDate, $projectTimezone)->startOfDay()),
-                    'end' => $toStorageTimezone(Carbon::parse($endDate, $projectTimezone)->endOfDay()),
-                ];
-            }
+            $parsedStart = $startDate ? Carbon::parse($startDate, $projectTimezone)->startOfDay() : null;
+            $parsedEnd   = $endDate   ? Carbon::parse($endDate,   $projectTimezone)->endOfDay()   : null;
 
-            if ($startDate) {
-                return [
-                    'type' => 'start',
-                    'start' => $toStorageTimezone(Carbon::parse($startDate, $projectTimezone)->startOfDay()),
-                ];
+            // Single date: treat as full day in project timezone
+            if ($parsedStart && !$parsedEnd) {
+                $parsedEnd = Carbon::parse($startDate, $projectTimezone)->endOfDay();
+            }
+            if ($parsedEnd && !$parsedStart) {
+                $parsedStart = Carbon::parse($endDate, $projectTimezone)->startOfDay();
             }
 
             return [
-                'type' => 'end',
-                'end' => $toStorageTimezone(Carbon::parse($endDate, $projectTimezone)->endOfDay()),
+                'type'  => 'between',
+                'start' => $toStorageTimezone($parsedStart),
+                'end'   => $toStorageTimezone($parsedEnd),
             ];
         }
 
@@ -5140,12 +5134,13 @@ if ($useDueInFirstOrdering) {
             ];
         }
 
+        // Today in project timezone — no date sent from frontend
         $projectNow = now($projectTimezone);
 
         return [
-            'type' => 'between',
-            'start' => $toStoredLocalTime($projectNow->copy()->startOfDay()),
-            'end' => $toStoredLocalTime($projectNow->copy()->endOfDay()),
+            'type'  => 'between',
+            'start' => $toStorageTimezone($projectNow->copy()->startOfDay()),
+            'end'   => $toStorageTimezone($projectNow->copy()->endOfDay()),
         ];
     }
 
@@ -5159,24 +5154,20 @@ if ($useDueInFirstOrdering) {
         $toStoredTime = fn (Carbon $date) => $date->copy()->setTimezone($storageTimezone);
 
         if ($startDate || $endDate) {
-            if ($startDate && $endDate) {
-                return [
-                    'type' => 'between',
-                    'start' => $toStoredTime(Carbon::parse($startDate, $vietnamTimezone)->startOfDay()),
-                    'end' => $toStoredTime(Carbon::parse($endDate, $vietnamTimezone)->endOfDay()),
-                ];
-            }
+            $parsedStart = $startDate ? Carbon::parse($startDate, $vietnamTimezone)->startOfDay() : null;
+            $parsedEnd   = $endDate   ? Carbon::parse($endDate,   $vietnamTimezone)->endOfDay()   : null;
 
-            if ($startDate) {
-                return [
-                    'type' => 'start',
-                    'start' => $toStoredTime(Carbon::parse($startDate, $vietnamTimezone)->startOfDay()),
-                ];
+            if ($parsedStart && !$parsedEnd) {
+                $parsedEnd = Carbon::parse($startDate, $vietnamTimezone)->endOfDay();
+            }
+            if ($parsedEnd && !$parsedStart) {
+                $parsedStart = Carbon::parse($endDate, $vietnamTimezone)->startOfDay();
             }
 
             return [
-                'type' => 'end',
-                'end' => $toStoredTime(Carbon::parse($endDate, $vietnamTimezone)->endOfDay()),
+                'type'  => 'between',
+                'start' => $toStoredTime($parsedStart),
+                'end'   => $toStoredTime($parsedEnd),
             ];
         }
 
