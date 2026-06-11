@@ -88,13 +88,14 @@ if ($request->query('date')) {
         |--------------------------------------------------------------------------
         */
         $selectedDatePkt = \Carbon\Carbon::parse($date, 'Asia/Karachi');
-        $batchNowPkt = now('Asia/Karachi')->format('Y-m-d H:i:s');
+
+        // For batch calculations: use selected date's shift end time as reference
+        // This ensures remaining_time displays correctly for both today and historical dates
+        $shiftEndPkt = $selectedDatePkt->copy()->setTime(22, 0, 0);
+        $batchNowPkt = $shiftEndPkt->format('Y-m-d H:i:s');
 
         // 29 10 PM
         $shiftStartPkt = $selectedDatePkt->copy()->subDay()->setTime(22, 0, 0);
-
-        // 30 10 PM
-        $shiftEndPkt = $selectedDatePkt->copy()->setTime(22, 0, 0);
 
         /*
         |--------------------------------------------------------------------------
