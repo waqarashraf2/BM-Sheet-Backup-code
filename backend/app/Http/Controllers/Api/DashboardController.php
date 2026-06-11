@@ -1624,7 +1624,6 @@ $userCounts = User::whereIn('project_id', $projectIds)
         $delayedPendingCounts = $delayedPendingCounts->pluck('cnt', 'project_id');
 
         // DELAYED DONE COUNTS: RECEIVED cohort + completed after due_in
-        // Using UTC columns when available (99.8% backfilled) for explicit timezone handling
         $delayedDoneCounts = collect();
         if (!empty($otherProjectIds)) {
             $otherDelayedDone = Order::queryAcrossProjects($otherProjectIds, function ($q, $pid) use ($applyTimestampRange) {
@@ -1632,17 +1631,16 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 $q->where('workflow_state', 'DELIVERED')
                     ->whereNotNull('due_in')
                     ->where(function ($completionQuery) {
-                        $completionQuery->whereNotNull('delivered_at_utc')
-                            ->orWhereNotNull('delivered_at')
+                        $completionQuery->whereNotNull('delivered_at')
                             ->orWhereNotNull('completed_at');
                     });
                 // Match projectStats received cohort (not all-time completed range)
                 $applyTimestampRange($q, 'received_at');
 
                 if ($offsetHours !== 0) {
-                    $q->whereRaw("COALESCE(delivered_at_utc, delivered_at, completed_at) > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
+                    $q->whereRaw("COALESCE(delivered_at, completed_at) > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
                 } else {
-                    $q->whereRaw('COALESCE(delivered_at_utc, delivered_at, completed_at) > due_in');
+                    $q->whereRaw('COALESCE(delivered_at, completed_at) > due_in');
                 }
 
                 $q->selectRaw('? as project_id, COUNT(*) as cnt', [$pid])
@@ -1658,17 +1656,16 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     $q->where('workflow_state', 'DELIVERED')
                         ->whereNotNull('due_in')
                         ->where(function ($completionQuery) {
-                            $completionQuery->whereNotNull('delivered_at_utc')
-                                ->orWhereNotNull('delivered_at')
+                            $completionQuery->whereNotNull('delivered_at')
                                 ->orWhereNotNull('completed_at');
                         });
                     // Match project 16 received cohort used across projectStats
                     $applyProject16DateRange($q, 'date');
 
                     if ($offsetHours !== 0) {
-                        $q->whereRaw("COALESCE(delivered_at_utc, delivered_at, completed_at) > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
+                        $q->whereRaw("COALESCE(delivered_at, completed_at) > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
                     } else {
-                        $q->whereRaw('COALESCE(delivered_at_utc, delivered_at, completed_at) > due_in');
+                        $q->whereRaw('COALESCE(delivered_at, completed_at) > due_in');
                     }
 
                     $q->selectRaw('? as project_id, COUNT(*) as cnt', [$pid])
