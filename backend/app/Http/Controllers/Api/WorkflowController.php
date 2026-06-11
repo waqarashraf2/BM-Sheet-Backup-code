@@ -2707,6 +2707,20 @@ public function startTimer(Request $request, int $id)
         }
 
         $order = DB::transaction(function () use ($request, $project) {
+            $receivedAt = now();
+
+            // Calculate due_in based on project's historical SLA
+            $table = ProjectOrderService::getTableName($project->id);
+            $avgSlaHours = DB::table($table)
+                ->selectRaw('AVG(TIMESTAMPDIFF(HOUR, received_at, due_in)) as avg_sla')
+                ->where('received_at', '>=', $receivedAt->copy()->subDays(30))
+                ->whereNotNull('received_at')
+                ->whereNotNull('due_in')
+                ->value('avg_sla');
+
+            $slaHours = max((int) round($avgSlaHours ?? 24), 1);
+            $dueIn = $receivedAt->copy()->addHours($slaHours);
+
             $order = Order::createForProject($project->id, [
                 'order_number' => 'ORD-' . strtoupper(uniqid()),
                 'client_reference' => $request->input('client_reference'),
@@ -2716,7 +2730,8 @@ public function startTimer(Request $request, int $id)
                 'status' => 'pending',
                 'priority' => $request->input('priority', 'normal'),
                 'due_date' => $request->input('due_date'),
-                'received_at' => now(),
+                'received_at' => $receivedAt,
+                'due_in' => $dueIn,
                 'metadata' => $request->input('metadata'),
             ]);
 
