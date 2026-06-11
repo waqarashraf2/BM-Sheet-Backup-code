@@ -120,12 +120,40 @@ class AssignmentEngine
      */
     public static function submitWork(Order $order, User $user, ?string $comments = null): Order
     {
-        $submittedState = StateMachine::getSubmittedState($order->workflow_state);
-        if (!$submittedState) {
-            throw new \InvalidArgumentException("Cannot submit from state: {$order->workflow_state}");
-        }
+        return DB::transaction(function () use ($order, $user, $comments) {
+            // Lock and re-read the dynamic project-table row so duplicate or
+            // stale requests cannot complete a stage after another transition.
+            $lockedOrder = $order->newQuery()
+                ->whereKey($order->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            $lockedOrder->project_id = $order->project_id;
+            $lockedOrder->setTable($order->getTable());
+            $order = $lockedOrder;
 
-        return DB::transaction(function () use ($order, $user, $submittedState, $comments) {
+            if (!StateMachine::roleCanWorkState($user->role, $order->workflow_state)) {
+                throw new \InvalidArgumentException(
+                    "The {$user->role} role cannot submit work from state {$order->workflow_state}."
+                );
+            }
+
+            if (!self::isStageAssignedToUser($order, $user)) {
+                throw new \InvalidArgumentException(
+                    "The {$user->role} stage is not assigned to user #{$user->id}."
+                );
+            }
+
+            if ($user->role === 'checker' && !self::completionFlagIsYes($order, 'drawer_done')) {
+                throw new \InvalidArgumentException(
+                    'Checker work cannot be submitted before the drawer has completed the order.'
+                );
+            }
+
+            $submittedState = StateMachine::getSubmittedState($order->workflow_state);
+            if (!$submittedState) {
+                throw new \InvalidArgumentException("Cannot submit from state: {$order->workflow_state}");
+            }
+
             // Complete the work item (try with stage first, fallback to any matching in-progress)
             $stage = StateMachine::STATE_TO_STAGE[$order->workflow_state] ?? null;
             $workItem = WorkItem::where('project_id', $order->project_id)
@@ -764,6 +792,15 @@ class AssignmentEngine
                 }
             }
 
+            if (
+                $action === 'submit'
+                && $completionColumns['done_col']
+                && (($updates[$completionColumns['done_col']] ?? null) !== 'yes')
+            ) {
+                throw new \RuntimeException(
+                    "Completion flag was not generated for {$role} submit on order #{$order->id}."
+                );
+            }
             // ── 1. Update project table (if row exists) ──
             $projectTable = ProjectOrderService::getTableName($order->project_id);
             if (Schema::hasTable($projectTable)) {
@@ -853,14 +890,69 @@ class AssignmentEngine
             }
 
         } catch (\Throwable $e) {
-            // Log but don't break the workflow
             \Log::warning('syncToProjectTable failed', [
                 'order_id'   => $order->id,
                 'project_id' => $order->project_id,
                 'action'     => $action,
                 'error'      => $e->getMessage(),
             ]);
+
+            // Completion must be atomic across the order table, work item,
+            // user stats, and CRM overlay. Start/assignment sync keeps its
+            // existing best-effort behavior.
+            if ($action === 'submit') {
+                throw $e;
+            }
         }
+    }
+
+    private static function isStageAssignedToUser(Order $order, User $user): bool
+    {
+        $assignmentColumns = self::getRoleAssignmentColumns($user->role);
+        $idColumn = $assignmentColumns['id_col'];
+
+        if ($idColumn) {
+            $roleUserId = $order->{$idColumn};
+            if ($roleUserId !== null && $roleUserId !== '' && (int) $roleUserId !== 0) {
+                return (int) $roleUserId === (int) $user->id;
+            }
+        }
+
+        // Backward compatibility for legacy rows that predate role ID columns.
+        if ($order->assigned_to !== null && (int) $order->assigned_to === (int) $user->id) {
+            return true;
+        }
+
+        if ($order->project_id && $order->order_number) {
+            $crm = DB::table('crm_order_assignments')
+                ->where('project_id', $order->project_id)
+                ->where('order_number', $order->order_number)
+                ->first();
+
+            if ($crm && $idColumn && isset($crm->{$idColumn})) {
+                return (int) $crm->{$idColumn} === (int) $user->id;
+            }
+        }
+
+        return false;
+    }
+
+    private static function completionFlagIsYes(Order $order, string $column): bool
+    {
+        if (strtolower(trim((string) ($order->{$column} ?? ''))) === 'yes') {
+            return true;
+        }
+
+        if (!$order->project_id || !$order->order_number || !Schema::hasColumn('crm_order_assignments', $column)) {
+            return false;
+        }
+
+        $value = DB::table('crm_order_assignments')
+            ->where('project_id', $order->project_id)
+            ->where('order_number', $order->order_number)
+            ->value($column);
+
+        return strtolower(trim((string) $value)) === 'yes';
     }
 
     private static function getRoleAssignmentColumns(string $role): array

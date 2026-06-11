@@ -916,9 +916,24 @@ public function myCurrent(Request $request)
         $user = $request->user();
         $order = self::findOrderForUser($id, $user);
 
-        // Verify the user is assigned to this order
-        if (!self::isOrderAssignedToUser($order, $user)) {
-            return response()->json(['message' => 'This order is not assigned to you.'], 403);
+        // Submit requires ownership of this exact role stage. General order
+        // assignment is not enough because downstream roles may be pre-assigned.
+        if (!self::isOrderStageAssignedToUser($order, $user)) {
+            return response()->json(['message' => 'This workflow stage is not assigned to you.'], 403);
+        }
+
+        // A retained or pre-assigned role ID must never authorize submission
+        // for another stage (for example drawer submitting IN_CHECK).
+        if (!StateMachine::roleCanWorkState($user->role, $order->workflow_state)) {
+            return response()->json([
+                'message' => "Your {$user->role} role cannot submit an order in {$order->workflow_state} state.",
+            ], 422);
+        }
+
+        if ($user->role === 'checker' && !self::isOrderCompletionFlagYes($order, 'drawer_done')) {
+            return response()->json([
+                'message' => 'Checker work cannot be submitted before the drawer has completed the order.',
+            ], 422);
         }
 
         // Verify order is in an IN_ state or legacy workable state
@@ -3600,6 +3615,52 @@ public function qaTeamMembers(Request $request)
      * Prioritizes role-specific ID columns (Metro-synced data is authoritative).
      * Falls back to assigned_to, then crm_order_assignments (survives cron sync).
      */
+    private static function isOrderCompletionFlagYes($order, string $column): bool
+    {
+        if (strtolower(trim((string) ($order->{$column} ?? ''))) === 'yes') {
+            return true;
+        }
+
+        if (!$order->project_id || !$order->order_number || !Schema::hasColumn('crm_order_assignments', $column)) {
+            return false;
+        }
+
+        $value = DB::table('crm_order_assignments')
+            ->where('project_id', $order->project_id)
+            ->where('order_number', $order->order_number)
+            ->value($column);
+
+        return strtolower(trim((string) $value)) === 'yes';
+    }
+    private static function isOrderStageAssignedToUser($order, $user): bool
+    {
+        [$idCol] = self::getRoleColumns($user->role);
+
+        if ($idCol) {
+            $roleId = $order->{$idCol};
+            if ($roleId !== null && $roleId !== '' && (int) $roleId !== 0) {
+                return (int) $roleId === (int) $user->id;
+            }
+        }
+
+        if ($order->assigned_to !== null && (int) $order->assigned_to === (int) $user->id) {
+            return true;
+        }
+
+        if ($order->project_id && $order->order_number) {
+            $crm = DB::table('crm_order_assignments')
+                ->where('project_id', $order->project_id)
+                ->where('order_number', $order->order_number)
+                ->first();
+
+            if ($crm && $idCol && isset($crm->{$idCol})) {
+                return (int) $crm->{$idCol} === (int) $user->id;
+            }
+        }
+
+        return false;
+    }
+
     private static function isOrderAssignedToUser($order, $user): bool
     {
         // Check role-specific ID column first (authoritative for Metro-synced orders)

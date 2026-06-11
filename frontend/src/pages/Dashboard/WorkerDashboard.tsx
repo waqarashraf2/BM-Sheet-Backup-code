@@ -179,15 +179,29 @@ export default function WorkerDashboard() {
     const state = order.workflow_state || '';
 
     if (isDesigner) {
-      return state.includes('DESIGN');
+      return state.includes('DESIGN')
+        || ['RECEIVED', 'PENDING_QA_REVIEW', 'REJECTED_BY_QA'].includes(state);
     }
 
     if (isDrawer) {
-      return order.workflow_type === 'FP_3_LAYER' || state.includes('DRAW');
+      return state.includes('DRAW')
+        || ['RECEIVED', 'PENDING_QA_REVIEW', 'REJECTED_BY_CHECK', 'REJECTED_BY_QA'].includes(state);
     }
 
-    return true;
-  }, [isDesigner, isDrawer]);
+    if (isChecker) {
+      return state.includes('CHECK');
+    }
+
+    if (isFiller) {
+      return state.includes('FILL');
+    }
+
+    if (isQA) {
+      return state.includes('QA');
+    }
+
+    return false;
+  }, [isChecker, isDesigner, isDrawer, isFiller, isQA]);
 
   useEffect(() => {
     if (!currentProjectId) {

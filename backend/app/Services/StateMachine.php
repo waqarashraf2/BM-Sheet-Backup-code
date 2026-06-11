@@ -225,6 +225,33 @@ class StateMachine
     }
 
     /**
+     * Ensure only the worker responsible for the current stage can submit it.
+     * Drawer/designer compatibility is retained for legacy Metro draw states.
+     */
+    public static function roleCanWorkState(string $role, string $state): bool
+    {
+        $expectedRole = self::getRoleForState($state);
+
+        if (!$expectedRole) {
+            $expectedRole = match ($state) {
+                'DRAW' => 'drawer',
+                'DESIGN' => 'designer',
+                'CHECK' => 'checker',
+                'FILLER' => 'filler',
+                'QA' => 'qa',
+                'RECEIVED', 'PENDING_QA_REVIEW', 'REJECTED_BY_CHECK', 'REJECTED_BY_QA' => 'drawer',
+                default => null,
+            };
+        }
+
+        if ($expectedRole === 'drawer') {
+            return in_array($role, ['drawer', 'designer'], true);
+        }
+
+        return $expectedRole !== null && $role === $expectedRole;
+    }
+
+    /**
      * Get all queued states for a workflow type.
      */
     public static function getQueuedStates(string $workflowType): array
