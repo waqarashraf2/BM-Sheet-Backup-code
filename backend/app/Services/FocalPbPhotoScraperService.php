@@ -633,6 +633,9 @@ class FocalPbPhotoScraperService
         foreach (['m/d/Y H:i:s', 'd/m/Y H:i:s', 'm/d/Y', 'd/m/Y'] as $format) {
             $dt = DateTime::createFromFormat($format, $raw);
             if ($dt) {
+                // Convert from UTC to PKT (app timezone)
+                $dt->setTimezone(new DateTimeZone('UTC'));
+                $dt->setTimezone(new DateTimeZone('Asia/Karachi'));
                 return $dt->format('Y-m-d H:i:s');
             }
         }
@@ -673,6 +676,9 @@ class FocalPbPhotoScraperService
                     continue;
                 }
 
+                // Convert from UTC to PKT (app timezone)
+                $dt->setTimezone(new DateTimeZone('UTC'));
+                $dt->setTimezone(new DateTimeZone('Asia/Karachi'));
                 return $dt->format('Y-m-d H:i:s');
             } catch (\Throwable $e) {
                 Log::warning('FocalPbPhoto: Failed to parse due_in datetime', [
