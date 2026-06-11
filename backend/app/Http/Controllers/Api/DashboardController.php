@@ -1628,14 +1628,17 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[(int) $pid] ?? 0;
                 $q->where('workflow_state', 'DELIVERED')
                     ->whereNotNull('due_in')
-                    ->whereNotNull('completed_at');
+                    ->where(function ($completionQuery) {
+                        $completionQuery->whereNotNull('delivered_at')
+                            ->orWhereNotNull('completed_at');
+                    });
                 // Match projectStats received cohort (not all-time completed range)
                 $applyTimestampRange($q, 'received_at');
 
                 if ($offsetHours !== 0) {
-                    $q->whereRaw("completed_at > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
+                    $q->whereRaw("COALESCE(delivered_at, completed_at) > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
                 } else {
-                    $q->whereRaw('completed_at > due_in');
+                    $q->whereRaw('COALESCE(delivered_at, completed_at) > due_in');
                 }
 
                 $q->selectRaw('? as project_id, COUNT(*) as cnt', [$pid])
@@ -1650,14 +1653,17 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[(int) $pid] ?? 0;
                     $q->where('workflow_state', 'DELIVERED')
                         ->whereNotNull('due_in')
-                        ->whereNotNull('completed_at');
+                        ->where(function ($completionQuery) {
+                            $completionQuery->whereNotNull('delivered_at')
+                                ->orWhereNotNull('completed_at');
+                        });
                     // Match project 16 received cohort used across projectStats
                     $applyProject16DateRange($q, 'date');
 
                     if ($offsetHours !== 0) {
-                        $q->whereRaw("completed_at > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
+                        $q->whereRaw("COALESCE(delivered_at, completed_at) > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
                     } else {
-                        $q->whereRaw('completed_at > due_in');
+                        $q->whereRaw('COALESCE(delivered_at, completed_at) > due_in');
                     }
 
                     $q->selectRaw('? as project_id, COUNT(*) as cnt', [$pid])
