@@ -71,7 +71,9 @@ jobs:
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/public_html/cron/
 
       - name: Clear and rebuild caches
+        continue-on-error: true
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
             "cd ~/laravel-backend && php artisan config:cache && php artisan route:cache && php artisan view:cache"
