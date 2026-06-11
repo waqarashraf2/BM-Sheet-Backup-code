@@ -152,7 +152,12 @@ if ($request->query('date')) {
                 CASE
                     WHEN due_in IS NOT NULL THEN GREATEST(TIMESTAMPDIFF(MINUTE, ?, {$batchDueInExpr}), 0)
                     ELSE NULL
-                END as batch_remaining_minutes
+                END as batch_remaining_minutes,
+                CASE
+                    WHEN received_at IS NOT NULL AND due_in IS NOT NULL
+                        THEN GREATEST(TIMESTAMPDIFF(MINUTE, received_at, {$batchDueInExpr}), 0)
+                    ELSE NULL
+                END as batch_due_duration_minutes
             ", [$batchNowPkt])
             ->where('received_at', '>=', $shiftStartLocal)
             ->where('received_at', '<', $shiftEndLocal);
@@ -208,6 +213,14 @@ if ($request->query('date')) {
                 $minRemaining = $remainingTimes->min() ?? 0;
                 $maxRemaining = $remainingTimes->max() ?? 0;
 
+                $dueDurations = $items
+                    ->pluck('batch_due_duration_minutes')
+                    ->filter(fn($minutes) => $minutes !== null)
+                    ->map(fn($minutes) => (int) $minutes);
+
+                $minDueDuration = $dueDurations->min() ?? 0;
+                $maxDueDuration = $dueDurations->max() ?? 0;
+
                 return [
                     'batch_no' => $batchNo,
                     'batch_label' => 'Batch ' . str_pad((string) $batchNo, 2, '0', STR_PAD_LEFT),
@@ -215,10 +228,10 @@ if ($request->query('date')) {
                     'received_time_full' => $minReceived->format('h:i:s A'),
                     'remaining_minutes' => $minRemaining,
                     'remaining_time' =>
-                        floor($minRemaining / 60) . 'h ' .
-                        ($minRemaining % 60) . 'm - ' .
-                        floor($maxRemaining / 60) . 'h ' .
-                        ($maxRemaining % 60) . 'm',
+                        floor($minDueDuration / 60) . 'h ' .
+                        ($minDueDuration % 60) . 'm - ' .
+                        floor($maxDueDuration / 60) . 'h ' .
+                        ($maxDueDuration % 60) . 'm',
                     'plans' => $items->count(),
                     'done' => $items->where('workflow_state', 'DELIVERED')->count(),
                     'pending' => $items->filter(
