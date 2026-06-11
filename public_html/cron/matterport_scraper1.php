@@ -316,9 +316,11 @@ function rowToRecord(array $row): array
     // Portal returns UTC; shift +1h to BST so Remaining badge matches London wall-clock.
     // TODO: revisit at DST changeover (Oct 2026) — set back to 0 when UK is on GMT.
     $dueIn        = parseDateTime($dueDateRaw);
+    /* BST +1h jugaar removed — 5h PKT fix already handles timezone correctly
     if ($dueIn) {
-        $dueIn = (new DateTime($dueIn))->modify('+0 hour')->format('Y-m-d H:i:s');
+        $dueIn = (new DateTime($dueIn))->modify('+1 hour')->format('Y-m-d H:i:s');
     }
+    */
     $dueIn        = $dueIn ?: ($dueDateRaw ?: null);
 
     // Unmapped fields → extra_col_json (Time Left preserved here)

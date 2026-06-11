@@ -62,6 +62,14 @@ jobs:
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
             "cd ~/laravel-backend && php artisan migrate --force"
 
+      - name: Deploy cron files
+        run: |
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            public_html/cron/matterport_scraper1.php \
+            public_html/cron/matterport_scraper2.php \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/public_html/cron/
+
       - name: Clear and rebuild caches
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
