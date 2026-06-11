@@ -1360,12 +1360,17 @@ if ($request->query('date')) {
                 ->where($column, '<', $rangeEnd->toDateTimeString());
         };
 
-        $nowTs = now()->toDateTimeString();
-
         $projects = Project::where('status', 'active')
             ->when($selectedProjectId !== null, fn ($query) => $query->whereKey($selectedProjectId))
             ->get();
         $projectIds = $projects->pluck('id')->toArray();
+        $projectDueNow = $projects->mapWithKeys(function ($project) {
+            $timezone = $this->resolveAssignmentDashboardProjectTimezone($project->timezone);
+
+            return [
+                (int) $project->id => now($timezone)->format('Y-m-d H:i:s'),
+            ];
+        });
 
         // Separate project 16 from others
         $otherProjectIds = array_filter($projectIds, fn($id) => $id != 16);
@@ -1563,16 +1568,20 @@ $userCounts = User::whereIn('project_id', $projectIds)
         // DELAYED PENDING COUNTS: pending orders with remaining time already passed
         $delayedPendingCounts = collect();
         if (!empty($otherProjectIds)) {
-            $otherDelayedPending = Order::queryAcrossProjects($otherProjectIds, function ($q, $pid) use ($applyTimestampRange, $nowTs) {
+            $otherDelayedPending = Order::queryAcrossProjects($otherProjectIds, function ($q, $pid) use ($applyTimestampRange, $projectDueNow) {
                 $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[(int) $pid] ?? 0;
+                $projectNow = $projectDueNow->get(
+                    (int) $pid,
+                    now(self::DEFAULT_PROJECT_TIMEZONE)->format('Y-m-d H:i:s')
+                );
                 $applyTimestampRange($q, 'received_at');
                 $q->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
                     ->whereNotNull('due_in');
 
                 if ($offsetHours !== 0) {
-                    $q->whereRaw("DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR) < ?", [$nowTs]);
+                    $q->whereRaw("DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR) < ?", [$projectNow]);
                 } else {
-                    $q->where('due_in', '<', $nowTs);
+                    $q->where('due_in', '<', $projectNow);
                 }
 
                 $q->selectRaw('? as project_id, COUNT(*) as cnt', [$pid])
@@ -1583,16 +1592,20 @@ $userCounts = User::whereIn('project_id', $projectIds)
         if ($hasProject16) {
             $table16 = \App\Services\ProjectOrderService::getTableName(16);
             if (self::tableExists($table16) && self::columnExists($table16, 'date')) {
-                $project16DelayedPending = Order::queryAcrossProjects([16], function ($q, $pid) use ($applyProject16DateRange, $nowTs) {
+                $project16DelayedPending = Order::queryAcrossProjects([16], function ($q, $pid) use ($applyProject16DateRange, $projectDueNow) {
                     $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[(int) $pid] ?? 0;
+                    $projectNow = $projectDueNow->get(
+                        (int) $pid,
+                        now(self::DEFAULT_PROJECT_TIMEZONE)->format('Y-m-d H:i:s')
+                    );
                     $applyProject16DateRange($q, 'date');
                     $q->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
                         ->whereNotNull('due_in');
 
                     if ($offsetHours !== 0) {
-                        $q->whereRaw("DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR) < ?", [$nowTs]);
+                        $q->whereRaw("DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR) < ?", [$projectNow]);
                     } else {
-                        $q->where('due_in', '<', $nowTs);
+                        $q->where('due_in', '<', $projectNow);
                     }
 
                     $q->selectRaw('? as project_id, COUNT(*) as cnt', [$pid])
