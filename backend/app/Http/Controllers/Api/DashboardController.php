@@ -5197,36 +5197,6 @@ if ($useDueInFirstOrdering) {
     ): array {
         $vietnamTimezone = self::ASSIGNMENT_DASHBOARD_VIETNAM_TIMEZONE;
         $toStoredTime = fn (Carbon $date) => $date->copy()->setTimezone($storageTimezone);
-        $storageToday = now($storageTimezone)->toDateString();
-        $vietnamToday = now($vietnamTimezone)->toDateString();
-
-        // The frontend initializes its date fields in PKT. From 10 PM PKT,
-        // Vietnam is already on the next calendar day, so roll only that
-        // default current-day selection forward. Custom/historical dates stay unchanged.
-        if ($storageToday !== $vietnamToday) {
-            $requestedStart = $startDate
-                ? Carbon::parse($startDate, $storageTimezone)->toDateString()
-                : null;
-            $requestedEnd = $endDate
-                ? Carbon::parse($endDate, $storageTimezone)->toDateString()
-                : null;
-
-            $isCurrentSingleDaySelection = ($requestedStart === $storageToday && $requestedEnd === $storageToday)
-                || ($requestedStart === $storageToday && $requestedEnd === null)
-                || ($requestedEnd === $storageToday && $requestedStart === null);
-
-            if ($isCurrentSingleDaySelection) {
-                $startDate = $startDate ? $vietnamToday : null;
-                $endDate = $endDate ? $vietnamToday : null;
-            }
-
-            if (
-                $dateFilter
-                && Carbon::parse($dateFilter, $storageTimezone)->toDateString() === $storageToday
-            ) {
-                $dateFilter = $vietnamToday;
-            }
-        }
 
         if ($startDate || $endDate) {
             $parsedStart = $startDate ? Carbon::parse($startDate, $vietnamTimezone)->startOfDay() : null;
