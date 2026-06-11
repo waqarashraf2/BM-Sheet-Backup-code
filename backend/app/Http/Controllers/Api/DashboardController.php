@@ -1369,8 +1369,17 @@ if ($request->query('date')) {
             ->when($selectedProjectId !== null, fn ($query) => $query->whereKey($selectedProjectId))
             ->get();
         $projectIds = $projects->pluck('id')->toArray();
+        $projectTimezones = $projects->mapWithKeys(function ($project) {
+            $timezone = (int) $project->id === self::ASSIGNMENT_DASHBOARD_VIETNAM_PROJECT_ID
+                ? self::ASSIGNMENT_DASHBOARD_VIETNAM_TIMEZONE
+                : $this->resolveAssignmentDashboardProjectTimezone($project->timezone);
+
+            return [(int) $project->id => $timezone];
+        });
         $projectDueNow = $projects->mapWithKeys(function ($project) {
-            $timezone = $this->resolveAssignmentDashboardProjectTimezone($project->timezone);
+            $timezone = (int) $project->id === self::ASSIGNMENT_DASHBOARD_VIETNAM_PROJECT_ID
+                ? self::ASSIGNMENT_DASHBOARD_VIETNAM_TIMEZONE
+                : $this->resolveAssignmentDashboardProjectTimezone($project->timezone);
 
             return [
                 (int) $project->id => now($timezone)->format('Y-m-d H:i:s'),
@@ -1622,10 +1631,9 @@ $userCounts = User::whereIn('project_id', $projectIds)
         $delayedPendingCounts = $delayedPendingCounts->pluck('cnt', 'project_id');
 
         // DELAYED DONE COUNTS: RECEIVED cohort + completed after due_in
-        $delayedDoneCounts = collect();
+        $delayedDoneRows = collect();
         if (!empty($otherProjectIds)) {
             $otherDelayedDone = Order::queryAcrossProjects($otherProjectIds, function ($q, $pid) use ($applyTimestampRange) {
-                $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[(int) $pid] ?? 0;
                 $q->where('workflow_state', 'DELIVERED')
                     ->whereNotNull('due_in')
                     ->where(function ($completionQuery) {
@@ -1634,23 +1642,17 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     });
                 // Match projectStats received cohort (not all-time completed range)
                 $applyTimestampRange($q, 'received_at');
-
-                if ($offsetHours !== 0) {
-                    $q->whereRaw("COALESCE(delivered_at, completed_at) > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
-                } else {
-                    $q->whereRaw('COALESCE(delivered_at, completed_at) > due_in');
-                }
-
-                $q->selectRaw('? as project_id, COUNT(*) as cnt', [$pid])
-                    ->groupBy('project_id');
+                $q->selectRaw(
+                    '? as project_id, due_in, COALESCE(delivered_at, completed_at) as completion_at',
+                    [$pid]
+                );
             });
-            $delayedDoneCounts = $delayedDoneCounts->concat($otherDelayedDone);
+            $delayedDoneRows = $delayedDoneRows->concat($otherDelayedDone);
         }
         if ($hasProject16) {
             $table16 = \App\Services\ProjectOrderService::getTableName(16);
             if (self::tableExists($table16) && self::columnExists($table16, 'completed_at')) {
                 $project16DelayedDone = Order::queryAcrossProjects([16], function ($q, $pid) use ($applyProject16DateRange) {
-                    $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[(int) $pid] ?? 0;
                     $q->where('workflow_state', 'DELIVERED')
                         ->whereNotNull('due_in')
                         ->where(function ($completionQuery) {
@@ -1659,20 +1661,50 @@ $userCounts = User::whereIn('project_id', $projectIds)
                         });
                     // Match project 16 received cohort used across projectStats
                     $applyProject16DateRange($q, 'date');
-
-                    if ($offsetHours !== 0) {
-                        $q->whereRaw("COALESCE(delivered_at, completed_at) > DATE_ADD(due_in, INTERVAL {$offsetHours} HOUR)");
-                    } else {
-                        $q->whereRaw('COALESCE(delivered_at, completed_at) > due_in');
-                    }
-
-                    $q->selectRaw('? as project_id, COUNT(*) as cnt', [$pid])
-                        ->groupBy('project_id');
+                    $q->selectRaw(
+                        '? as project_id, due_in, COALESCE(delivered_at, completed_at) as completion_at',
+                        [$pid]
+                    );
                 });
-                $delayedDoneCounts = $delayedDoneCounts->concat($project16DelayedDone);
+                $delayedDoneRows = $delayedDoneRows->concat($project16DelayedDone);
             }
         }
-        $delayedDoneCounts = $delayedDoneCounts->pluck('cnt', 'project_id');
+        $delayedDoneCounts = $delayedDoneRows
+            ->groupBy(fn ($row) => (int) $row->project_id)
+            ->map(function ($rows, $projectId) use ($projectTimezones) {
+                $projectId = (int) $projectId;
+                $projectTimezone = $projectTimezones->get($projectId, self::DEFAULT_PROJECT_TIMEZONE);
+                $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[$projectId] ?? 0;
+
+                return $rows->filter(function ($row) use ($projectTimezone, $offsetHours) {
+                    try {
+                        $dueInPkt = Carbon::createFromFormat(
+                            'Y-m-d H:i:s',
+                            (string) $row->due_in,
+                            $projectTimezone
+                        );
+                        $completionPkt = Carbon::createFromFormat(
+                            'Y-m-d H:i:s',
+                            (string) $row->completion_at,
+                            self::ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE
+                        );
+
+                        if ($dueInPkt === false || $completionPkt === false) {
+                            return false;
+                        }
+
+                        if ($offsetHours !== 0) {
+                            $dueInPkt->addHours($offsetHours);
+                        }
+
+                        return $completionPkt->greaterThan(
+                            $dueInPkt->setTimezone(self::ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE)
+                        );
+                    } catch (\Throwable $e) {
+                        return false;
+                    }
+                })->count();
+            });
 
         $clientNameBreakdownProjectIds = array_values(array_intersect($projectIds, [14, 9, 46]));
         $clientNameCountsByProject = collect();
