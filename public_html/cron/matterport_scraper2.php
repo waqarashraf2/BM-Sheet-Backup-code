@@ -456,15 +456,12 @@ function rowToRecord(array $row): array
     // Stored as-is in UTC — no timezone shift applied.
     $dueDateRaw   = $row['Date Due'] ?? '';
     $dueDate      = parseDueDate($dueDateRaw);
-    // due_in stores the full Date Due datetime (varchar) for display/sorting
-    // Portal returns UTC; shift +1h to BST so Remaining badge matches London wall-clock.
-    // TODO: revisit at DST changeover (Oct 2026) — set back to 0 when UK is on GMT.
-    $dueIn        = parseDateTime($dueDateRaw);
-  /*  if ($dueIn) {  //removed by wasim ...local
-        $dueIn = (new DateTime($dueIn))->modify('+1 hour')->format('Y-m-d H:i:s');
-    }
-    */
-    $dueIn        = $dueIn ?: ($dueDateRaw ?: null);
+    // due_in (varchar, legacy) keeps the raw-string fallback for display.
+    // due_in_date_time (DATETIME) is strict — NULL if the portal value can't be parsed,
+    // so date comparisons / range filters work correctly.
+    $dueInParsed     = parseDateTime($dueDateRaw);
+    $dueIn           = $dueInParsed ?: ($dueDateRaw ?: null);
+    $dueInDateTime   = $dueInParsed;
 
     // Unmapped fields → extra_col_json (Time Left preserved here)
     $extra = [];
@@ -497,6 +494,7 @@ function rowToRecord(array $row): array
         'received_at'    => $receivedAt,
         'due_date'       => $dueDate,
         'due_in'         => $dueIn,
+        'due_in_date_time' => $dueInDateTime,
         'import_source'  => 'api',
         'created_at'     => $now,
         'updated_at'     => $now,
@@ -521,7 +519,7 @@ if (empty($allRows)) {
         // ── Pre-flight: verify required columns exist in target table ──────
         $requiredCols = [
             'order_number', 'project_id', 'client_portal_id',
-            'extra_col_json', 'priority', 'due_in', 'import_source',
+            'extra_col_json', 'priority', 'due_in', 'due_in_date_time', 'import_source',
         ];
         $existingCols = [];
         $colStmt = $pdo->query('SHOW COLUMNS FROM `' . DB_TABLE . '`');
