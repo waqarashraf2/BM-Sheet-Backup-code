@@ -5146,11 +5146,10 @@ if ($useDueInFirstOrdering) {
             );
         }
 
-        // received_at is stored as PKT display values for all projects (after migrations).
-        // Using project display timezone (e.g. Etc/GMT, Europe/London) shifts the boundary
-        // by 1–5h, causing early-morning PKT orders to fall on the wrong date.
-        $projectTimezone = $storageTimezone; // Always PKT — matches actual storage
-        $toStorageTimezone = fn (Carbon $date) => $date->setTimezone($storageTimezone);
+        // Parse dates in the project's actual display timezone (e.g. Etc/GMT, Europe/London)
+        // Then convert to UTC for database queries (received_at is stored in UTC)
+        $projectTimezone = $project->timezone ?: 'Asia/Karachi'; // Use project's timezone
+        $toStorageTimezone = fn (Carbon $date) => $date->setTimezone('UTC'); // Convert to UTC for DB
 
         if ($startDate || $endDate) {
             $parsedStart = $startDate ? Carbon::parse($startDate, $projectTimezone)->startOfDay() : null;
