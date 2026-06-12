@@ -107,6 +107,10 @@ if ($request->query('date')) {
         $shiftStartLocal = $shiftStartPkt->format('Y-m-d H:i:s');
         $shiftEndLocal = $shiftEndPkt->format('Y-m-d H:i:s');
 
+        // Use UTC times for database queries (received_at is stored in UTC)
+        $shiftStartUtcStr = $shiftStartUtc->format('Y-m-d H:i:s');
+        $shiftEndUtcStr = $shiftEndUtc->format('Y-m-d H:i:s');
+
         /*
         |--------------------------------------------------------------------------
         | Get Active Projects
@@ -160,8 +164,8 @@ if ($request->query('date')) {
                     ELSE NULL
                 END as batch_due_duration_minutes
             ", [$batchNowPkt])
-            ->where('received_at', '>=', $shiftStartLocal)
-            ->where('received_at', '<', $shiftEndLocal);
+            ->where('received_at', '>=', $shiftStartUtcStr)
+            ->where('received_at', '<', $shiftEndUtcStr);
 
         if ($projectId) {
             $query->where('project_id', $projectId);
@@ -175,8 +179,8 @@ if ($request->query('date')) {
         |--------------------------------------------------------------------------
         */
         $statusWindowQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->where('received_at', '>=', $shiftStartLocal)
-            ->where('received_at', '<', $shiftEndLocal);
+            ->where('received_at', '>=', $shiftStartUtcStr)
+            ->where('received_at', '<', $shiftEndUtcStr);
 
         if ($projectId) {
             $statusWindowQuery->where('project_id', $projectId);
@@ -282,10 +286,13 @@ if ($request->query('date')) {
             ->subDays(2)
             ->format('Y-m-d H:i:s');
 
+        // Convert to UTC for database query
+        $plansRemainingStartUtc = $shiftStartPkt->copy()->subDays(2)->setTimezone('UTC')->format('Y-m-d H:i:s');
+
         $plansRemainingQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
             ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, ?, {$batchDueInExpr}), 0) as remaining_hour_bucket", [$batchNowPkt])
-            ->where('received_at', '>=', $plansRemainingStartLocal)
-            ->where('received_at', '<', $shiftEndLocal)
+            ->where('received_at', '>=', $plansRemainingStartUtc)
+            ->where('received_at', '<', $shiftEndUtcStr)
             ->whereNotNull('due_in')
             ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER']);
 
@@ -310,14 +317,14 @@ if ($request->query('date')) {
         | Hourly Received Orders
         |--------------------------------------------------------------------------
         */
-        $last24h = $shiftStartLocal;
+        $last24h = $shiftStartUtcStr;
 
         $doneOrdersLast24h = collect(
             DB::table(DB::raw("({$rawUnion}) as orders"))
                 ->where('workflow_state', 'DELIVERED')
                 ->whereNotNull('completed_at')
                 ->where('completed_at', '>=', $last24h)
-                ->where('completed_at', '<', $shiftEndLocal)
+                ->where('completed_at', '<', $shiftEndUtcStr)
                 ->when(
                     $projectId,
                     fn($q) => $q->where('project_id', $projectId)
