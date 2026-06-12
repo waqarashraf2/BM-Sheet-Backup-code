@@ -5146,10 +5146,11 @@ if ($useDueInFirstOrdering) {
             );
         }
 
-        // received_at is stored in UTC in the database.
-        // Parse dates as PKT (project timezone), then convert shift times to UTC for database queries.
-        $projectTimezone = 'Asia/Karachi'; // Parse user input as PKT
-        $toStorageTimezone = fn (Carbon $date) => $date->setTimezone('UTC'); // Convert to UTC for DB
+        // received_at is stored as PKT display values for all projects (after migrations).
+        // Using project display timezone (e.g. Etc/GMT, Europe/London) shifts the boundary
+        // by 1–5h, causing early-morning PKT orders to fall on the wrong date.
+        $projectTimezone = $storageTimezone; // Always PKT — matches actual storage
+        $toStorageTimezone = fn (Carbon $date) => $date->setTimezone($storageTimezone);
 
         if ($startDate || $endDate) {
             // Parse dates and convert to shift boundaries (22:00 PKT)
@@ -5219,8 +5220,7 @@ if ($useDueInFirstOrdering) {
         string $storageTimezone
     ): array {
         $vietnamTimezone = self::ASSIGNMENT_DASHBOARD_VIETNAM_TIMEZONE;
-        // Convert to UTC for database queries (received_at is stored in UTC)
-        $toStoredTime = fn (Carbon $date) => $date->copy()->setTimezone('UTC');
+        $toStoredTime = fn (Carbon $date) => $date->copy()->setTimezone($storageTimezone);
 
         if ($startDate || $endDate) {
             $parsedStart = null;
