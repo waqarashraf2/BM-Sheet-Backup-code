@@ -88,14 +88,13 @@ if ($request->query('date')) {
         |--------------------------------------------------------------------------
         */
         $selectedDatePkt = \Carbon\Carbon::parse($date, 'Asia/Karachi');
-
-        // For batch calculations: use selected date's shift end time as reference
-        // This ensures remaining_time displays correctly for both today and historical dates
-        $shiftEndPkt = $selectedDatePkt->copy()->setTime(22, 0, 0);
-        $batchNowPkt = $shiftEndPkt->format('Y-m-d H:i:s');
+        $batchNowPkt = now('Asia/Karachi')->format('Y-m-d H:i:s');
 
         // 29 10 PM
         $shiftStartPkt = $selectedDatePkt->copy()->subDay()->setTime(22, 0, 0);
+
+        // 30 10 PM
+        $shiftEndPkt = $selectedDatePkt->copy()->setTime(22, 0, 0);
 
         /*
         |--------------------------------------------------------------------------
@@ -106,10 +105,6 @@ if ($request->query('date')) {
         $shiftEndUtc = $shiftEndPkt->copy()->setTimezone('UTC');
         $shiftStartLocal = $shiftStartPkt->format('Y-m-d H:i:s');
         $shiftEndLocal = $shiftEndPkt->format('Y-m-d H:i:s');
-
-        // Use UTC times for database queries (received_at is stored in UTC)
-        $shiftStartUtcStr = $shiftStartUtc->format('Y-m-d H:i:s');
-        $shiftEndUtcStr = $shiftEndUtc->format('Y-m-d H:i:s');
 
         /*
         |--------------------------------------------------------------------------
@@ -164,8 +159,8 @@ if ($request->query('date')) {
                     ELSE NULL
                 END as batch_due_duration_minutes
             ", [$batchNowPkt])
-            ->where('received_at', '>=', $shiftStartUtcStr)
-            ->where('received_at', '<', $shiftEndUtcStr);
+            ->where('received_at', '>=', $shiftStartLocal)
+            ->where('received_at', '<', $shiftEndLocal);
 
         if ($projectId) {
             $query->where('project_id', $projectId);
@@ -179,8 +174,8 @@ if ($request->query('date')) {
         |--------------------------------------------------------------------------
         */
         $statusWindowQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
-            ->where('received_at', '>=', $shiftStartUtcStr)
-            ->where('received_at', '<', $shiftEndUtcStr);
+            ->where('received_at', '>=', $shiftStartLocal)
+            ->where('received_at', '<', $shiftEndLocal);
 
         if ($projectId) {
             $statusWindowQuery->where('project_id', $projectId);
@@ -289,7 +284,7 @@ if ($request->query('date')) {
         $plansRemainingQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
             ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, ?, {$batchDueInExpr}), 0) as remaining_hour_bucket", [$batchNowPkt])
             ->where('received_at', '>=', $plansRemainingStartLocal)
-            ->where('received_at', '<', $shiftEndUtcStr)
+            ->where('received_at', '<', $shiftEndLocal)
             ->whereNotNull('due_in')
             ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER']);
 
@@ -314,14 +309,14 @@ if ($request->query('date')) {
         | Hourly Received Orders
         |--------------------------------------------------------------------------
         */
-        $last24h = $shiftStartUtcStr;
+        $last24h = $shiftStartLocal;
 
         $doneOrdersLast24h = collect(
             DB::table(DB::raw("({$rawUnion}) as orders"))
                 ->where('workflow_state', 'DELIVERED')
                 ->whereNotNull('completed_at')
                 ->where('completed_at', '>=', $last24h)
-                ->where('completed_at', '<', $shiftEndUtcStr)
+                ->where('completed_at', '<', $shiftEndLocal)
                 ->when(
                     $projectId,
                     fn($q) => $q->where('project_id', $projectId)
@@ -1225,7 +1220,6 @@ if ($request->query('date')) {
     
     
 
-    
     /**
      * GET /dashboard/project-stats
      * Project stats based on selected date.
@@ -5146,10 +5140,11 @@ if ($useDueInFirstOrdering) {
             );
         }
 
-        // Parse dates in the project's actual display timezone (e.g. Etc/GMT, Europe/London)
-        // Then convert to UTC for database queries (received_at is stored in UTC)
-        $projectTimezone = $project->timezone ?: 'Asia/Karachi'; // Use project's timezone
-        $toStorageTimezone = fn (Carbon $date) => $date->setTimezone('UTC'); // Convert to UTC for DB
+        // received_at is stored as PKT display values for all projects (after migrations).
+        // Using project display timezone (e.g. Etc/GMT, Europe/London) shifts the boundary
+        // by 1–5h, causing early-morning PKT orders to fall on the wrong date.
+        $projectTimezone = $storageTimezone; // Always PKT — matches actual storage
+        $toStorageTimezone = fn (Carbon $date) => $date->setTimezone($storageTimezone);
 
         if ($startDate || $endDate) {
             $parsedStart = $startDate ? Carbon::parse($startDate, $projectTimezone)->startOfDay() : null;
