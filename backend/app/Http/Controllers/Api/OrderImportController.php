@@ -751,9 +751,16 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                 $minutes = isset($m[2]) ? (int) $m[2] : 0;
 
                 if ($hours > 0 || $minutes > 0) {
+                    $durationMinutes = ($hours * 60) + $minutes;
+
+                    // Project 16's dashboard adds two hours back when displaying due_in.
+                    // Store the relative deadline two hours earlier to avoid double counting.
+                    if ((int) $project->id === 16) {
+                        $durationMinutes = max(0, $durationMinutes - 120);
+                    }
+
                     $dueAt = $receivedAt->copy()
-                        ->addHours($hours)
-                        ->addMinutes($minutes);
+                        ->addMinutes($durationMinutes);
                 } else {
                     $looksLikeAbsoluteDateTime =
                         preg_match('/[\/\-]/', $dueInRaw)

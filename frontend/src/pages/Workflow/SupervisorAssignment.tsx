@@ -18,6 +18,7 @@ import ClockDisplay from '../../components/ClockDisplay';
 
 const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
 const PROJECT_16_TIMEZONE = 'Asia/Ho_Chi_Minh';
+const PROJECT_16_DUE_IN_TIMEZONE = 'Asia/Karachi';
 const TEAM_NAME_COLUMN_PROJECT_IDS = [16, 42];
 const DIRECT_CHECKER_ASSIGNMENT_PROJECT_IDS = [16, 42];
 const QA_WAIT_DURING_FILLER_PROJECT_IDS = [12];
@@ -830,12 +831,15 @@ export default function SupervisorAssignment() {
   const [blinkingUrgentOrderIds, setBlinkingUrgentOrderIds] = useState<Set<number>>(new Set());
   const urgentBlinkTriggeredRef = useRef<Set<number>>(new Set());
   /** Parse due_in "MM/DD/YYYY HH:MM:SS" or ISO into milliseconds remaining.
-   *  due_in is in project time; remaining = due_in minus current project time.
+   *  Project 16 is counted in PKT; other projects use their selected timezone.
    *  Fallback: if due_in is empty, use received_at + 24h as default deadline. */
   const parseDueIn = useCallback((raw: string | null, receivedAt?: string | null): number | null => {
-    const getProjectNow = () => {
-      const projectNowStr = new Date().toLocaleString('en-US', { timeZone: projectTz });
-      return new Date(projectNowStr).getTime();
+    const getCountdownNow = () => {
+      const countdownTimeZone = effectiveProjectId === 16
+        ? PROJECT_16_DUE_IN_TIMEZONE
+        : projectTz;
+      const countdownNowStr = new Date().toLocaleString('en-US', { timeZone: countdownTimeZone });
+      return new Date(countdownNowStr).getTime();
     };
     if (raw) {
       let d = new Date(raw);
@@ -843,15 +847,15 @@ export default function SupervisorAssignment() {
         const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/);
         if (m) d = new Date(+m[3], +m[1] - 1, +m[2], +m[4], +m[5], +m[6]);
       }
-      if (!isNaN(d.getTime())) return d.getTime() - getProjectNow();
+      if (!isNaN(d.getTime())) return d.getTime() - getCountdownNow();
     }
     // Fallback: received_at + 24 hours
     if (receivedAt) {
       const rd = new Date(receivedAt);
-      if (!isNaN(rd.getTime())) return (rd.getTime() + 24 * 3600_000) - getProjectNow();
+      if (!isNaN(rd.getTime())) return (rd.getTime() + 24 * 3600_000) - getCountdownNow();
     }
     return null;
-  }, [projectTz]);
+  }, [effectiveProjectId, projectTz]);
   const sortedOrders = useMemo(() => {
     const shouldSortByRemainingTime = effectiveProjectId === 1 || effectiveProjectId === 2 || effectiveProjectId === 3;
 

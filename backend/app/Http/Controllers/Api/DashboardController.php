@@ -5447,6 +5447,7 @@ if ($useDueInFirstOrdering) {
 
         return (int) $matches[1];
     }
+    
 
     /**
      * Map worker role to project table columns.
