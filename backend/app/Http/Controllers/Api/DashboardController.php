@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Schema;
 class DashboardController extends Controller
 {
     private const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
-    private const ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE = 'Asia/Karachi';
+    private const ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE = 'UTC';
     private const ASSIGNMENT_DASHBOARD_VIETNAM_PROJECT_ID = 16;
     private const ASSIGNMENT_DASHBOARD_VIETNAM_TIMEZONE = 'Asia/Ho_Chi_Minh';
     private const ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS = [
