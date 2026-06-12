@@ -5153,28 +5153,15 @@ if ($useDueInFirstOrdering) {
         $toStorageTimezone = fn (Carbon $date) => $date->setTimezone($storageTimezone);
 
         if ($startDate || $endDate) {
-            // Parse dates and convert to shift boundaries (22:00 PKT)
-            $parsedStart = null;
-            $parsedEnd = null;
+            $parsedStart = $startDate ? Carbon::parse($startDate, $projectTimezone)->startOfDay() : null;
+            $parsedEnd   = $endDate   ? Carbon::parse($endDate,   $projectTimezone)->endOfDay()   : null;
 
-            if ($startDate) {
-                $dateObj = Carbon::parse($startDate, $projectTimezone);
-                $parsedStart = $dateObj->copy()->subDay()->setTime(22, 0, 0);
-            }
-
-            if ($endDate) {
-                $dateObj = Carbon::parse($endDate, $projectTimezone);
-                $parsedEnd = $dateObj->copy()->setTime(22, 0, 0);
-            }
-
-            // Single date: treat as one shift day (22:00 to 22:00)
+            // Single date: treat as full day in project timezone
             if ($parsedStart && !$parsedEnd) {
-                $dateObj = Carbon::parse($startDate, $projectTimezone);
-                $parsedEnd = $dateObj->copy()->setTime(22, 0, 0);
+                $parsedEnd = Carbon::parse($startDate, $projectTimezone)->endOfDay();
             }
             if ($parsedEnd && !$parsedStart) {
-                $dateObj = Carbon::parse($endDate, $projectTimezone);
-                $parsedStart = $dateObj->copy()->subDay()->setTime(22, 0, 0);
+                $parsedStart = Carbon::parse($endDate, $projectTimezone)->startOfDay();
             }
 
             return [
@@ -5187,29 +5174,20 @@ if ($useDueInFirstOrdering) {
         if ($dateFilter) {
             $selectedDate = Carbon::parse($dateFilter, $projectTimezone);
 
-            // Use shift boundaries (22:00 PKT to 22:00 PKT) instead of day boundaries (00:00-23:59)
-            // This matches the batch dashboard shift-based filtering
-            $shiftStart = $selectedDate->copy()->subDay()->setTime(22, 0, 0);
-            $shiftEnd = $selectedDate->copy()->setTime(22, 0, 0);
-
             return [
                 'type' => 'between',
-                'start' => $toStorageTimezone($shiftStart),
-                'end' => $toStorageTimezone($shiftEnd),
+                'start' => $toStorageTimezone($selectedDate->copy()->startOfDay()),
+                'end' => $toStorageTimezone($selectedDate->copy()->endOfDay()),
             ];
         }
 
         // Today in project timezone — no date sent from frontend
         $projectNow = now($projectTimezone);
 
-        // Use shift boundaries (22:00 PKT to 22:00 PKT) instead of day boundaries
-        $shiftStart = $projectNow->copy()->subDay()->setTime(22, 0, 0);
-        $shiftEnd = $projectNow->copy()->setTime(22, 0, 0);
-
         return [
             'type'  => 'between',
-            'start' => $toStorageTimezone($shiftStart),
-            'end'   => $toStorageTimezone($shiftEnd),
+            'start' => $toStorageTimezone($projectNow->copy()->startOfDay()),
+            'end'   => $toStorageTimezone($projectNow->copy()->endOfDay()),
         ];
     }
 
@@ -5223,27 +5201,14 @@ if ($useDueInFirstOrdering) {
         $toStoredTime = fn (Carbon $date) => $date->copy()->setTimezone($storageTimezone);
 
         if ($startDate || $endDate) {
-            $parsedStart = null;
-            $parsedEnd = null;
+            $parsedStart = $startDate ? Carbon::parse($startDate, $vietnamTimezone)->startOfDay() : null;
+            $parsedEnd   = $endDate   ? Carbon::parse($endDate,   $vietnamTimezone)->endOfDay()   : null;
 
-            if ($startDate) {
-                $dateObj = Carbon::parse($startDate, $vietnamTimezone);
-                $parsedStart = $dateObj->copy()->subDay()->setTime(22, 0, 0);
-            }
-
-            if ($endDate) {
-                $dateObj = Carbon::parse($endDate, $vietnamTimezone);
-                $parsedEnd = $dateObj->copy()->setTime(22, 0, 0);
-            }
-
-            // Single date: treat as one shift day (22:00 to 22:00)
             if ($parsedStart && !$parsedEnd) {
-                $dateObj = Carbon::parse($startDate, $vietnamTimezone);
-                $parsedEnd = $dateObj->copy()->setTime(22, 0, 0);
+                $parsedEnd = Carbon::parse($startDate, $vietnamTimezone)->endOfDay();
             }
             if ($parsedEnd && !$parsedStart) {
-                $dateObj = Carbon::parse($endDate, $vietnamTimezone);
-                $parsedStart = $dateObj->copy()->subDay()->setTime(22, 0, 0);
+                $parsedStart = Carbon::parse($endDate, $vietnamTimezone)->startOfDay();
             }
 
             return [
@@ -5257,14 +5222,10 @@ if ($useDueInFirstOrdering) {
             ? Carbon::parse($dateFilter, $vietnamTimezone)
             : now($vietnamTimezone);
 
-        // Use shift boundaries (22:00 to 22:00) instead of day boundaries
-        $shiftStart = $selectedDate->copy()->subDay()->setTime(22, 0, 0);
-        $shiftEnd = $selectedDate->copy()->setTime(22, 0, 0);
-
         return [
             'type' => 'between',
-            'start' => $toStoredTime($shiftStart),
-            'end' => $toStoredTime($shiftEnd),
+            'start' => $toStoredTime($selectedDate->copy()->startOfDay()),
+            'end' => $toStoredTime($selectedDate->copy()->endOfDay()),
         ];
     }
 
