@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Schema;
 class DashboardController extends Controller
 {
     private const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
-    private const ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE = 'UTC';
+    private const ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE = 'Asia/Karachi';
     private const ASSIGNMENT_DASHBOARD_VIETNAM_PROJECT_ID = 16;
     private const ASSIGNMENT_DASHBOARD_VIETNAM_TIMEZONE = 'Asia/Ho_Chi_Minh';
     private const ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS = [
@@ -286,12 +286,9 @@ if ($request->query('date')) {
             ->subDays(2)
             ->format('Y-m-d H:i:s');
 
-        // Convert to UTC for database query
-        $plansRemainingStartUtc = $shiftStartPkt->copy()->subDays(2)->setTimezone('UTC')->format('Y-m-d H:i:s');
-
         $plansRemainingQuery = DB::table(DB::raw("({$rawUnion}) as orders"))
             ->selectRaw("GREATEST(TIMESTAMPDIFF(HOUR, ?, {$batchDueInExpr}), 0) as remaining_hour_bucket", [$batchNowPkt])
-            ->where('received_at', '>=', $plansRemainingStartUtc)
+            ->where('received_at', '>=', $plansRemainingStartLocal)
             ->where('received_at', '<', $shiftEndUtcStr)
             ->whereNotNull('due_in')
             ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER']);
