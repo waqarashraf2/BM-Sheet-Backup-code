@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use DateTime;
+use DateTimeZone;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -130,18 +131,19 @@ class FocalPbPhotoScraperService
 
     private function scrapeTable(): array
     {
-        Log::channel('daily')->info('FocalPbPhoto: Fetching Jobs pages (Ready + InProgress)');
+        Log::channel('daily')->info('FocalPbPhoto: Fetching all active Jobs sections (Ready + InProgress)');
 
-        $paths = [
-            '/Jobs/Jobs?jobStatus=Ready',
-            '/Jobs/Jobs?jobStatus=InProgress',
+        $sections = [
+            'Ready' => '/Jobs/Jobs?jobStatus=Ready',
+            'InProgress' => '/Jobs/Jobs?jobStatus=InProgress',
         ];
 
         $rows = [];
         $seen = [];
 
-        foreach ($paths as $path) {
+        foreach ($sections as $portalStatus => $path) {
             $response = $this->http()->get($this->baseUrl . $path);
+            $response->throw();
 
             $dom = new \DOMDocument();
             libxml_use_internal_errors(true);
@@ -190,6 +192,11 @@ class FocalPbPhotoScraperService
                     }
 
                     $row = array_combine(array_slice($headers, 0, count($values)), $values);
+                    if (!is_array($row)) {
+                        continue;
+                    }
+
+                    $row['_portal_status'] = $portalStatus;
                     $detailUrl = $this->extractDetailUrlFromRow($xpath, $tr);
                     if ($detailUrl) {
                         $row['_detail_url'] = $detailUrl;
@@ -249,6 +256,22 @@ class FocalPbPhotoScraperService
             }
 
             if (($portalId && isset($existingPortalIds[$portalId])) || isset($existingOrderNumbers[$orderNumber])) {
+                $matchColumn = $portalId && isset($existingPortalIds[$portalId])
+                    ? 'client_portal_id'
+                    : 'order_number';
+                $matchValue = $matchColumn === 'client_portal_id' ? $portalId : $orderNumber;
+
+                DB::table($this->table)
+                    ->where($matchColumn, $matchValue)
+                    ->update([
+                        'received_at' => $record['received_at'],
+                        'due_date' => $record['due_date'],
+                        'due_in' => $record['due_in'],
+                        'priority' => $record['priority'],
+                        'metadata' => $record['metadata'],
+                        'updated_at' => now(),
+                    ]);
+
                 $skipped++;
                 continue;
             }
@@ -293,11 +316,13 @@ class FocalPbPhotoScraperService
         $dateReceived = $this->rowValue($row, ['Date Received', 'Received']);
         $dateDue = $this->rowValue($row, ['Date Due', 'Due Date']);
         $timeLeft = $this->rowValue($row, ['Time Left']) ?? '';
+        $portalStatus = $this->rowValue($row, ['_portal_status']) ?? 'Ready';
 
         $extra = [
             'enhancement_id' => $enhancementId,
             'property_id' => $propertyId,
             'time_left' => $timeLeft,
+            'portal_status' => $portalStatus,
             'detail_url' => $detailUrl,
             'category' => $category,
             'comment' => $comment,
@@ -326,7 +351,7 @@ class FocalPbPhotoScraperService
             'priority' => $this->resolvePriority($timeLeft),
             'received_at' => $this->parseDateTime($dateReceived),
             'due_date' => $this->parseDueDate($dateDue),
-            'due_in' => $this->parseDateTimeWithExtraHour($dateDue),
+            'due_in' => $this->parseDateTime($dateDue),
             'import_source' => 'cron',
             'created_at' => now(),
             'updated_at' => now(),
@@ -628,14 +653,14 @@ class FocalPbPhotoScraperService
             return null;
         }
 
-        $raw = str_replace(' Utc', '', trim($raw));
+        $raw = trim($raw);
+        $raw = preg_replace('/\s+Utc$/i', '', $raw);
 
         foreach (['m/d/Y H:i:s', 'd/m/Y H:i:s', 'm/d/Y', 'd/m/Y'] as $format) {
-            $dt = DateTime::createFromFormat($format, $raw);
-            if ($dt) {
-                // Convert from UTC to PKT (app timezone)
-                $dt->setTimezone(new DateTimeZone('UTC'));
-                $dt->setTimezone(new DateTimeZone('Asia/Karachi'));
+            $dt = DateTime::createFromFormat('!' . $format, $raw, new DateTimeZone('UTC'));
+            $errors = DateTime::getLastErrors();
+
+            if ($dt && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0))) {
                 return $dt->format('Y-m-d H:i:s');
             }
         }
@@ -649,44 +674,14 @@ class FocalPbPhotoScraperService
             return null;
         }
 
-        $raw = str_replace(' Utc', '', trim($raw));
+        $raw = preg_replace('/\s+Utc$/i', '', trim($raw));
 
         foreach (['m/d/Y H:i:s', 'd/m/Y H:i:s', 'm/d/Y', 'd/m/Y'] as $format) {
-            $dt = DateTime::createFromFormat($format, $raw);
-            if ($dt) {
+            $dt = DateTime::createFromFormat('!' . $format, $raw, new DateTimeZone('UTC'));
+            $errors = DateTime::getLastErrors();
+
+            if ($dt && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0))) {
                 return $dt->format('Y-m-d');
-            }
-        }
-
-        return null;
-    }
-
-    private function parseDateTimeWithExtraHour(?string $raw): ?string
-    {
-        if (!$raw) {
-            return null;
-        }
-
-        $raw = str_replace(' Utc', '', trim($raw));
-
-        foreach (['m/d/Y H:i:s', 'd/m/Y H:i:s', 'm/d/Y', 'd/m/Y'] as $format) {
-            try {
-                $dt = DateTime::createFromFormat($format, $raw);
-                if ($dt === false) {
-                    continue;
-                }
-
-                // Convert from UTC to PKT (app timezone)
-                $dt->setTimezone(new DateTimeZone('UTC'));
-                $dt->setTimezone(new DateTimeZone('Asia/Karachi'));
-                return $dt->format('Y-m-d H:i:s');
-            } catch (\Throwable $e) {
-                Log::warning('FocalPbPhoto: Failed to parse due_in datetime', [
-                    'raw_value' => $raw,
-                    'format' => $format,
-                    'error' => $e->getMessage(),
-                ]);
-                continue;
             }
         }
 
