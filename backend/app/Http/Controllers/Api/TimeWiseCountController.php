@@ -7,15 +7,53 @@ use App\Models\Project;
 use App\Services\ProjectOrderService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Throwable;
 
 class TimeWiseCountController extends Controller
 {
     private const REPORT_TIMEZONE = 'Asia/Karachi';
 
     public function index(Request $request)
+    {
+        try {
+            return $this->generateReport($request);
+        } catch (Throwable $exception) {
+            Log::error('Time-wise count report failed', [
+                'user_id' => $request->user()?->id,
+                'parameters' => $request->only(['start_at', 'end_at', 'project_id']),
+                'exception' => $exception,
+            ]);
+
+            $debug = [
+                'exception' => get_class($exception),
+                'message' => $exception->getMessage(),
+                'code' => $exception->getCode(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+            ];
+
+            if ($exception instanceof QueryException) {
+                $debug['sql'] = $exception->getSql();
+                $debug['bindings'] = $exception->getBindings();
+                $debug['sql_state'] = $exception->errorInfo[0] ?? null;
+                $debug['driver_code'] = $exception->errorInfo[1] ?? null;
+                $debug['driver_message'] = $exception->errorInfo[2] ?? null;
+            }
+
+            return response()->json([
+                'message' => 'Time-wise count report failed.',
+                'error' => class_basename($exception),
+                'debug' => $debug,
+            ], 500);
+        }
+    }
+
+    private function generateReport(Request $request)
     {
         $validated = $request->validate([
             'start_at' => ['required', 'date_format:Y-m-d H:i'],
@@ -154,13 +192,13 @@ class TimeWiseCountController extends Controller
                 })
                 ->whereRaw("{$idExpression} IS NOT NULL")
                 ->selectRaw("{$idExpression} as worker_id")
-                ->selectRaw("COALESCE(NULLIF(TRIM({$nameExpression}), ''), 'Unknown') as worker_name")
+                ->selectRaw("COALESCE(MAX(NULLIF(TRIM({$nameExpression}), '')), 'Unknown') as worker_name")
                 ->selectRaw(
                     "SUM(CASE WHEN {$doneCondition} AND {$normalizedDateExpression} BETWEEN ? AND ? THEN 1 ELSE 0 END) as done_count",
                     [$startAt->toDateTimeString(), $endAt->toDateTimeString()]
                 )
                 ->selectRaw("SUM(CASE WHEN NOT ({$doneCondition}) AND {$activeCondition} THEN 1 ELSE 0 END) as wip_count")
-                ->groupByRaw("{$idExpression}, {$nameExpression}")
+                ->groupByRaw($idExpression)
                 ->get();
 
             return $rows
