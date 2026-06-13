@@ -744,7 +744,7 @@ private function processCsvString(string $csvText, Project $project, OrderImport
             if (!empty($data['due_in'])) {
 
                 $dueInRaw = trim((string) $data['due_in']);
-
+                
                 preg_match('/^\s*(?:(\d+)\s*h(?:ours?)?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?\s*$/i', $dueInRaw, $m);
 
                 $hours = isset($m[1]) ? (int) $m[1] : 0;

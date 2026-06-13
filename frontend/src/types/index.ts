@@ -739,6 +739,47 @@ export interface OpsProjectItem {
   };
 }
 
+export interface TimeWiseCountProject {
+  id: number;
+  code: string;
+  name: string;
+  workflow_type: WorkflowType;
+}
+
+export interface TimeWiseCountSummary {
+  role: 'drawer' | 'designer' | 'checker' | 'qa';
+  done: number;
+  wip: number;
+  workers: number;
+}
+
+export interface TimeWiseCountWorker {
+  worker_id: number;
+  worker_name: string;
+  role: TimeWiseCountSummary['role'];
+  done: number;
+  wip: number;
+  projects: Array<{
+    project_id: number;
+    project_name: string;
+    done: number;
+    wip: number;
+  }>;
+}
+
+export interface TimeWiseCountData {
+  start_at: string;
+  end_at: string;
+  timezone: string;
+  projects: TimeWiseCountProject[];
+  summary: TimeWiseCountSummary[];
+  workers: TimeWiseCountWorker[];
+  totals: {
+    done: number;
+    wip: number;
+  };
+}
+
 export interface QueueHealth {
   project_id: number;
   workflow_type: WorkflowType;

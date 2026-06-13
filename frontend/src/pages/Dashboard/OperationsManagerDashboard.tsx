@@ -3,10 +3,11 @@ import { dashboardService, projectService } from '../../services';
 import { useSmartPolling } from '../../hooks/useSmartPolling';
 import type { DashboardTeamPerformance, OpsDashboardData, OpsProjectItem } from '../../types';
 import { AnimatedPage, PageHeader, StatCard, StatusBadge, OpsManagerDashboardSkeleton } from '../../components/ui';
-import { Users, AlertTriangle, Package, TrendingUp, ChevronRight, ChevronDown, Pencil, CheckSquare, Eye, Palette, Calendar, Shield, LayoutDashboard, Briefcase, UserCheck, Search, Target, Timer, Info, Plus, Trash2, X } from 'lucide-react';
+import { Users, AlertTriangle, Package, TrendingUp, ChevronRight, ChevronDown, Pencil, CheckSquare, Eye, Palette, Calendar, Shield, LayoutDashboard, Briefcase, UserCheck, Search, Target, Timer, Info, Plus, Trash2, X, CalendarClock } from 'lucide-react';
 import DailyOperationsView from './DailyOperationsView';
+import TimeWiseCountView from './TimeWiseCountView';
 
-type OMTab = 'overview' | 'projects' | 'teams' | 'staff' | 'daily-operations';
+type OMTab = 'overview' | 'projects' | 'teams' | 'staff' | 'daily-operations' | 'time-wise';
 
 export default function OperationsManagerDashboard() {
   const [data, setData] = useState<OpsDashboardData | null>(null);
@@ -143,6 +144,7 @@ export default function OperationsManagerDashboard() {
     { id: 'teams' as OMTab, label: 'Teams', icon: Shield },
     { id: 'staff' as OMTab, label: 'Staff Report', icon: Users },
     { id: 'daily-operations' as OMTab, label: 'Daily Operations', icon: Calendar },
+    { id: 'time-wise' as OMTab, label: 'Time-wise Count', icon: CalendarClock },
   ];
 
   if (loading) return (
@@ -187,12 +189,12 @@ export default function OperationsManagerDashboard() {
           </div>
 
           {/* Tab Navigation */}
-          <div className="flex items-center gap-1 mb-6 p-1 bg-slate-100 rounded-xl w-fit">
+          <div className="flex items-center gap-1 mb-6 p-1 bg-slate-100 rounded-xl w-full overflow-x-auto">
             {tabs.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${activeTab === tab.id
+                className={`flex shrink-0 items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${activeTab === tab.id
                   ? 'bg-white text-slate-900 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
                   }`}
@@ -206,6 +208,10 @@ export default function OperationsManagerDashboard() {
           {/* Daily Operations Tab */}
           {activeTab === 'daily-operations' && (
             <DailyOperationsView />
+          )}
+
+          {activeTab === 'time-wise' && (
+            <TimeWiseCountView projects={(data.projects || []).map((item) => item.project)} />
           )}
 
           {/* Overview Tab */}

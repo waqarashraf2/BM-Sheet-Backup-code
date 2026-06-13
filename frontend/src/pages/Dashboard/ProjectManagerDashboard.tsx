@@ -7,8 +7,9 @@ import { AnimatedPage, PageHeader, StatCard, PMDashboardSkeleton } from '../../c
 import {
   Package, TrendingUp, Clock, Users, ChevronDown, ChevronRight,
   Pencil, CheckSquare, Eye, Palette, CircleDot, UserCheck, AlertTriangle, Info,
-  Plus, Trash2, X, Timer, Target, Search,
+  Plus, Trash2, X, Timer, Target, Search, CalendarClock,
 } from 'lucide-react';
+import TimeWiseCountView from './TimeWiseCountView';
 
 export default function ProjectManagerDashboard() {
   const [data, setData] = useState<PMDashboardData | null>(null);
@@ -17,7 +18,7 @@ export default function ProjectManagerDashboard() {
   const [expandedStaff, setExpandedStaff] = useState<number | null>(null);
   const [staffRoleFilter, setStaffRoleFilter] = useState<string>('all');
   const [staffSearch, setStaffSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'projects' | 'staff' | 'teams'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'staff' | 'teams' | 'time-wise'>('projects');
   const [showCreateTeam, setShowCreateTeam] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
   const [creatingTeam, setCreatingTeam] = useState(false);
@@ -182,6 +183,7 @@ export default function ProjectManagerDashboard() {
     { key: 'projects' as const, label: 'My Projects', count: (data.projects || []).length },
     { key: 'staff' as const, label: 'Staff Report', count: filteredStaff.length },
     { key: 'teams' as const, label: 'Teams', count: (data.team_performance || []).length },
+    { key: 'time-wise' as const, label: 'Time-wise Count', count: 0, icon: CalendarClock },
   ];
 
   return (
@@ -208,16 +210,17 @@ export default function ProjectManagerDashboard() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex gap-1 mb-6 bg-slate-100 rounded-xl p-1">
+        <div className="flex gap-1 mb-6 bg-slate-100 rounded-xl p-1 overflow-x-auto">
           {tabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${activeTab === tab.key
+              className={`flex min-w-max flex-1 items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${activeTab === tab.key
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-500 hover:text-slate-700'
                 }`}
             >
+              {'icon' in tab && tab.icon && <tab.icon className="h-4 w-4" />}
               {tab.label}
               {tab.count > 0 && (
                 <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeTab === tab.key ? 'bg-brand-50 text-brand-700' : 'bg-slate-200 text-slate-600'
@@ -228,6 +231,10 @@ export default function ProjectManagerDashboard() {
             </button>
           ))}
         </div>
+
+        {activeTab === 'time-wise' && (
+          <TimeWiseCountView projects={(data.projects || []).map((item) => item.project)} />
+        )}
 
         {/* Projects Tab */}
         {activeTab === 'projects' && (

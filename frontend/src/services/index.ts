@@ -304,6 +304,10 @@ export const dashboardService = {
   // Project Manager
   projectManager: () => api.get<PMDashboardData>('/dashboard/project-manager'),
 
+  // OM/PM: role completion counts within a date-time range and current WIP
+  timeWiseCounts: (params: { start_at: string; end_at: string; project_id?: number }) =>
+    api.get<import('../types').TimeWiseCountData>('/dashboard/time-wise-counts', { params }),
+
   // Worker personal
   worker: () => api.get<WorkerDashboardData>('/dashboard/worker'),
 
