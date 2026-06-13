@@ -14,6 +14,7 @@ interface ProjectOption {
 
 interface TimeWiseCountViewProps {
   projects: ProjectOption[];
+  dashboard: 'operations' | 'project-manager';
 }
 
 const roleMeta: Record<TimeWiseCountSummary['role'], {
@@ -85,7 +86,7 @@ function normalizeReport(payload: Partial<TimeWiseCountData> | null | undefined)
   };
 }
 
-export default function TimeWiseCountView({ projects = [] }: TimeWiseCountViewProps) {
+export default function TimeWiseCountView({ projects = [], dashboard }: TimeWiseCountViewProps) {
   const now = new Date();
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
@@ -111,15 +112,18 @@ export default function TimeWiseCountView({ projects = [] }: TimeWiseCountViewPr
     try {
       setLoading(true);
       setError('');
-      const response = await dashboardService.timeWiseCounts({
-        start_at: apiDateTime(startAt),
-        end_at: apiDateTime(endAt),
-        ...(projectId ? { project_id: Number(projectId) } : {}),
-      });
+      const response = await dashboardService.timeWiseCounts(
+        dashboard,
+        {
+          start_at: apiDateTime(startAt),
+          end_at: apiDateTime(endAt),
+          ...(projectId ? { project_id: Number(projectId) } : {}),
+        }
+      );
 
       const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
       if (typeof response.data === 'string' || contentType.includes('text/html')) {
-        throw new Error('The time-wise API route is not reaching Laravel. Deploy the backend route/controller and clear the server route cache.');
+        throw new Error('The dashboard API is not reaching Laravel.');
       }
 
       setData(normalizeReport(response.data));

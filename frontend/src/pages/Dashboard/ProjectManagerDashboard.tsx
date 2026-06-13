@@ -233,7 +233,10 @@ export default function ProjectManagerDashboard() {
         </div>
 
         {activeTab === 'time-wise' && (
-          <TimeWiseCountView projects={(data.projects || []).map((item) => item.project)} />
+          <TimeWiseCountView
+            dashboard="project-manager"
+            projects={(data.projects || []).map((item) => item.project)}
+          />
         )}
 
         {/* Projects Tab */}

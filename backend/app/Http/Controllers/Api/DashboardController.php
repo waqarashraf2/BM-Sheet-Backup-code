@@ -2601,6 +2601,10 @@ $userCounts = User::whereIn('project_id', $projectIds)
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
+        if ($request->input('report') === 'time-wise-counts') {
+            return app(TimeWiseCountController::class)->index($request);
+        }
+
         // ─── CACHE LAYER (20s TTL — Smart Polling checks every 10s) ──
         $cacheKey = 'ops_dashboard_' . $user->id . '_' . md5(json_encode([
             'date' => $dateFilter,
@@ -3728,6 +3732,10 @@ $userCounts = User::whereIn('project_id', $projectIds)
 
         if ($user->role !== 'project_manager') {
             return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        if ($request->input('report') === 'time-wise-counts') {
+            return app(TimeWiseCountController::class)->index($request);
         }
 
         $projectIds = $user->getManagedProjectIds();

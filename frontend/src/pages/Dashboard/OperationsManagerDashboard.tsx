@@ -211,7 +211,10 @@ export default function OperationsManagerDashboard() {
           )}
 
           {activeTab === 'time-wise' && (
-            <TimeWiseCountView projects={(data.projects || []).map((item) => item.project)} />
+            <TimeWiseCountView
+              dashboard="operations"
+              projects={(data.projects || []).map((item) => item.project)}
+            />
           )}
 
           {/* Overview Tab */}
