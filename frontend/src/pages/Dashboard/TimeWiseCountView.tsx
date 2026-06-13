@@ -62,7 +62,30 @@ function apiDateTime(value: string) {
   return value.replace('T', ' ');
 }
 
-export default function TimeWiseCountView({ projects }: TimeWiseCountViewProps) {
+function normalizeReport(payload: Partial<TimeWiseCountData> | null | undefined): TimeWiseCountData {
+  const summary = Array.isArray(payload?.summary) ? payload.summary : [];
+  const workers = Array.isArray(payload?.workers)
+    ? payload.workers.map((worker) => ({
+      ...worker,
+      projects: Array.isArray(worker?.projects) ? worker.projects : [],
+    }))
+    : [];
+
+  return {
+    start_at: payload?.start_at || '',
+    end_at: payload?.end_at || '',
+    timezone: payload?.timezone || 'Asia/Karachi',
+    projects: Array.isArray(payload?.projects) ? payload.projects : [],
+    summary,
+    workers,
+    totals: {
+      done: Number(payload?.totals?.done ?? summary.reduce((total, item) => total + Number(item?.done || 0), 0)),
+      wip: Number(payload?.totals?.wip ?? summary.reduce((total, item) => total + Number(item?.wip || 0), 0)),
+    },
+  };
+}
+
+export default function TimeWiseCountView({ projects = [] }: TimeWiseCountViewProps) {
   const now = new Date();
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
@@ -93,22 +116,35 @@ export default function TimeWiseCountView({ projects }: TimeWiseCountViewProps) 
         end_at: apiDateTime(endAt),
         ...(projectId ? { project_id: Number(projectId) } : {}),
       });
-      setData(response.data);
+
+      const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
+      if (typeof response.data === 'string' || contentType.includes('text/html')) {
+        throw new Error('The time-wise API route is not reaching Laravel. Deploy the backend route/controller and clear the server route cache.');
+      }
+
+      setData(normalizeReport(response.data));
     } catch (requestError: any) {
       setData(null);
-      setError(requestError?.response?.data?.message || 'Unable to generate the time-wise report.');
+      setError(
+        requestError?.response?.data?.message
+        || requestError?.message
+        || 'Unable to generate the time-wise report.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredWorkers = (data?.workers || []).filter((worker) =>
-    worker.worker_name.toLowerCase().includes(search.trim().toLowerCase())
-    || roleMeta[worker.role].label.toLowerCase().includes(search.trim().toLowerCase())
-    || worker.projects.some((project) =>
-      project.project_name.toLowerCase().includes(search.trim().toLowerCase())
+  const filteredWorkers = (data?.workers || []).filter((worker) => {
+    const meta = roleMeta[worker.role];
+    const searchValue = search.trim().toLowerCase();
+
+    return String(worker.worker_name || '').toLowerCase().includes(searchValue)
+    || String(meta?.label || worker.role || '').toLowerCase().includes(searchValue)
+    || (worker.projects || []).some((project) =>
+      String(project.project_name || '').toLowerCase().includes(searchValue)
     )
-  );
+  });
 
   return (
     <div className="space-y-5">
@@ -152,7 +188,7 @@ export default function TimeWiseCountView({ projects }: TimeWiseCountViewProps) 
               className="w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
             >
               <option value="">All managed projects</option>
-              {projects.map((project) => (
+              {(projects || []).map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.code} - {project.name}
                 </option>
@@ -182,8 +218,9 @@ export default function TimeWiseCountView({ projects }: TimeWiseCountViewProps) 
       {data && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            {data.summary.map((item) => {
+            {(data.summary || []).map((item) => {
               const meta = roleMeta[item.role];
+              if (!meta) return null;
               const Icon = meta.icon;
               return (
                 <div key={item.role} className="bg-white rounded-xl ring-1 ring-black/[0.04] p-4">
@@ -251,6 +288,7 @@ export default function TimeWiseCountView({ projects }: TimeWiseCountViewProps) 
                   <tbody className="divide-y divide-slate-100">
                     {filteredWorkers.map((worker) => {
                       const meta = roleMeta[worker.role];
+                      if (!meta) return null;
                       return (
                         <tr key={`${worker.role}-${worker.worker_id}`} className="text-sm hover:bg-slate-50/60">
                           <td className="px-5 py-3.5 font-medium text-slate-900">{worker.worker_name}</td>
@@ -260,7 +298,7 @@ export default function TimeWiseCountView({ projects }: TimeWiseCountViewProps) 
                             </span>
                           </td>
                           <td className="px-5 py-3.5 text-xs text-slate-500">
-                            {worker.projects.map((project) => project.project_name).join(', ')}
+                            {(worker.projects || []).map((project) => project.project_name).join(', ') || 'No project details'}
                           </td>
                           <td className="px-5 py-3.5 text-center font-bold text-emerald-700">{worker.done}</td>
                           <td className="px-5 py-3.5 text-center font-bold text-amber-700">{worker.wip}</td>
