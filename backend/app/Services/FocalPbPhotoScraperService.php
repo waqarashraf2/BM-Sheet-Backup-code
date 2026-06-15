@@ -62,6 +62,10 @@ class FocalPbPhotoScraperService
         if (!DB::getSchemaBuilder()->hasTable($this->table)) {
             throw new RuntimeException("Target table {$this->table} not found. Set FOCAL_PB_PHOTO_TABLE or create table.");
         }
+
+        if (!DB::getSchemaBuilder()->hasColumn($this->table, 'orignal_image_id')) {
+            throw new RuntimeException("Target table {$this->table} is missing the orignal_image_id column.");
+        }
     }
 
     private function http()
@@ -261,16 +265,23 @@ class FocalPbPhotoScraperService
                     : 'order_number';
                 $matchValue = $matchColumn === 'client_portal_id' ? $portalId : $orderNumber;
 
+                $updates = [
+                    'received_at' => $record['received_at'],
+                    'due_date' => $record['due_date'],
+                    'due_in' => $record['due_in'],
+                    'priority' => $record['priority'],
+                    'metadata' => $record['metadata'],
+                    'updated_at' => now(),
+                ];
+
+                // Keep an existing URL if the details page was temporarily unavailable.
+                if ($record['orignal_image_id'] !== null) {
+                    $updates['orignal_image_id'] = $record['orignal_image_id'];
+                }
+
                 DB::table($this->table)
                     ->where($matchColumn, $matchValue)
-                    ->update([
-                        'received_at' => $record['received_at'],
-                        'due_date' => $record['due_date'],
-                        'due_in' => $record['due_in'],
-                        'priority' => $record['priority'],
-                        'metadata' => $record['metadata'],
-                        'updated_at' => now(),
-                    ]);
+                    ->update($updates);
 
                 $skipped++;
                 continue;
@@ -306,11 +317,13 @@ class FocalPbPhotoScraperService
         $category = $this->rowValue($row, ['Category', 'Categories', 'Job Category', 'Product Category', 'Plan Type', 'Plane Type']);
         $comment = $this->rowValue($row, ['Comment', 'Comments', 'Instruction', 'Instructions', 'Notes', 'Internal Notes']);
         $detailUrl = $this->rowValue($row, ['_detail_url']);
+        $originalImageUrl = null;
 
-        if (($category === null || $comment === null) && $detailUrl !== null) {
+        if ($detailUrl !== null) {
             $details = $this->fetchJobDetails($detailUrl);
             $category = $category ?? ($details['category'] ?? null);
             $comment = $comment ?? ($details['comment'] ?? null);
+            $originalImageUrl = $details['original_image_url'] ?? null;
         }
 
         $dateReceived = $this->rowValue($row, ['Date Received', 'Received']);
@@ -324,6 +337,7 @@ class FocalPbPhotoScraperService
             'time_left' => $timeLeft,
             'portal_status' => $portalStatus,
             'detail_url' => $detailUrl,
+            'original_image_url' => $originalImageUrl,
             'category' => $category,
             'comment' => $comment,
             'source' => 'focal_pb_photo_jobs',
@@ -338,6 +352,7 @@ class FocalPbPhotoScraperService
             'metadata' => json_encode($extra, JSON_UNESCAPED_UNICODE),
             'client_portal_id' => $clientPortalId,
             'client_reference' => $enhancementId,
+            'orignal_image_id' => $originalImageUrl,
             'address' => null,
             'client_name' => null,
             'current_layer' => 'designer',
@@ -442,11 +457,13 @@ class FocalPbPhotoScraperService
 
         try {
             $response = $this->http()->get($detailUrl);
+            $response->throw();
             $html = (string) $response->body();
 
             $details = [
                 'category' => $this->extractFieldFromHtml($html, ['Category', 'Categories', 'Job Category', 'Product Category', 'Plan Type', 'Plane Type']),
                 'comment' => $this->extractFieldFromHtml($html, ['Comment', 'Comments', 'Instruction', 'Instructions', 'Notes', 'Internal Notes']),
+                'original_image_url' => $this->extractOriginalImageUrl($html),
             ];
 
             $this->jobDetailsCache[$detailUrl] = $details;
@@ -457,9 +474,58 @@ class FocalPbPhotoScraperService
                 'error' => $e->getMessage(),
             ]);
 
-            $this->jobDetailsCache[$detailUrl] = ['category' => null, 'comment' => null];
+            $this->jobDetailsCache[$detailUrl] = [
+                'category' => null,
+                'comment' => null,
+                'original_image_url' => null,
+            ];
             return $this->jobDetailsCache[$detailUrl];
         }
+    }
+
+    private function extractOriginalImageUrl(string $html): ?string
+    {
+        $dom = new \DOMDocument();
+        libxml_use_internal_errors(true);
+        $dom->loadHTML($html);
+        libxml_clear_errors();
+        $xpath = new \DOMXPath($dom);
+
+        $headers = $xpath->query('//th');
+        if (!$headers) {
+            return null;
+        }
+
+        foreach ($headers as $header) {
+            $heading = trim(preg_replace('/\s+/', ' ', (string) $header->textContent));
+            if (strcasecmp($heading, 'Original Image') !== 0) {
+                continue;
+            }
+
+            $table = $xpath->query('./ancestor::table[1]', $header)?->item(0);
+            if (!$table) {
+                continue;
+            }
+
+            foreach (['.//a[@href]', './/img[@src]'] as $query) {
+                $nodes = $xpath->query($query, $table);
+                if (!$nodes) {
+                    continue;
+                }
+
+                foreach ($nodes as $node) {
+                    $attribute = strtolower((string) $node->nodeName) === 'a' ? 'href' : 'src';
+                    $url = trim((string) $node->attributes?->getNamedItem($attribute)?->nodeValue);
+
+                    if (filter_var($url, FILTER_VALIDATE_URL) !== false
+                        && in_array(strtolower((string) parse_url($url, PHP_URL_SCHEME)), ['http', 'https'], true)) {
+                        return $url;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private function extractFieldFromHtml(string $html, array $labels): ?string

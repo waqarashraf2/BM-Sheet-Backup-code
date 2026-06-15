@@ -130,10 +130,12 @@ if ($request->query('date')) {
 
         $selectCols = 'id, order_number, project_id, batch_number, received_at, workflow_state, assigned_to, drawer_id, completed_at, due_in';
 
-        // For batch report, due_in already stores the final absolute deadline.
-        // Do not re-apply the assignment dashboard's project-16 offset here,
-        // otherwise the batch buckets drift by about an extra hour or more.
-        $batchDueInExpr = 'due_in';
+        // Match the Assignment dashboard's normalized deadline for project 16.
+        // Its relative due_in values are stored two hours early during import.
+        $batchDueInExpr = "CASE
+            WHEN project_id = 16 AND due_in IS NOT NULL THEN DATE_ADD(due_in, INTERVAL 2 HOUR)
+            ELSE due_in
+        END";
 
         $rawUnion = $this->buildQueueUnionQuery(
             $projectIds,
@@ -5495,5 +5497,6 @@ if ($useDueInFirstOrdering) {
         };
     }
 }
+
 
 
