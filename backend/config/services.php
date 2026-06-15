@@ -62,4 +62,20 @@ return [
         'order_details_url'     => env('ROOMIO_ORDER_DETAILS_URL_TEMPLATE', 'https://es-portal.captur3d.io/external_supplier/orders/{id}.json'),
     ],
 
+    'focal_client_portal' => [
+        'api_url' => env(
+            'FOCAL_CLIENT_PORTAL_API_URL',
+            env('FOCAL_CRM_PHOTO_SUBMIT_API_URL', 'https://api.focalagent.com/supplier-enhancement/v2/jobs')
+        ),
+        'supplier_secret' => env(
+            'FOCAL_CLIENT_PORTAL_SUPPLIER_SECRET',
+            env('FOCAL_CRM_PHOTO_SUPPLIER_SECRET', env('FOCAL_CRM_SUPPLIER_SECRET'))
+        ),
+        'subscription_key' => env(
+            'FOCAL_CLIENT_PORTAL_SUBSCRIPTION_KEY',
+            env('FOCAL_CRM_PHOTO_SUBSCRIPTION_KEY', env('FOCAL_CRM_SUBSCRIPTION_KEY'))
+        ),
+        'timeout' => env('FOCAL_CLIENT_PORTAL_TIMEOUT', 120),
+    ],
+
 ];

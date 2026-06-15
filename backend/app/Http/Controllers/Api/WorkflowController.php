@@ -11,6 +11,7 @@ use App\Services\AssignmentEngine;
 use App\Services\AuditService;
 use App\Services\NotificationService;
 use App\Services\ProjectOrderService;
+use App\Services\FocalClientPortalUploadService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -970,6 +971,19 @@ public function myCurrent(Request $request)
         // Check project isolation
         if (!in_array((int) $order->project_id, self::queueProjectIdsForUser($user), true)) {
             return response()->json(['message' => 'Project isolation violation.'], 403);
+        }
+
+        if ($user->role === 'qa') {
+            $portalService = app(FocalClientPortalUploadService::class);
+            if ($portalService->isRequiredForProject((int) $order->project_id)) {
+                $portalStatus = $portalService->status($order);
+                if (!$portalStatus['submitted']) {
+                    return response()->json([
+                        'message' => 'Upload and submit this order to the client portal before completing it here.',
+                        'client_portal_status' => $portalStatus,
+                    ], 422);
+                }
+            }
         }
 
         if ((int) $order->project_id === 1 && $user->role === 'checker') {

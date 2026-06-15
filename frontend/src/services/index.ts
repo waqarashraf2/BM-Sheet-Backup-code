@@ -10,6 +10,17 @@ import type {
   WorkflowState, InvoiceStatus,
 } from '../types';
 
+export interface ClientPortalUploadStatus {
+  required: boolean;
+  uploaded: boolean;
+  submitted: boolean;
+  status: 'not_required' | 'not_uploaded' | 'uploading' | 'uploaded' | 'submitted' | 'failed' | 'submit_failed';
+  file_names: string[];
+  uploaded_at: string | null;
+  submitted_at: string | null;
+  failure_reason: string | null;
+}
+
 // ═══════════════════════════════════════════
 // AUTH SERVICE
 // ═══════════════════════════════════════════
@@ -215,6 +226,23 @@ export const workflowService = {
       job_order_id: string;
       response: unknown;
     }>(`/workflow/orders/${encodeURIComponent(jobOrderId)}/client-portal-submit`, orderId ? { order_id: orderId } : {}),
+
+  getClientPortalUploadStatus: (orderId: number) =>
+    api.get<ClientPortalUploadStatus>(`/workflow/orders/${orderId}/client-portal/status`),
+
+  uploadToClientPortal: (orderId: number, files: File[]) => {
+    const formData = new FormData();
+    files.forEach(file => formData.append('files[]', file, file.name));
+    return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
+      `/workflow/orders/${orderId}/client-portal/upload`,
+      formData,
+    );
+  },
+
+  submitClientPortalOrder: (orderId: number) =>
+    api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
+      `/workflow/orders/${orderId}/client-portal/submit`,
+    ),
 
   // Management: Receive new order
   receiveOrder: (data: { project_id: number; client_reference: string; priority?: string; due_date?: string; metadata?: Record<string, unknown> }) =>

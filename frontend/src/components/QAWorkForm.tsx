@@ -6,6 +6,8 @@ import { workflowService } from '../services';
 import { Button, Textarea, Select } from './ui';
 import { Eye, Clock, X, Flag, HelpCircle, CheckCircle2, Circle, Send, MessageSquare, History } from 'lucide-react';
 import { getLatestStageArea } from '../utils/workItemArea';
+import QAClientPortalUpload from './QAClientPortalUpload';
+import type { ClientPortalUploadStatus } from '../services';
 
 interface QAWorkFormProps {
   order: Order;
@@ -59,6 +61,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const [showHelp, setShowHelp] = useState(false);
   const [helpQuestion, setHelpQuestion] = useState('');
   const [editableArea, setEditableArea] = useState(String(metadata.enter_area ?? metadata.area ?? ''));
+  const [clientPortalStatus, setClientPortalStatus] = useState<ClientPortalUploadStatus | null>(null);
 
   // PH_2_LAYER image counts
   const isPh2Layer = order.workflow_type === 'PH_2_LAYER';
@@ -140,6 +143,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const handleApprove = async () => {
     if (!isPh2Layer && !allChecked) return;
     if (isPh2Layer && !(totalImages || normalImages || hdrImages || editImages || finalImages)) return;
+    if (clientPortalStatus?.required && !clientPortalStatus.submitted) return;
     setSubmitting(true);
     try {
       const checklistSummary = !isPh2Layer ? checklist.map(c => `✓ ${c.label}`).join('\n') : '';
@@ -438,6 +442,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                       </div>
                     </div>
                   )}
+                  <QAClientPortalUpload order={order} onStatusChange={setClientPortalStatus} />
 
                   {!isPh2Layer && checklist.map((item) => (
                     <button
@@ -599,7 +604,10 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
             <Button
               onClick={handleApprove}
               loading={submitting}
-              disabled={isPh2Layer ? !(totalImages || normalImages || hdrImages || editImages || finalImages) : !allChecked}
+              disabled={
+                (isPh2Layer ? !(totalImages || normalImages || hdrImages || editImages || finalImages) : !allChecked)
+                || (clientPortalStatus?.required === true && !clientPortalStatus.submitted)
+              }
               icon={<Send className="h-4 w-4" />}
               className="flex-[2] bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500/30"
             >

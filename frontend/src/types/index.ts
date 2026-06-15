@@ -190,6 +190,7 @@ export interface Order {
   order_number: string;
   project_id: number;
   client_reference: string;
+  client_portal_id?: string | null;
   current_layer: string;
   status: string;
   workflow_state: WorkflowState;

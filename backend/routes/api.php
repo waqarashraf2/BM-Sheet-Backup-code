@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\Import\BrPhotoPublicImportController;
 use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\LiveQAController;
+use App\Http\Controllers\Api\ClientPortalUploadController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -71,6 +72,11 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
 
         // Backward-compatible alias
         Route::get('/orders/images/{jobOrderId}', [WorkflowController::class, 'orderImageLinks']);
+
+        // QA-only client portal delivery for configured projects (22/23 by default).
+        Route::get('/orders/{orderId}/client-portal/status', [ClientPortalUploadController::class, 'status']);
+        Route::post('/orders/{orderId}/client-portal/upload', [ClientPortalUploadController::class, 'upload']);
+        Route::post('/orders/{orderId}/client-portal/submit', [ClientPortalUploadController::class, 'submit']);
 
         // My stats
      Route::get('/my-stats', [WorkflowController::class, 'myStats']);
