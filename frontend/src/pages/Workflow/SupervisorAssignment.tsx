@@ -19,8 +19,9 @@ import ClockDisplay from '../../components/ClockDisplay';
 const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
 const PROJECT_16_TIMEZONE = 'Asia/Ho_Chi_Minh';
 const PROJECT_16_DUE_IN_TIMEZONE = 'Asia/Karachi';
-const TEAM_NAME_COLUMN_PROJECT_IDS = [16, 42];
-const DIRECT_CHECKER_ASSIGNMENT_PROJECT_IDS = [16, 42];
+const TEAM_NAME_COLUMN_PROJECT_IDS = [3, 16, 42];
+const DIRECT_CHECKER_ASSIGNMENT_PROJECT_IDS = [3, 16, 42];
+const TEAM_CHECKER_ASSIGNMENT_PROJECT_IDS = [3, 16];
 const QA_WAIT_DURING_FILLER_PROJECT_IDS = [12];
 const isValidTimeZone = (timeZone?: string | null) => {
   if (typeof timeZone !== 'string' || timeZone.trim() === '') {
@@ -920,13 +921,46 @@ export default function SupervisorAssignment() {
     return teamId ? (teamNameById.get(teamId) || '-') : '-';
   }, [teamNameById, workerById]);
 
-  const TeamNameCell = ({ order }: { order: AssignmentOrder }) => (
-    <td className="px-3 py-2 text-slate-700">
-      <span className="block truncate font-medium" title={getOrderTeamName(order)}>
-        {getOrderTeamName(order)}
-      </span>
-    </td>
-  );
+  const TeamNameCell = ({ order }: { order: AssignmentOrder }) => {
+    const teamName = getOrderTeamName(order);
+    const canAssignByTeam = TEAM_CHECKER_ASSIGNMENT_PROJECT_IDS.includes(order.project_id);
+    const hasChecker = !!order.checker_name;
+    const isDone = isOrderDoneForReassignmentRestriction(order);
+    const isExistingAssignmentChangeBlocked = hasChecker && !canReassignDoneOrders;
+
+    return (
+      <td className="px-3 py-2 text-slate-700">
+        {canAssignByTeam ? (
+          <button
+            type="button"
+            className="block w-full rounded px-1 -mx-1 py-0.5 text-left font-medium transition-colors hover:bg-slate-50"
+            title={isExistingAssignmentChangeBlocked ? 'Team reassignment blocked for non-management users' : 'Assign checker by team'}
+            onClick={(e) => {
+              if (isExistingAssignmentChangeBlocked) {
+                e.stopPropagation();
+                toast({
+                  type: 'error',
+                  title: 'Reassignment blocked',
+                  description: 'Assigned orders can only be changed by OM/PM/Director. Non-management users can assign only unassigned orders.',
+                });
+                return;
+              }
+
+              openAssignDropdown(e, order.id, 'checker', { confirmReassign: hasChecker && isDone });
+            }}
+          >
+            <span className="block truncate" title={teamName}>
+              {teamName !== '-' ? teamName : '- assign team'}
+            </span>
+          </button>
+        ) : (
+          <span className="block truncate font-medium" title={teamName}>
+            {teamName}
+          </span>
+        )}
+      </td>
+    );
+  };
 
   /* Inline assign dropdown state */
   const [assignDropdown, setAssignDropdown] = useState<{ orderId: number; role: 'drawer' | 'checker' | 'filler' | 'qa'; anchorRect?: DOMRect } | null>(null);
@@ -949,6 +983,39 @@ export default function SupervisorAssignment() {
     const q = assignSearch.toLowerCase();
     return list.filter(w => w.name.toLowerCase().includes(q) || String(w.id).includes(q));
   }, [assignDropdown, assignSearch, getAssignmentWorkerPool]);
+  const showTeamCheckerAssignment = !!assignDropdown
+    && assignDropdown.role === 'checker'
+    && projectId != null
+    && TEAM_CHECKER_ASSIGNMENT_PROJECT_IDS.includes(projectId);
+  const assignableCheckerTeams = useMemo(() => {
+    if (!showTeamCheckerAssignment) return [];
+
+    const checkers = getAssignmentWorkerPool('checker');
+    const q = assignSearch.trim().toLowerCase();
+
+    return projectTeams
+      .map((team) => {
+        const teamCheckers = checkers.filter((checker) => checker.team_id === team.id);
+        const primaryChecker = teamCheckers.find((checker) => !checker.is_absent) ?? teamCheckers[0] ?? null;
+        const checkerNames = teamCheckers.map((checker) => checker.name).join(', ');
+
+        return {
+          team,
+          checkers: teamCheckers,
+          primaryChecker,
+          checkerNames,
+        };
+      })
+      .filter((item) => {
+        if (!item.primaryChecker) return false;
+        if (!q) return true;
+
+        return item.team.name.toLowerCase().includes(q)
+          || item.checkerNames.toLowerCase().includes(q)
+          || String(item.team.id).includes(q)
+          || item.checkers.some((checker) => String(checker.id).includes(q));
+      });
+  }, [assignSearch, getAssignmentWorkerPool, projectTeams, showTeamCheckerAssignment]);
 
   const handleAssignRole = useCallback(async (orderId: number, role: string, userId: number) => {
     try {
@@ -3550,6 +3617,34 @@ export default function SupervisorAssignment() {
                         <Loader2 className="w-4 h-4 text-brand-600 animate-spin" />
                         <span className="ml-2 text-xs text-slate-500">Assigning...</span>
                       </div>
+                    ) : showTeamCheckerAssignment ? (
+                      assignableCheckerTeams.length === 0 ? (
+                        <div className="text-center py-6 text-xs text-slate-400">
+                          No checker teams found
+                        </div>
+                      ) : (
+                        <div className="py-1">
+                          {assignableCheckerTeams.map(({ team, checkers, primaryChecker, checkerNames }) => (
+                            <button key={team.id} onClick={() => primaryChecker && handleAssignRole(assignDropdown.orderId, assignDropdown.role, primaryChecker.id)}
+                              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-brand-50 transition-colors text-left">
+                              <div className="w-6 h-6 rounded-lg flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 bg-[#2AA7A0]">
+                                {team.name.charAt(0)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium text-slate-800 truncate">{team.name}</div>
+                                <div className="text-[10px] text-slate-400 truncate" title={checkerNames}>
+                                  {checkerNames || 'No checker'}
+                                </div>
+                              </div>
+                              {checkers.length > 1 && (
+                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                                  {checkers.length}
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )
                     ) : assignableWorkers.length === 0 ? (
                       <div className="text-center py-6 text-xs text-slate-400">
                         No {assignRoleLabel}s found
