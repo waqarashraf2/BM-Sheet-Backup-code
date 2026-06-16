@@ -465,9 +465,6 @@ class FocalXactimateScraperService
         foreach (['m/d/Y H:i:s', 'm/d/Y'] as $format) {
             $dt = DateTime::createFromFormat($format, $raw);
             if ($dt) {
-                // Convert from UTC to PKT (app timezone)
-                $dt->setTimezone(new DateTimeZone('UTC'));
-                $dt->setTimezone(new DateTimeZone('Asia/Karachi'));
                 return $dt->format('Y-m-d H:i:s');
             }
         }
@@ -498,6 +495,7 @@ class FocalXactimateScraperService
         }
 
         $dt = new DateTime($parsed);
+        $dt->modify('+1 hour');
 
         return $dt->format('Y-m-d H:i:s');
     }
