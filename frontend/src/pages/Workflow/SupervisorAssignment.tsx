@@ -946,7 +946,7 @@ export default function SupervisorAssignment() {
                 return;
               }
 
-              openAssignDropdown(e, order.id, 'checker', { confirmReassign: hasChecker && isDone });
+              openAssignDropdown(e, order.id, 'checker', { confirmReassign: hasChecker && isDone, mode: 'team' });
             }}
           >
             <span className="block truncate" title={teamName}>
@@ -963,7 +963,7 @@ export default function SupervisorAssignment() {
   };
 
   /* Inline assign dropdown state */
-  const [assignDropdown, setAssignDropdown] = useState<{ orderId: number; role: 'drawer' | 'checker' | 'filler' | 'qa'; anchorRect?: DOMRect } | null>(null);
+  const [assignDropdown, setAssignDropdown] = useState<{ orderId: number; role: 'drawer' | 'checker' | 'filler' | 'qa'; anchorRect?: DOMRect; mode?: 'worker' | 'team' } | null>(null);
   const [assignSearch, setAssignSearch] = useState('');
   const [assigning, setAssigning] = useState(false);
 
@@ -985,6 +985,7 @@ export default function SupervisorAssignment() {
   }, [assignDropdown, assignSearch, getAssignmentWorkerPool]);
   const showTeamCheckerAssignment = !!assignDropdown
     && assignDropdown.role === 'checker'
+    && assignDropdown.mode === 'team'
     && projectId != null
     && TEAM_CHECKER_ASSIGNMENT_PROJECT_IDS.includes(projectId);
   const assignableCheckerTeams = useMemo(() => {
@@ -1074,7 +1075,7 @@ export default function SupervisorAssignment() {
     e: React.MouseEvent,
     orderId: number,
     role: 'drawer' | 'checker' | 'filler' | 'qa',
-    options?: { confirmReassign?: boolean }
+    options?: { confirmReassign?: boolean; mode?: 'worker' | 'team' }
   ) => {
     e.stopPropagation();
     if (options?.confirmReassign) {
@@ -1082,7 +1083,7 @@ export default function SupervisorAssignment() {
       if (!confirmed) return;
     }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setAssignDropdown({ orderId, role, anchorRect: rect });
+    setAssignDropdown({ orderId, role, anchorRect: rect, mode: options?.mode ?? 'worker' });
     setAssignSearch('');
   };
 
