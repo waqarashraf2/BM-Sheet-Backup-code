@@ -14,6 +14,10 @@ use Exception;
 
 class RoomioImportService
 {
+    protected string $externalPortalUrl = 'https://es-portal.captur3d.io/external_supplier/plann3d_floorplan_orders?filter=pending';
+    protected string $externalPortalUsername = 'wgondal835@gmail.com';
+    protected string $externalPortalPassword = 'Ca35@$35';
+    protected string $externalPortalStartUrl = 'https://es-portal.captur3d.io/external_supplier/orders/%s/start';
     protected int $maxPages = 200;
     protected string $jsonOrdersUrl = 'https://es-portal.captur3d.io/external_supplier/plann3d_floorplan_orders.json';
     protected string $legacyJsonOrdersUrl = 'https://es-portal.captur3d.io/external_supplier/floorplan_orders.json';
@@ -156,8 +160,8 @@ protected function parseDueIn(string $dueRaw): string
             $headers[] = trim($th->textContent);
         }
 
-        $username = $auth[0] ?? env('EXTERNAL_PORTAL_USERNAME');
-        $password = $auth[1] ?? env('EXTERNAL_PORTAL_PASSWORD');
+        $username = $auth[0] ?? $this->externalPortalUsername;
+        $password = $auth[1] ?? $this->externalPortalPassword;
 
         for ($i=1; $i<$rows->length; $i++) {
 
@@ -367,8 +371,8 @@ protected function parseDueIn(string $dueRaw): string
     {
         $allRecords = [];
         $page = 1;
-        $username = $auth[0] ?? env('EXTERNAL_PORTAL_USERNAME');
-        $password = $auth[1] ?? env('EXTERNAL_PORTAL_PASSWORD');
+        $username = $auth[0] ?? $this->externalPortalUsername;
+        $password = $auth[1] ?? $this->externalPortalPassword;
 
         while ($page <= $this->maxPages) {
             try {
@@ -533,7 +537,9 @@ protected function parseDueIn(string $dueRaw): string
             ? $this->legacyJsonOrdersUrl
             : $this->jsonOrdersUrl;
 
-        $pendingUrl = trim((string) env('ROOMIO_PENDING_URL', $defaultPendingUrl));
+        $pendingUrl = trim($this->externalPortalUrl) !== ''
+            ? str_replace('/plann3d_floorplan_orders?', '/plann3d_floorplan_orders.json?', trim($this->externalPortalUrl))
+            : $defaultPendingUrl;
         $processingUrl = trim((string) env('ROOMIO_PROCESSING_URL', ''));
 
         if ($status === 'processing' && $processingUrl !== '') {
@@ -724,9 +730,8 @@ protected function parseDueIn(string $dueRaw): string
      */
     public function run(): array
     {
-        // Use config() so values survive php artisan config:cache (env() returns null after caching).
-        $username = config('services.external_portal.username') ?? env('EXTERNAL_PORTAL_USERNAME');
-        $password = config('services.external_portal.password') ?? env('EXTERNAL_PORTAL_PASSWORD');
+        $username = $this->externalPortalUsername;
+        $password = $this->externalPortalPassword;
         $projectId = (int) (config('services.roomio.project_id') ?? env('ROOMIO_PROJECT_ID', 15));
         $table = (string) (config('services.roomio.table') ?? env('ROOMIO_TABLE', $projectId === 13 ? 'project_13_orders' : 'project_15_orders'));
         $fetchProcessing = filter_var(config('services.roomio.fetch_processing') ?? env('ROOMIO_FETCH_PROCESSING', true), FILTER_VALIDATE_BOOL);

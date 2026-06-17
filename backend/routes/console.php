@@ -66,7 +66,7 @@ Schedule::command('users:flag-inactive --days=15')
 
 Schedule::command('app:romio-import')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
     
     Schedule::command('app:metro-import')
