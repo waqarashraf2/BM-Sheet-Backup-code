@@ -1237,6 +1237,7 @@ if ($request->query('date')) {
             ? (int) $selectedProjectId
             : null;
         $detailOnly = $selectedProjectId !== null && $request->boolean('detail_only');
+        $summaryOnly = $request->boolean('summary_only') && !$detailOnly && $selectedProjectId === null;
         $selectedRole = strtolower(trim((string) $request->query('role', $request->input('role', ''))));
         $selectedRole = in_array($selectedRole, ['drawer', 'designer', 'checker', 'qa', 'filler'], true) ? $selectedRole : null;
 
@@ -1275,7 +1276,7 @@ if ($request->query('date')) {
 
         // Cache key includes date range, selected project and role
         $cacheKey = 'ceo_pstats:v2:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0')
-            . ':' . ($selectedRole ?? 'all') . ':' . ($detailOnly ? 'detail' : 'summary');
+            . ':' . ($selectedRole ?? 'all') . ':' . ($detailOnly ? 'detail' : ($summaryOnly ? 'summary_only' : 'summary'));
         if (\Illuminate\Support\Facades\Cache::has($cacheKey)) {
             return response()->json(\Illuminate\Support\Facades\Cache::get($cacheKey));
         }
@@ -1322,6 +1323,13 @@ if ($request->query('date')) {
                 'projects' => [],
                 'countries' => [],
                 'selected_project_breakdown' => $breakdown,
+                'project_detail' => $selectedProject
+                    ? [
+                        'project_id' => (int) $selectedProject->id,
+                        'online_users' => $this->getProjectStatsOnlineUsers([(int) $selectedProject->id], now()->subMinutes(15))->get((int) $selectedProject->id, collect())->values()->all(),
+                        'client_name_counts' => $this->getProjectStatsClientNameCounts((int) $selectedProject->id, $startDate, $endDate),
+                    ]
+                    : null,
             ];
 
             \Illuminate\Support\Facades\Cache::put($cacheKey, $responseData, 60);
@@ -1404,40 +1412,9 @@ $userCounts = User::whereIn('project_id', $projectIds)
     ->get()
     ->keyBy('project_id');
 
-        $onlineUsersByProject = User::whereIn('project_id', $projectIds)
-            ->where('is_active', true)
-            ->where('is_absent', false)
-            ->where('last_activity', '>', $onlineCutoff)
-            ->where(function ($q) {
-                $q->whereNull('inactive_days')
-                  ->orWhere('inactive_days', '<=', 10);
-            })
-            ->orderByDesc('last_activity')
-            ->get([
-                'id', 'name', 'email', 'role', 'project_id', 'team_id',
-                'is_active', 'is_absent', 'last_activity',
-                'wip_count', 'today_completed', 'daily_target',
-            ])
-            ->groupBy('project_id')
-            ->map(function ($users) {
-                return $users->map(function ($user) {
-                    return [
-                        'id' => $user->id,
-                        'name' => $user->name,
-                        'email' => $user->email,
-                        'role' => $user->role,
-                        'project_id' => $user->project_id,
-                        'team_id' => $user->team_id,
-                        'is_active' => $user->is_active,
-                        'is_absent' => $user->is_absent,
-                        'is_online' => true,
-                        'last_activity' => $user->last_activity,
-                        'wip_count' => $user->wip_count,
-                        'today_completed' => $user->today_completed,
-                        'daily_target' => $user->daily_target,
-                    ];
-                })->values();
-            });
+        $onlineUsersByProject = $summaryOnly
+            ? collect()
+            : $this->getProjectStatsOnlineUsers($projectIds, $onlineCutoff);
 
         // RECEIVED COUNTS: project 16 uses date column, others use received_at
         $receivedCounts = collect();
@@ -1722,6 +1699,20 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 ->groupByRaw("{$clientNameExpr}")
                 ->get();
 
+            if ($summaryOnly) {
+                $clientNameCountsByProject[$clientBreakdownProjectId] = collect($allTimeClientRows)
+                    ->map(fn($row) => [
+                        'project_id' => (int) $row->project_id,
+                        'client_name' => $row->client_name,
+                        'code_client_name' => $row->client_name,
+                        'orders_count' => 0,
+                    ])
+                    ->values()
+                    ->all();
+
+                continue;
+            }
+
             $dateScopedClientRows = DB::table($tableName)
                 ->selectRaw(
                     "{$clientNameExpr} as client_name, COUNT(*) as orders_count"
@@ -1825,8 +1816,8 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 'present_staff' => $presentStaff,
                 'absent_staff' => $absentStaff,
                 'online_staff' => $onlineStaff,
-                'online_users' => $onlineUsers->values()->all(),
-                'client_name_counts' => $clientNameCountsByProject->get($projectId, []),
+                'online_users' => $summaryOnly ? [] : $onlineUsers->values()->all(),
+                'client_name_counts' => $summaryOnly ? [] : $clientNameCountsByProject->get($projectId, []),
             ];
 
             $totals['total_projects'] += $effectiveProjectCount;
@@ -1907,6 +1898,115 @@ $userCounts = User::whereIn('project_id', $projectIds)
         ];
         \Illuminate\Support\Facades\Cache::put($cacheKey, $responseData, 60);
         return response()->json($responseData);
+    }
+
+    private function getProjectStatsOnlineUsers(array $projectIds, Carbon $onlineCutoff)
+    {
+        if (empty($projectIds)) {
+            return collect();
+        }
+
+        return User::whereIn('project_id', $projectIds)
+            ->where('is_active', true)
+            ->where('is_absent', false)
+            ->where('last_activity', '>', $onlineCutoff)
+            ->where(function ($q) {
+                $q->whereNull('inactive_days')
+                    ->orWhere('inactive_days', '<=', 10);
+            })
+            ->orderByDesc('last_activity')
+            ->get([
+                'id', 'name', 'email', 'role', 'project_id', 'team_id',
+                'is_active', 'is_absent', 'last_activity',
+                'wip_count', 'today_completed', 'daily_target',
+            ])
+            ->groupBy('project_id')
+            ->map(function ($users) {
+                return $users->map(function ($user) {
+                    return [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'role' => $user->role,
+                        'project_id' => $user->project_id,
+                        'team_id' => $user->team_id,
+                        'is_active' => $user->is_active,
+                        'is_absent' => $user->is_absent,
+                        'is_online' => true,
+                        'last_activity' => $user->last_activity,
+                        'wip_count' => $user->wip_count,
+                        'today_completed' => $user->today_completed,
+                        'daily_target' => $user->daily_target,
+                    ];
+                })->values();
+            });
+    }
+
+    private function getProjectStatsClientNameCounts(int $projectId, string $startDate, string $endDate): array
+    {
+        if (!in_array($projectId, [14, 9, 46], true)) {
+            return [];
+        }
+
+        $tableName = ProjectOrderService::getTableName($projectId);
+
+        if (!self::tableExists($tableName) || !self::columnExists($tableName, 'client_name')) {
+            return [];
+        }
+
+        $clientNameExpr = "COALESCE(NULLIF(TRIM(client_name), ''), 'Unknown')";
+        $storageTimezone = 'Asia/Karachi';
+
+        $allTimeClientRows = DB::table($tableName)
+            ->selectRaw(
+                "? as project_id, {$clientNameExpr} as client_name, COUNT(*) as orders_count",
+                [$projectId]
+            )
+            ->groupByRaw("{$clientNameExpr}")
+            ->get();
+
+        $dateScopedClientRows = DB::table($tableName)
+            ->selectRaw("{$clientNameExpr} as client_name, COUNT(*) as orders_count");
+
+        if (self::columnExists($tableName, 'received_at')) {
+            $dateScopedClientRows->whereBetween('received_at', [
+                Carbon::parse($startDate, $storageTimezone)->startOfDay()->toDateTimeString(),
+                Carbon::parse($endDate, $storageTimezone)->endOfDay()->toDateTimeString(),
+            ]);
+        } elseif (self::columnExists($tableName, 'created_at')) {
+            $dateScopedClientRows->whereBetween('created_at', [
+                Carbon::parse($startDate, $storageTimezone)->startOfDay()->toDateTimeString(),
+                Carbon::parse($endDate, $storageTimezone)->endOfDay()->toDateTimeString(),
+            ]);
+        } elseif (self::columnExists($tableName, 'date')) {
+            if ($startDate === $endDate) {
+                $dateScopedClientRows->where('date', Carbon::parse($startDate)->format('d-m-Y'));
+            } else {
+                $dateScopedClientRows->whereRaw(
+                    "STR_TO_DATE(date, '%d-%m-%Y') BETWEEN ? AND ?",
+                    [$startDate, $endDate]
+                );
+            }
+        }
+
+        $dateScopedCounts = $dateScopedClientRows
+            ->groupByRaw("{$clientNameExpr}")
+            ->get()
+            ->mapWithKeys(function ($row) {
+                return [($row->client_name ?? 'Unknown') => (int) $row->orders_count];
+            });
+
+        return collect($allTimeClientRows)
+            ->map(fn($row) => [
+                'project_id' => (int) $row->project_id,
+                'client_name' => $row->client_name,
+                'code_client_name' => $row->client_name,
+                'orders_count' => (int) ($dateScopedCounts->get(($row->client_name ?? 'Unknown'), 0)),
+            ])
+            ->sortByDesc('orders_count')
+            ->sortBy('client_name')
+            ->values()
+            ->all();
     }
 
     /**
@@ -4365,7 +4465,7 @@ $endDate = $request->input('end_date');
 
         // Optional columns that may not exist in all project tables
         $optionalCols = [
-              'VARIANT_no', 'batch_number', 'date', 'bedrooms', 'client_portal_id', 'clint_order_number',
+              'VARIANT_no', 'batch_number', 'date', 'bedrooms', 'client_portal_id', 'orignal_image_id', 'clint_order_number',
                         'company', 'branch', 'photographer',
             'current_layer', 'file_uploader_id', 'file_uploader_name',
             'fassign_time', 'file_uploaded', 'file_upload_date',
@@ -4412,7 +4512,7 @@ $endDate = $request->input('end_date');
 
         // Overlay CRM assignments (survives external cron truncation of project tables)
         // LEFT JOIN crm_order_assignments and COALESCE to prefer CRM values
-        $unionQuery = "SELECT qo.id, qo.order_number, qo.client_portal_id, qo.clint_order_number, qo.VARIANT_no, qo.batch_number, qo.date, qo.bedrooms, qo.images, qo.total_raw_files, qo.hdr_images_count, qo.single_images_count, qo.final_images_count, qo.edited_images_count, qo.it_datetime, qo.project_id, qo.client_reference, qo.address, qo.client_name, qo.company, qo.branch, qo.photographer, qo.code, qo.plan_type, qo.instruction,"
+        $unionQuery = "SELECT qo.id, qo.order_number, qo.client_portal_id, qo.orignal_image_id, qo.clint_order_number, qo.VARIANT_no, qo.batch_number, qo.date, qo.bedrooms, qo.images, qo.total_raw_files, qo.hdr_images_count, qo.single_images_count, qo.final_images_count, qo.edited_images_count, qo.it_datetime, qo.project_id, qo.client_reference, qo.address, qo.client_name, qo.company, qo.branch, qo.photographer, qo.code, qo.plan_type, qo.instruction,"
             . "COALESCE(NULLIF(coa.current_layer,''), qo.current_layer) as current_layer, "
             . "COALESCE(coa.workflow_state, qo.workflow_state) as workflow_state, "
             . "qo.priority, "

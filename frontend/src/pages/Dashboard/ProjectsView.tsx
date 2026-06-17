@@ -96,6 +96,7 @@ interface ProjectStatsResponse {
     projects: ProjectStats[];
     countries?: CountryStats[];
     selected_project_breakdown?: ProjectBreakdownResponse;
+    project_detail?: Partial<ProjectStats> | null;
 }
 
 interface Worker {
@@ -323,7 +324,7 @@ const ProjectsView: React.FC = () => {
                 setLoading(true);
 
                 // Build params based on filter type
-                const params: Record<string, string> = {};
+                const params: Record<string, string> = { summary_only: '1' };
 
                 if (dateFilterType === 'single_date') {
                     params.date = selectedDate;
@@ -413,10 +414,19 @@ const ProjectsView: React.FC = () => {
             if (statsRes.data.success) {
                 const apiData = statsRes.data as {
                     selected_project_breakdown?: ProjectBreakdownResponse | null;
+                    project_detail?: Partial<ProjectStats> | null;
                     workers?: Record<string, AssignmentWorkerLike[] | undefined>;
                     role_completions?: Record<string, RoleCompletionEntry | undefined>;
                     project?: { id?: number; name?: string };
                 };
+
+                if (apiData.project_detail) {
+                    const hydratedProject = { ...project, ...apiData.project_detail };
+                    setSelectedProject(hydratedProject);
+                    setData((currentProjects) => currentProjects.map((item) => (
+                        item.project_id === project.project_id ? { ...item, ...apiData.project_detail } : item
+                    )));
+                }
 
                 const breakdownFromResponse = apiData.selected_project_breakdown;
 
@@ -824,17 +834,18 @@ const ProjectsView: React.FC = () => {
                                 ) : (
                                     data.map((project) => {
                                         const isOpen = selectedProject?.project_id === project.project_id;
+                                        const detailProject = isOpen && selectedProject ? selectedProject : project;
                                         const completedTodayCount = activeTab === 'received'
                                             ? (project.received_done_orders ?? project.completed_orders_today ?? 0)
                                             : (project.done_orders ?? project.done_orders_today ?? project.completed_orders_today ?? 0);
-                                        const clientNameCounts = project.client_name_counts ?? [];
+                                        const clientNameCounts = detailProject.client_name_counts ?? [];
                                         const showClientNamesAsProjects =
                                             specialClientProjectIds.includes(project.project_id) && clientNameCounts.length > 0;
                                         const showTeamBreakdown = project.project_id === teamBreakdownProjectId
                                             && (allTeams.length > 0 || Boolean(unassignedTeam) || Boolean(batchStatus) || projectTeams.length > 0);
                                         const roleCardsToRender = showTeamBreakdown ? [] : visibleRoles;
-                                        const onlineUsers = getProjectOnlineUsers(project);
-                                        const projectOnlineCount = project.online_staff ?? onlineUsers.length;
+                                        const onlineUsers = getProjectOnlineUsers(detailProject);
+                                        const projectOnlineCount = detailProject.online_staff ?? onlineUsers.length;
                                         const teamsForDisplay = teamDetailTab === 'unassigned' && unassignedTeam
                                             ? [unassignedTeam]
                                             : teamDetailTab === 'teams-online'
