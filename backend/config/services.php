@@ -69,11 +69,11 @@ return [
         ),
         'supplier_secret' => env(
             'FOCAL_CLIENT_PORTAL_SUPPLIER_SECRET',
-            env('FOCAL_CRM_PHOTO_SUPPLIER_SECRET', env('FOCAL_CRM_SUPPLIER_SECRET'))
+            env('FOCAL_CRM_PHOTO_SUPPLIER_SECRET', env('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu'))
         ),
         'subscription_key' => env(
             'FOCAL_CLIENT_PORTAL_SUBSCRIPTION_KEY',
-            env('FOCAL_CRM_PHOTO_SUBSCRIPTION_KEY', env('FOCAL_CRM_SUBSCRIPTION_KEY'))
+            env('FOCAL_CRM_PHOTO_SUBSCRIPTION_KEY', env('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1'))
         ),
         'timeout' => env('FOCAL_CLIENT_PORTAL_TIMEOUT', 120),
     ],

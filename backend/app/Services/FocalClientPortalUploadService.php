@@ -25,9 +25,15 @@ class FocalClientPortalUploadService
                 ->exists();
     }
 
+    public function isRequiredForOrder(Order $order): bool
+    {
+        return strtoupper((string) $order->workflow_type) === 'PH_2_LAYER'
+            && $this->isRequiredForProject((int) $order->project_id);
+    }
+
     public function status(Order $order): array
     {
-        $required = $this->isRequiredForProject((int) $order->project_id);
+        $required = $this->isRequiredForOrder($order);
         $upload = $required && Schema::hasTable('client_portal_uploads')
             ? ClientPortalUpload::query()
                 ->where('project_id', $order->project_id)
@@ -54,9 +60,9 @@ class FocalClientPortalUploadService
     public function upload(Order $order, User $user, array $files): ClientPortalUpload
     {
         $projectId = (int) $order->project_id;
-        if (!$this->isRequiredForProject($projectId)) {
+        if (!$this->isRequiredForOrder($order)) {
             throw ValidationException::withMessages([
-                'project_id' => 'Client portal upload is not enabled for this project.',
+                'project_id' => 'Client portal upload is not enabled for this order.',
             ]);
         }
 

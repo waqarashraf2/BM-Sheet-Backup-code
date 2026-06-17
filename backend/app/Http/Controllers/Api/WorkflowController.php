@@ -975,7 +975,7 @@ public function myCurrent(Request $request)
 
         if ($user->role === 'qa') {
             $portalService = app(FocalClientPortalUploadService::class);
-            if ($portalService->isRequiredForProject((int) $order->project_id)) {
+            if ($portalService->isRequiredForOrder($order)) {
                 $portalStatus = $portalService->status($order);
                 if (!$portalStatus['submitted']) {
                     return response()->json([
