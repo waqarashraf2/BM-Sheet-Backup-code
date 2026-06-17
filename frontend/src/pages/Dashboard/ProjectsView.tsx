@@ -27,6 +27,7 @@ interface ProjectStats {
     online_staff?: number;
     online_users?: OnlineUser[];
     client_name_counts?: ClientNameCount[];
+    batch_count?: number;
 }
 
 interface OnlineUser {
@@ -310,6 +311,7 @@ const ProjectsView: React.FC = () => {
     const [loadingBreakdown, setLoadingBreakdown] = useState(false);
     const [projectTeams, setProjectTeams] = useState<ProjectTeam[]>([]);
     const [batchStatus, setBatchStatus] = useState<BatchStatusResponse | null>(null);
+    const [loadingProjectTeams, setLoadingProjectTeams] = useState(false);
     const [loadingBatchStatus, setLoadingBatchStatus] = useState(false);
     const [teamDetailTab, setTeamDetailTab] = useState<TeamDetailTab>('teams');
 
@@ -367,6 +369,7 @@ const ProjectsView: React.FC = () => {
             setBreakdown(null);
             setLoadingBreakdown(false);
             setProjectTeams([]);
+            setLoadingProjectTeams(false);
             setBatchStatus(null);
             setLoadingBatchStatus(false);
             setTeamDetailTab('teams');
@@ -379,8 +382,9 @@ const ProjectsView: React.FC = () => {
             setBreakdown(null);
             setLoadingBreakdown(true);
             setProjectTeams([]);
+            setLoadingProjectTeams(false);
             setBatchStatus(null);
-            setLoadingBatchStatus(project.project_id === teamBreakdownProjectId);
+            setLoadingBatchStatus(false);
             setTeamDetailTab('teams');
             setExpandedTeam(null);
 
@@ -399,17 +403,7 @@ const ProjectsView: React.FC = () => {
                 if (startDate) params.start_date = startDate;
             }
 
-            const [statsRes, teamsRes, batchRes] = await Promise.all([
-                apiClient.get('/dashboard/project-stats', { params }),
-                project.project_id === teamBreakdownProjectId
-                    ? apiClient.get<{ data?: ProjectTeam[] }>(`/projects/${project.project_id}/teams`)
-                    : Promise.resolve(null),
-                project.project_id === teamBreakdownProjectId
-                    ? apiClient.get<BatchStatusResponse>('/dashboard/batch-status', {
-                        params: { project_id: project.project_id, date: endDate || selectedDate }
-                    })
-                    : Promise.resolve(null),
-            ]);
+            const statsRes = await apiClient.get('/dashboard/project-stats', { params });
 
             if (statsRes.data.success) {
                 const apiData = statsRes.data as {
@@ -443,18 +437,11 @@ const ProjectsView: React.FC = () => {
                 }
             }
 
-            if (teamsRes?.data?.data) {
-                setProjectTeams(teamsRes.data.data);
-            }
-
-            if (batchRes?.data) {
-                setBatchStatus(batchRes.data);
-            }
-
         } catch (err) {
             console.error(err);
             setBreakdown(null);
             setProjectTeams([]);
+            setLoadingProjectTeams(false);
             setBatchStatus(null);
         } finally {
             setLoadingBreakdown(false);
@@ -466,10 +453,69 @@ const ProjectsView: React.FC = () => {
         setSelectedProject(null);
         setBreakdown(null);
         setProjectTeams([]);
+        setLoadingProjectTeams(false);
         setBatchStatus(null);
         setTeamDetailTab('teams');
         setExpandedTeam(null);
     }, [selectedDate, startDate, endDate, dateFilterType]);
+
+    const loadProjectTeamsIfNeeded = async (projectId: number) => {
+        if (projectId !== teamBreakdownProjectId || loadingProjectTeams || projectTeams.length > 0) return;
+
+        try {
+            setLoadingProjectTeams(true);
+            const response = await apiClient.get<{ data?: ProjectTeam[] }>(`/projects/${projectId}/teams`);
+            setProjectTeams(Array.isArray(response.data?.data) ? response.data.data : []);
+        } catch (err) {
+            console.error(err);
+            setProjectTeams([]);
+        } finally {
+            setLoadingProjectTeams(false);
+        }
+    };
+
+    const loadBatchStatusIfNeeded = async (projectId: number) => {
+        if (projectId !== teamBreakdownProjectId || loadingBatchStatus || batchStatus) return;
+
+        try {
+            setLoadingBatchStatus(true);
+            const response = await apiClient.get<BatchStatusResponse>('/dashboard/batch-status', {
+                params: { project_id: projectId, date: endDate || selectedDate }
+            });
+            setBatchStatus(response.data);
+            const batchCount = Array.isArray(response.data?.batches) ? response.data.batches.length : 0;
+            setSelectedProject((currentProject) => (
+                currentProject?.project_id === projectId
+                    ? { ...currentProject, batch_count: batchCount }
+                    : currentProject
+            ));
+            setData((currentProjects) => currentProjects.map((item) => (
+                item.project_id === projectId ? { ...item, batch_count: batchCount } : item
+            )));
+        } catch (err) {
+            console.error(err);
+            setBatchStatus(null);
+        } finally {
+            setLoadingBatchStatus(false);
+        }
+    };
+
+    const handleTeamDetailTabClick = (tab: TeamDetailTab) => {
+        setTeamDetailTab(tab);
+
+        if (!selectedProject || selectedProject.project_id !== teamBreakdownProjectId) return;
+
+        if (tab === 'batch') {
+            void loadBatchStatusIfNeeded(selectedProject.project_id);
+            return;
+        }
+
+        void loadProjectTeamsIfNeeded(selectedProject.project_id);
+
+        if (tab === 'unassigned' && unassignedTeam) {
+            setExpandedTeam(Number(unassignedTeam.team_id));
+        }
+    };
 
     const visibleRoles = useMemo(() => {
         if (!Array.isArray(breakdown?.roles)) return [];
@@ -856,6 +902,7 @@ const ProjectsView: React.FC = () => {
                                             ? allTeams
                                             : visibleTeams;
                                         const batchTotals = batchStatus?.total_orders;
+                                        const batchCount = batchStatus?.batches?.length ?? detailProject.batch_count ?? 0;
 
                                         return (
                                             <React.Fragment key={project.project_id}>
@@ -986,7 +1033,7 @@ const ProjectsView: React.FC = () => {
                                                                                     },
                                                                                     {
                                                                                         label: 'Batch Status',
-                                                                                        value: batchStatus?.batches?.length ?? 0,
+                                                                                        value: batchCount,
                                                                                         tab: 'batch' as TeamDetailTab,
                                                                                     },
                                                                                 ].map((item) => {
@@ -995,7 +1042,7 @@ const ProjectsView: React.FC = () => {
                                                                                         <button
                                                                                             key={item.label}
                                                                                             type="button"
-                                                                                            onClick={() => { setTeamDetailTab(item.tab); if (item.tab === 'unassigned' && unassignedTeam) setExpandedTeam(Number(unassignedTeam.team_id)); }}
+                                                                                            onClick={() => handleTeamDetailTabClick(item.tab)}
                                                                                             className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] md:text-xs font-semibold ring-1 transition ${isSelected ? 'bg-white text-slate-950 ring-slate-300 shadow-sm' : 'bg-transparent text-slate-600 ring-transparent hover:bg-white/70 hover:text-slate-900'}`}
                                                                                         >
                                                                                             {'status' in item && item.status ? (
@@ -1066,6 +1113,11 @@ const ProjectsView: React.FC = () => {
                                                                             ) : null}
 
                                                                             {teamDetailTab !== 'batch' && (
+                                                                                loadingProjectTeams ? (
+                                                                                    <div className="flex items-center justify-center rounded-xl border border-slate-200 bg-white py-8">
+                                                                                        <Loader2 className="h-5 w-5 animate-spin text-[#2AA7A0]" />
+                                                                                    </div>
+                                                                                ) : (
                                                                                 <div className="grid grid-cols-1 xl:grid-cols-1 gap-3">
                                                                             {teamsForDisplay.map((team) => {
                                                                                 const teamDone = Number(team.checker_done ?? 0);
@@ -1164,6 +1216,7 @@ const ProjectsView: React.FC = () => {
                                                                                 );
                                                                             })}
                                                                                 </div>
+                                                                                )
                                                                             )}
                                                                         </div>
                                                                     )}

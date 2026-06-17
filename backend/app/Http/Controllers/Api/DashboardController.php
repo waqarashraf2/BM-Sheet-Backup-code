@@ -1328,6 +1328,7 @@ if ($request->query('date')) {
                         'project_id' => (int) $selectedProject->id,
                         'online_users' => $this->getProjectStatsOnlineUsers([(int) $selectedProject->id], now()->subMinutes(15))->get((int) $selectedProject->id, collect())->values()->all(),
                         'client_name_counts' => $this->getProjectStatsClientNameCounts((int) $selectedProject->id, $startDate, $endDate),
+                        'batch_count' => $this->getProjectStatsBatchCount((int) $selectedProject->id, $endDate),
                     ]
                     : null,
             ];
@@ -2006,6 +2007,35 @@ $userCounts = User::whereIn('project_id', $projectIds)
             ->sortBy('client_name')
             ->values()
             ->all();
+    }
+
+    private function getProjectStatsBatchCount(int $projectId, string $date): int
+    {
+        if ($projectId !== self::ASSIGNMENT_DASHBOARD_VIETNAM_PROJECT_ID) {
+            return 0;
+        }
+
+        $tableName = ProjectOrderService::getTableName($projectId);
+
+        if (
+            !self::tableExists($tableName)
+            || !self::columnExists($tableName, 'batch_number')
+            || !self::columnExists($tableName, 'received_at')
+        ) {
+            return 0;
+        }
+
+        $selectedDatePkt = Carbon::parse($date, self::DEFAULT_PROJECT_TIMEZONE);
+        $shiftStartLocal = $selectedDatePkt->copy()->subDay()->setTime(22, 0, 0)->format('Y-m-d H:i:s');
+        $shiftEndLocal = $selectedDatePkt->copy()->setTime(22, 0, 0)->format('Y-m-d H:i:s');
+
+        return (int) DB::table($tableName)
+            ->whereNotNull('batch_number')
+            ->where('batch_number', '<>', '')
+            ->where('received_at', '>=', $shiftStartLocal)
+            ->where('received_at', '<', $shiftEndLocal)
+            ->distinct()
+            ->count('batch_number');
     }
 
     /**
