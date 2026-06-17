@@ -1580,12 +1580,11 @@ $userCounts = User::whereIn('project_id', $projectIds)
         if ($hasProject16) {
             $table16 = \App\Services\ProjectOrderService::getTableName(16);
             if (self::tableExists($table16) && self::columnExists($table16, 'date')) {
-                $project16DelayedPending = Order::queryAcrossProjects([16], function ($q, $pid) use ($applyProject16DateRange, $projectDueNow) {
+                $project16DelayedPending = Order::queryAcrossProjects([16], function ($q, $pid) use ($applyProject16DateRange) {
                     $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[(int) $pid] ?? 0;
-                    $projectNow = $projectDueNow->get(
-                        (int) $pid,
-                        now(self::DEFAULT_PROJECT_TIMEZONE)->format('Y-m-d H:i:s')
-                    );
+                    // Project 16 due_in is stored two hours early and normalized with DATE_ADD below.
+                    // Compare that normalized deadline with PKT now, matching batch status remaining time.
+                    $projectNow = now(self::DEFAULT_PROJECT_TIMEZONE)->format('Y-m-d H:i:s');
                     $applyProject16DateRange($q, 'date');
                     $q->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER'])
                         ->whereNotNull('due_in');
