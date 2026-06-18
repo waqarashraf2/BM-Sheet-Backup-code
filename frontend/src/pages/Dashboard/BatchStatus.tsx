@@ -60,10 +60,18 @@ export default function BatchStatus() {
   const [hourlyCounts, setHourlyCounts] = useState<Hourly[]>([]);
   const [loading, setLoading] = useState(true);
   const getTodayInputValue = () => {
-    const d = new Date();
-    return `${d.getFullYear()}-${(d.getMonth() + 1)
-      .toString()
-      .padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+
+    const year = parts.find((part) => part.type === 'year')?.value ?? '';
+    const month = parts.find((part) => part.type === 'month')?.value ?? '';
+    const day = parts.find((part) => part.type === 'day')?.value ?? '';
+
+    return `${year}-${month}-${day}`;
   };
 
   const [selectedDate, setSelectedDate] = useState<string>(getTodayInputValue());
@@ -133,7 +141,7 @@ export default function BatchStatus() {
   };
 
   const generateReportText = () => {
-    if (!data.length) return '';
+    if (!data.length && !hourlyCounts.length && !plansRemaining.length) return '';
 
     let text = '';
 
@@ -223,6 +231,7 @@ plansRemaining.forEach((p) => {
   const displayDate = formatDate(selectedDate);
   const totalOrders = rawResponse?.total_orders;
   const maxHourlyOrders = Math.max(1, ...hourlyCounts.map((item) => Number(item.orders || 0)));
+  const hasStatusData = data.length > 0 || hourlyCounts.length > 0 || plansRemaining.length > 0 || Boolean(totalOrders);
 
   const untouchedTopRemaining = rawResponse?.untouched_min?.remaining_time || '-';
   const topPlans = [
@@ -293,7 +302,7 @@ plansRemaining.forEach((p) => {
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-5 w-5 animate-spin text-[#2AA7A0]" />
             </div>
-          ) : data.length > 0 ? (
+          ) : hasStatusData ? (
             <div className="space-y-3 p-4">
               <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
                 <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
@@ -357,7 +366,7 @@ plansRemaining.forEach((p) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50 bg-white">
-                    {data.map((batch) => (
+                    {data.length > 0 ? data.map((batch) => (
                       <tr key={`batch-${batch.batch_no}`} className="hover:bg-slate-50/70">
                         <td className="px-3 py-2 font-semibold text-slate-900">Batch {batch.batch_no}</td>
                         <td className="px-3 py-2 text-center text-slate-600">{batch.received_time ?? '-'}</td>
@@ -367,7 +376,13 @@ plansRemaining.forEach((p) => {
                         <td className="px-3 py-2 text-center font-semibold text-amber-700">{batch.pending ?? 0}</td>
                         <td className="px-3 py-2 text-center font-semibold text-rose-700">{batch.fixing ?? 0}</td>
                       </tr>
-                    ))}
+                    )) : (
+                      <tr>
+                        <td colSpan={7} className="px-3 py-8 text-center text-xs text-slate-400">
+                          No batch received for this date.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
