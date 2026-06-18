@@ -202,6 +202,16 @@ interface BatchStatusItem {
     fixing?: number;
 }
 
+interface BatchPlansRemaining {
+    hour: number;
+    plans: number;
+}
+
+interface BatchHourlyCount {
+    label: string;
+    orders: number;
+}
+
 interface BatchStatusResponse {
     success: boolean;
     total_orders?: {
@@ -213,6 +223,10 @@ interface BatchStatusResponse {
         sent_to_fixing?: number;
     };
     batches?: BatchStatusItem[];
+    plans_remaining?: BatchPlansRemaining[];
+    hourly_counts?: BatchHourlyCount[];
+    untouched_min?: BatchStatusItem;
+    fixed_min?: BatchStatusItem;
 }
 
 type RoleCompletionEntry = {
@@ -895,14 +909,21 @@ const ProjectsView: React.FC = () => {
                                         const teamsForDisplay = teamDetailTab === 'unassigned' && unassignedTeam
                                             ? [unassignedTeam]
                                             : teamDetailTab === 'teams-online'
-                                            ? allTeams.filter(t => onlineTeamIds.has(Number(t.team_id)))
-                                            : teamDetailTab === 'teams-offline'
-                                            ? allTeams.filter(t => !onlineTeamIds.has(Number(t.team_id)))
-                                            : teamDetailTab === 'teams'
-                                            ? allTeams
-                                            : visibleTeams;
+                                                ? allTeams.filter(t => onlineTeamIds.has(Number(t.team_id)))
+                                                : teamDetailTab === 'teams-offline'
+                                                    ? allTeams.filter(t => !onlineTeamIds.has(Number(t.team_id)))
+                                                    : teamDetailTab === 'teams'
+                                                        ? allTeams
+                                                        : visibleTeams;
                                         const batchTotals = batchStatus?.total_orders;
                                         const batchCount = batchStatus?.batches?.length ?? detailProject.batch_count ?? 0;
+                                        const batchPlansRemaining = batchStatus?.plans_remaining ?? [];
+                                        const batchHourlyCounts = batchStatus?.hourly_counts ?? [];
+                                        const maxHourlyOrders = Math.max(1, ...batchHourlyCounts.map((item) => Number(item.orders || 0)));
+                                        const batchTopPlans = [
+                                            { label: 'Untouched Top', value: batchStatus?.untouched_min?.remaining_time },
+                                            { label: 'Fixed Top', value: batchStatus?.fixed_min?.remaining_time },
+                                        ].filter((item) => item.value);
 
                                         return (
                                             <React.Fragment key={project.project_id}>
@@ -953,11 +974,11 @@ const ProjectsView: React.FC = () => {
                                                             ? <span className="inline-flex items-center gap-1.5 rounded-full bg-[#2AA7A0]/10 px-2.5 py-0.5 text-[11px] md:text-xs font-semibold text-[#0f766e] ring-1 ring-[#2AA7A0]/25">
                                                                 <span className="h-1.5 w-1.5 rounded-full bg-[#2AA7A0] animate-pulse" />
                                                                 {projectOnlineCount}
-                                                              </span>
+                                                            </span>
                                                             : <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 px-2.5 py-0.5 text-[11px] font-medium text-slate-400 ring-1 ring-slate-200">
                                                                 <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />
                                                                 0
-                                                              </span>}
+                                                            </span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {project.present_staff > 0
@@ -1032,7 +1053,7 @@ const ProjectsView: React.FC = () => {
                                                                                         suffix: `D ${teamSummary.unassignedDrawers} / C ${teamSummary.unassignedCheckers}`,
                                                                                     },
                                                                                     {
-                                                                                        label: 'Batch Status',
+                                                                                        label: 'Overall Status',
                                                                                         value: batchCount,
                                                                                         tab: 'batch' as TeamDetailTab,
                                                                                     },
@@ -1065,12 +1086,25 @@ const ProjectsView: React.FC = () => {
                                                                             {teamDetailTab === 'batch' ? (
                                                                                 <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                                                                                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
-                                                                                        <h3 className="text-xs md:text-sm font-semibold text-slate-950">Batch Status</h3>
+                                                                                        <div>
+                                                                                            <h3 className="text-xs md:text-sm font-semibold text-slate-950">Batch Status</h3>
+                                                                                            <p className="mt-0.5 text-[10px] md:text-[11px] font-medium text-slate-500">
+                                                                                                Plans, workflow position, hourly load, and remaining time
+                                                                                            </p>
+                                                                                        </div>
                                                                                         <div className="flex flex-wrap items-center gap-1.5">
                                                                                             <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">Plans {batchTotals?.plans ?? 0}</span>
                                                                                             <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Done {batchTotals?.done ?? 0}</span>
                                                                                             <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Pending {batchTotals?.pending ?? 0}</span>
                                                                                             <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Fixing {batchTotals?.sent_to_fixing ?? 0}</span>
+                                                                                            {batchTopPlans.map((item) => (
+                                                                                                <span
+                                                                                                    key={`batch-header-${item.label}`}
+                                                                                                    className="rounded-md bg-[#2AA7A0]/10 px-2 py-0.5 text-[10px] font-semibold text-[#0f766e] ring-1 ring-[#2AA7A0]/20"
+                                                                                                >
+                                                                                                    {item.label}: {item.value}
+                                                                                                </span>
+                                                                                            ))}
                                                                                         </div>
                                                                                     </div>
                                                                                     {loadingBatchStatus ? (
@@ -1078,31 +1112,82 @@ const ProjectsView: React.FC = () => {
                                                                                             <Loader2 className="h-5 w-5 animate-spin text-[#2AA7A0]" />
                                                                                         </div>
                                                                                     ) : (batchStatus?.batches?.length ?? 0) > 0 ? (
-                                                                                        <div className="overflow-x-auto">
-                                                                                            <table className="w-full text-xs md:text-sm">
-                                                                                                <thead className="bg-slate-50">
-                                                                                                    <tr className="border-b border-slate-100">
-                                                                                                        <th className="px-3 py-2 text-left text-[10px] font-semibold text-slate-500">Batch</th>
-                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Received</th>
-                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Remaining</th>
-                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Plans</th>
-                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Done</th>
-                                                                                                        <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Pending</th>
-                                                                                                    </tr>
-                                                                                                </thead>
-                                                                                                <tbody className="divide-y divide-slate-50">
-                                                                                                    {batchStatus?.batches?.map((batch) => (
-                                                                                                        <tr key={`batch-${batch.batch_no}`} className="hover:bg-slate-50/70">
-                                                                                                            <td className="px-3 py-2 font-semibold text-slate-900">{batch.batch_label ?? `Batch ${batch.batch_no}`}</td>
-                                                                                                            <td className="px-3 py-2 text-center text-slate-600">{batch.received_time ?? '-'}</td>
-                                                                                                            <td className="px-3 py-2 text-center text-slate-600">{batch.remaining_time ?? '-'}</td>
-                                                                                                            <td className="px-3 py-2 text-center font-semibold text-slate-700">{batch.plans ?? 0}</td>
-                                                                                                            <td className="px-3 py-2 text-center font-semibold text-emerald-700">{batch.done ?? 0}</td>
-                                                                                                            <td className="px-3 py-2 text-center font-semibold text-amber-700">{batch.pending ?? 0}</td>
+                                                                                        <div className="space-y-3 p-3">
+                                                                                            <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                                                                                                <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                                                                                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                                                                                        <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-700">Plans Remaining Time</h4>
+                                                                                                        <span className="text-[10px] font-semibold text-slate-400">{batchPlansRemaining.length} slots</span>
+                                                                                                    </div>
+                                                                                                    <div className="flex flex-wrap gap-1.5">
+                                                                                                        {batchPlansRemaining.length > 0 ? batchPlansRemaining.map((item) => (
+                                                                                                            <span key={`plans-${item.hour}-${item.plans}`} className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
+                                                                                                                <span className="text-slate-950">{item.plans}</span>
+                                                                                                                <span>plans</span>
+                                                                                                                <span className="text-slate-400">:</span>
+                                                                                                                <span className="text-[#0f766e]">{item.hour}h</span>
+                                                                                                            </span>
+                                                                                                        )) : (
+                                                                                                            <div className="py-3 text-xs text-slate-400">No remaining-time buckets.</div>
+                                                                                                        )}
+                                                                                                    </div>
+                                                                                                </div>
+
+                                                                                                <div className="rounded-lg border border-slate-200 bg-white p-3 xl:col-span-2">
+                                                                                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                                                                                        <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-700">Hourly Counts</h4>
+                                                                                                        {/* <span className="text-[10px] font-semibold text-slate-400">{batchHourlyCounts.reduce((sum, item) => sum + Number(item.orders || 0), 0).toLocaleString()} orders</span> */}
+                                                                                                    </div>
+                                                                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2">
+                                                                                                        {batchHourlyCounts.length > 0 ? batchHourlyCounts.map((item) => {
+                                                                                                            const orders = Number(item.orders || 0);
+                                                                                                            return (
+                                                                                                                <div key={`hourly-${item.label}`} className="grid grid-cols-[92px_1fr_42px] items-center gap-2 text-[11px]">
+                                                                                                                    <span className="font-medium text-slate-600">{item.label}</span>
+                                                                                                                    <span className="h-2 overflow-hidden rounded-full bg-slate-100">
+                                                                                                                        <span
+                                                                                                                            className="block h-full rounded-full bg-[#2AA7A0]"
+                                                                                                                            style={{ width: `${Math.max(orders > 0 ? 8 : 0, Math.round((orders / maxHourlyOrders) * 100))}%` }}
+                                                                                                                        />
+                                                                                                                    </span>
+                                                                                                                    <span className={`text-right font-bold tabular-nums ${orders > 0 ? 'text-slate-800' : 'text-slate-300'}`}>{orders}</span>
+                                                                                                                </div>
+                                                                                                            );
+                                                                                                        }) : (
+                                                                                                            <div className="py-3 text-xs text-slate-400">No hourly counts.</div>
+                                                                                                        )}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            </div>
+
+                                                                                            <div className="overflow-x-auto rounded-lg border border-slate-200">
+                                                                                                <table className="w-full text-xs md:text-sm">
+                                                                                                    <thead className="bg-slate-50">
+                                                                                                        <tr className="border-b border-slate-100">
+                                                                                                            <th className="px-3 py-2 text-left text-[10px] font-semibold text-slate-500">Batch</th>
+                                                                                                            <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Received</th>
+                                                                                                            <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Remaining</th>
+                                                                                                            <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Plans</th>
+                                                                                                            <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Done</th>
+                                                                                                            <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Pending</th>
+                                                                                                            <th className="px-3 py-2 text-center text-[10px] font-semibold text-slate-500">Fixing</th>
                                                                                                         </tr>
-                                                                                                    ))}
-                                                                                                </tbody>
-                                                                                            </table>
+                                                                                                    </thead>
+                                                                                                    <tbody className="divide-y divide-slate-50 bg-white">
+                                                                                                        {batchStatus?.batches?.map((batch) => (
+                                                                                                            <tr key={`batch-${batch.batch_no}`} className="hover:bg-slate-50/70">
+                                                                                                                <td className="px-3 py-2 font-semibold text-slate-900">{batch.batch_label ?? `Batch ${batch.batch_no}`}</td>
+                                                                                                                <td className="px-3 py-2 text-center text-slate-600">{batch.received_time ?? '-'}</td>
+                                                                                                                <td className="px-3 py-2 text-center text-slate-600">{batch.remaining_time ?? '-'}</td>
+                                                                                                                <td className="px-3 py-2 text-center font-semibold text-slate-700">{batch.plans ?? 0}</td>
+                                                                                                                <td className="px-3 py-2 text-center font-semibold text-emerald-700">{batch.done ?? 0}</td>
+                                                                                                                <td className="px-3 py-2 text-center font-semibold text-amber-700">{batch.pending ?? 0}</td>
+                                                                                                                <td className="px-3 py-2 text-center font-semibold text-rose-700">{batch.fixing ?? 0}</td>
+                                                                                                            </tr>
+                                                                                                        ))}
+                                                                                                    </tbody>
+                                                                                                </table>
+                                                                                            </div>
                                                                                         </div>
                                                                                     ) : (
                                                                                         <div className="px-3 py-8 text-center text-xs md:text-sm text-slate-400">
@@ -1118,104 +1203,104 @@ const ProjectsView: React.FC = () => {
                                                                                         <Loader2 className="h-5 w-5 animate-spin text-[#2AA7A0]" />
                                                                                     </div>
                                                                                 ) : (
-                                                                                <div className="grid grid-cols-1 xl:grid-cols-1 gap-3">
-                                                                            {teamsForDisplay.map((team) => {
-                                                                                const teamDone = Number(team.checker_done ?? 0);
-                                                                                const teamPending = (team.drawers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0)
-                                                                                    + (team.checkers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0);
-                                                                                const teamAssigned = teamDone + teamPending;
-                                                                                return (
-                                                                                    <div key={`team-${team.team_id}`} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                                                                                        <div
-                                                                                            onClick={() => setExpandedTeam(expandedTeam === team.team_id ? null : team.team_id)}
-                                                                                            className="flex items-center border-b border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer select-none"
-                                                                                        >
-                                                                                            <div className="min-w-0 flex-1">
-                                                                                                <h3 className="truncate text-xs md:text-sm font-semibold text-slate-900">{team.team_name}</h3>
-                                                                                            </div>
-                                                                                            <div className="flex items-center gap-2 ml-auto">
-                                                                                                <div className="flex items-center gap-1">
-                                                                                                    <span style={{ fontSize: '11px', fontWeight: '600', color: '#64748b' }}>{teamAssigned} assigned</span>
-                                                                                                    <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>·</span>
-                                                                                                    <span style={{ fontSize: '11px', fontWeight: '700', color: '#0f766e', background: '#ccfbf1', borderRadius: '4px', padding: '1px 6px' }}>{teamDone} Done</span>
-                                                                                                    <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>·</span>
-                                                                                                    <span style={{ fontSize: '11px', fontWeight: '700', color: teamPending > 0 ? '#b45309' : '#94a3b8', background: teamPending > 0 ? '#fef3c7' : 'transparent', borderRadius: '4px', padding: teamPending > 0 ? '1px 6px' : '0' }}>{teamPending} pend</span>
-                                                                                                </div>
-                                                                                                <svg xmlns="http://www.w3.org/2000/svg" style={{ width: '14px', height: '14px', color: '#94a3b8', transform: expandedTeam === team.team_id ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                                                                                    <polyline points="9 18 15 12 9 6" />
-                                                                                                </svg>
-                                                                                            </div>
-                                                                                        </div>
-                                                                                        {expandedTeam === team.team_id && (
-                                                                                            <div style={{ borderTop: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f8fafc' }}>
-                                                                                                {/* DRAWERS col */}
-                                                                                                <div style={{ borderRight: '1px solid #e2e8f0', background: '#fff' }}>
-                                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: '#f0fdfa', borderBottom: '1px solid #ccfbf1', borderLeft: '3px solid #0d9488' }}>
-                                                                                                        <span style={{ fontSize: '10px', fontWeight: '800', color: '#0d9488', letterSpacing: '0.07em' }}>DRAWERS</span>
-                                                                                                        <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#cbd5e1', flexShrink: 0 }} />
-                                                                                                        <span style={{ fontSize: '10px', color: '#64748b', fontWeight: '500' }}>{(team.drawers || []).length}</span>
-                                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginLeft: 'auto' }}>
-                                                                                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', fontWeight: '600', color: '#15803d' }}>{'Online '}<span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />{getOnlineCountForWorkers(team.drawers, onlineUsers)}</span>
-                                                                                                            <span style={{ fontSize: '10px', color: '#cbd5e1' }}>·</span>
-                                                                                                            <span style={{ fontSize: '10px', fontWeight: '600', color: '#0f766e' }}>{Number(team.drawer_done ?? 0)} done</span>
+                                                                                    <div className="grid grid-cols-1 xl:grid-cols-1 gap-3">
+                                                                                        {teamsForDisplay.map((team) => {
+                                                                                            const teamDone = Number(team.checker_done ?? 0);
+                                                                                            const teamPending = (team.drawers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0)
+                                                                                                + (team.checkers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0);
+                                                                                            const teamAssigned = teamDone + teamPending;
+                                                                                            return (
+                                                                                                <div key={`team-${team.team_id}`} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                                                                                                    <div
+                                                                                                        onClick={() => setExpandedTeam(expandedTeam === team.team_id ? null : team.team_id)}
+                                                                                                        className="flex items-center border-b border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer select-none"
+                                                                                                    >
+                                                                                                        <div className="min-w-0 flex-1">
+                                                                                                            <h3 className="truncate text-xs md:text-sm font-semibold text-slate-900">{team.team_name}</h3>
+                                                                                                        </div>
+                                                                                                        <div className="flex items-center gap-2 ml-auto">
+                                                                                                            <div className="flex items-center gap-1">
+                                                                                                                <span style={{ fontSize: '11px', fontWeight: '600', color: '#64748b' }}>{teamAssigned} assigned</span>
+                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>·</span>
+                                                                                                                <span style={{ fontSize: '11px', fontWeight: '700', color: '#0f766e', background: '#ccfbf1', borderRadius: '4px', padding: '1px 6px' }}>{teamDone} Done</span>
+                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>·</span>
+                                                                                                                <span style={{ fontSize: '11px', fontWeight: '700', color: teamPending > 0 ? '#b45309' : '#94a3b8', background: teamPending > 0 ? '#fef3c7' : 'transparent', borderRadius: '4px', padding: teamPending > 0 ? '1px 6px' : '0' }}>{teamPending} pend</span>
+                                                                                                            </div>
+                                                                                                            <svg xmlns="http://www.w3.org/2000/svg" style={{ width: '14px', height: '14px', color: '#94a3b8', transform: expandedTeam === team.team_id ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                                                                <polyline points="9 18 15 12 9 6" />
+                                                                                                            </svg>
                                                                                                         </div>
                                                                                                     </div>
-                                                                                                    <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
-                                                                                                        {(team.drawers || []).length > 0 ? (team.drawers || []).map((w, wi) => {
-                                                                                                            const isOn = !!(w.is_online || getOnlineUserForWorker(w, onlineUsers));
-                                                                                                            const dn = Number(w.total_done_selected_date ?? w.total_done ?? 0);
-                                                                                                            const wip = Number(w.wip ?? 0);
-                                                                                                            const assigned = dn + wip;
-                                                                                                            const isGuest = Boolean(w.is_guest);
-                                                                                                            return (
-                                                                                                                <div key={`dr-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isGuest ? '#faf5ff' : isOn ? '#f0fdfa' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
-                                                                                                                    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isGuest ? '#a855f7' : isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
-                                                                                                                    <span title={isGuest && w.home_team_name ? `Home team: ${w.home_team_name}` : undefined} style={{ fontSize: '11px', fontWeight: '500', color: isGuest ? '#6d28d9' : '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                                                                                        {w.name}{isGuest ? ' (Guest)' : ''}
-                                                                                                                    </span>
-                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{assigned} assign</span>
-                                                                                                                    <span style={{ fontSize: '11px', fontWeight: '700', color: dn > 0 ? '#0f766e' : '#94a3b8', background: dn > 0 ? '#ccfbf1' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>✓{dn}</span>
-                                                                                                                    <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>
+                                                                                                    {expandedTeam === team.team_id && (
+                                                                                                        <div style={{ borderTop: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f8fafc' }}>
+                                                                                                            {/* DRAWERS col */}
+                                                                                                            <div style={{ borderRight: '1px solid #e2e8f0', background: '#fff' }}>
+                                                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: '#f0fdfa', borderBottom: '1px solid #ccfbf1', borderLeft: '3px solid #0d9488' }}>
+                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '800', color: '#0d9488', letterSpacing: '0.07em' }}>DRAWERS</span>
+                                                                                                                    <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#cbd5e1', flexShrink: 0 }} />
+                                                                                                                    <span style={{ fontSize: '10px', color: '#64748b', fontWeight: '500' }}>{(team.drawers || []).length}</span>
+                                                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginLeft: 'auto' }}>
+                                                                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', fontWeight: '600', color: '#15803d' }}>{'Online '}<span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />{getOnlineCountForWorkers(team.drawers, onlineUsers)}</span>
+                                                                                                                        <span style={{ fontSize: '10px', color: '#cbd5e1' }}>·</span>
+                                                                                                                        <span style={{ fontSize: '10px', fontWeight: '600', color: '#0f766e' }}>{Number(team.drawer_done ?? 0)} done</span>
+                                                                                                                    </div>
                                                                                                                 </div>
-                                                                                                            );
-                                                                                                        }) : <div style={{ padding: '12px 10px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>—</div>}
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                                {/* CHECKERS col */}
-                                                                                                <div style={{ background: '#fff' }}>
-                                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: '#faf5ff', borderBottom: '1px solid #ede9fe', borderLeft: '3px solid #7c3aed' }}>
-                                                                                                        <span style={{ fontSize: '10px', fontWeight: '800', color: '#7c3aed', letterSpacing: '0.07em' }}>CHECKERS</span>
-                                                                                                        <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#cbd5e1', flexShrink: 0 }} />
-                                                                                                        <span style={{ fontSize: '10px', color: '#64748b', fontWeight: '500' }}>{(team.checkers || []).length}</span>
-                                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginLeft: 'auto' }}>
-                                                                                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', fontWeight: '600', color: '#15803d' }}>{'Online '}<span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />{getOnlineCountForWorkers(team.checkers, onlineUsers)}</span>
-                                                                                                            <span style={{ fontSize: '10px', color: '#cbd5e1' }}>·</span>
-                                                                                                            <span style={{ fontSize: '10px', fontWeight: '600', color: '#7c3aed' }}>{Number(team.checker_done ?? 0)} done</span>
+                                                                                                                <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                                                                                                                    {(team.drawers || []).length > 0 ? (team.drawers || []).map((w, wi) => {
+                                                                                                                        const isOn = !!(w.is_online || getOnlineUserForWorker(w, onlineUsers));
+                                                                                                                        const dn = Number(w.total_done_selected_date ?? w.total_done ?? 0);
+                                                                                                                        const wip = Number(w.wip ?? 0);
+                                                                                                                        const assigned = dn + wip;
+                                                                                                                        const isGuest = Boolean(w.is_guest);
+                                                                                                                        return (
+                                                                                                                            <div key={`dr-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isGuest ? '#faf5ff' : isOn ? '#f0fdfa' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
+                                                                                                                                <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isGuest ? '#a855f7' : isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
+                                                                                                                                <span title={isGuest && w.home_team_name ? `Home team: ${w.home_team_name}` : undefined} style={{ fontSize: '11px', fontWeight: '500', color: isGuest ? '#6d28d9' : '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                                                                                    {w.name}{isGuest ? ' (Guest)' : ''}
+                                                                                                                                </span>
+                                                                                                                                <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{assigned} assign</span>
+                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '700', color: dn > 0 ? '#0f766e' : '#94a3b8', background: dn > 0 ? '#ccfbf1' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>✓{dn}</span>
+                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>
+                                                                                                                            </div>
+                                                                                                                        );
+                                                                                                                    }) : <div style={{ padding: '12px 10px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>—</div>}
+                                                                                                                </div>
+                                                                                                            </div>
+                                                                                                            {/* CHECKERS col */}
+                                                                                                            <div style={{ background: '#fff' }}>
+                                                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: '#faf5ff', borderBottom: '1px solid #ede9fe', borderLeft: '3px solid #7c3aed' }}>
+                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '800', color: '#7c3aed', letterSpacing: '0.07em' }}>CHECKERS</span>
+                                                                                                                    <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#cbd5e1', flexShrink: 0 }} />
+                                                                                                                    <span style={{ fontSize: '10px', color: '#64748b', fontWeight: '500' }}>{(team.checkers || []).length}</span>
+                                                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginLeft: 'auto' }}>
+                                                                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', fontWeight: '600', color: '#15803d' }}>{'Online '}<span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />{getOnlineCountForWorkers(team.checkers, onlineUsers)}</span>
+                                                                                                                        <span style={{ fontSize: '10px', color: '#cbd5e1' }}>·</span>
+                                                                                                                        <span style={{ fontSize: '10px', fontWeight: '600', color: '#7c3aed' }}>{Number(team.checker_done ?? 0)} done</span>
+                                                                                                                    </div>
+                                                                                                                </div>
+                                                                                                                <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                                                                                                                    {(team.checkers || []).length > 0 ? (team.checkers || []).map((w, wi) => {
+                                                                                                                        const isOn = !!(w.is_online || getOnlineUserForWorker(w, onlineUsers));
+                                                                                                                        const dn = Number(w.total_done_selected_date ?? w.total_done ?? 0);
+                                                                                                                        const wip = Number(w.wip ?? 0);
+                                                                                                                        return (
+                                                                                                                            <div key={`ck-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isOn ? '#faf5ff' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
+                                                                                                                                <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
+                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '500', color: '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
+                                                                                                                                <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{dn + wip} assign</span>
+                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '700', color: dn > 0 ? '#7c3aed' : '#94a3b8', background: dn > 0 ? '#ede9fe' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>✓{dn}</span>
+                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>
+                                                                                                                            </div>
+                                                                                                                        );
+                                                                                                                    }) : <div style={{ padding: '12px 10px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>—</div>}
+                                                                                                                </div>
+                                                                                                            </div>
                                                                                                         </div>
-                                                                                                    </div>
-                                                                                                    <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
-                                                                                                        {(team.checkers || []).length > 0 ? (team.checkers || []).map((w, wi) => {
-                                                                                                            const isOn = !!(w.is_online || getOnlineUserForWorker(w, onlineUsers));
-                                                                                                            const dn = Number(w.total_done_selected_date ?? w.total_done ?? 0);
-                                                                                                            const wip = Number(w.wip ?? 0);
-                                                                                                            return (
-                                                                                                                <div key={`ck-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isOn ? '#faf5ff' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
-                                                                                                                    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
-                                                                                                                    <span style={{ fontSize: '11px', fontWeight: '500', color: '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
-                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{dn + wip} assign</span>
-                                                                                                                    <span style={{ fontSize: '11px', fontWeight: '700', color: dn > 0 ? '#7c3aed' : '#94a3b8', background: dn > 0 ? '#ede9fe' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>✓{dn}</span>
-                                                                                                                    <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>
-                                                                                                                </div>
-                                                                                                            );
-                                                                                                        }) : <div style={{ padding: '12px 10px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>—</div>}
-                                                                                                    </div>
+                                                                                                    )}
                                                                                                 </div>
-                                                                                            </div>
-                                                                                        )}
+                                                                                            );
+                                                                                        })}
                                                                                     </div>
-                                                                                );
-                                                                            })}
-                                                                                </div>
                                                                                 )
                                                                             )}
                                                                         </div>
