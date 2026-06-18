@@ -1056,6 +1056,7 @@ const ProjectsView: React.FC = () => {
                                                                                         label: 'Overall Status',
                                                                                         value: batchCount,
                                                                                         tab: 'batch' as TeamDetailTab,
+                                                                                        showValue: false,
                                                                                     },
                                                                                 ].map((item) => {
                                                                                     const isSelected = teamDetailTab === item.tab;
@@ -1072,9 +1073,11 @@ const ProjectsView: React.FC = () => {
                                                                                                 />
                                                                                             ) : null}
                                                                                             <span>{item.label}</span>
-                                                                                            <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${isSelected ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 ring-1 ring-slate-200'}`}>
-                                                                                                {item.value}
-                                                                                            </span>
+                                                                                            {item.showValue !== false ? (
+                                                                                                <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${isSelected ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 ring-1 ring-slate-200'}`}>
+                                                                                                    {item.value}
+                                                                                                </span>
+                                                                                            ) : null}
                                                                                             {'suffix' in item && item.suffix ? (
                                                                                                 <span className="text-[10px] font-medium text-slate-500">{item.suffix}</span>
                                                                                             ) : null}
@@ -1087,7 +1090,7 @@ const ProjectsView: React.FC = () => {
                                                                                 <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                                                                                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
                                                                                         <div>
-                                                                                            <h3 className="text-xs md:text-sm font-semibold text-slate-950">Batch Status</h3>
+                                                                                            <h3 className="text-xs md:text-sm font-semibold text-slate-950">Cubi Status</h3>
                                                                                             <p className="mt-0.5 text-[10px] md:text-[11px] font-medium text-slate-500">
                                                                                                 Plans, workflow position, hourly load, and remaining time
                                                                                             </p>
@@ -1096,6 +1099,7 @@ const ProjectsView: React.FC = () => {
                                                                                             <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">Plans {batchTotals?.plans ?? 0}</span>
                                                                                             <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Done {batchTotals?.done ?? 0}</span>
                                                                                             <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Pending {batchTotals?.pending ?? 0}</span>
+                                                                                            <span className="rounded-md bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Draw Orders {batchTotals?.drawing_process ?? 0}</span>
                                                                                             <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Fixing {batchTotals?.sent_to_fixing ?? 0}</span>
                                                                                             {batchTopPlans.map((item) => (
                                                                                                 <span

@@ -288,6 +288,7 @@ if ($request->query('date')) {
             ->where('received_at', '>=', $plansRemainingStartLocal)
             ->where('received_at', '<', $shiftEndLocal)
             ->whereNotNull('due_in')
+            ->whereRaw("{$batchDueInExpr} >= ?", [$batchNowPkt])
             ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER']);
 
         if ($projectId) {
