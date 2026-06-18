@@ -920,10 +920,11 @@ const ProjectsView: React.FC = () => {
                                         const batchPlansRemaining = batchStatus?.plans_remaining ?? [];
                                         const batchHourlyCounts = batchStatus?.hourly_counts ?? [];
                                         const maxHourlyOrders = Math.max(1, ...batchHourlyCounts.map((item) => Number(item.orders || 0)));
+                                        const batchUntouchedTopRemaining = batchStatus?.untouched_min?.remaining_time ?? '-';
                                         const batchTopPlans = [
-                                            { label: 'Untouched Top', value: batchStatus?.untouched_min?.remaining_time },
-                                            { label: 'Fixed Top', value: batchStatus?.fixed_min?.remaining_time },
-                                        ].filter((item) => item.value);
+                                            { label: 'Untouched Top Remaining', value: batchUntouchedTopRemaining },
+                                            { label: 'Fixed Top Remaining', value: batchStatus?.fixed_min?.remaining_time ?? '-' },
+                                        ];
 
                                         return (
                                             <React.Fragment key={project.project_id}>

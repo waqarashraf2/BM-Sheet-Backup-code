@@ -143,6 +143,12 @@ if ($request->query('date')) {
             []
         );
 
+        $untouchedRawUnion = $this->buildQueueUnionQuery(
+            $projectIds,
+            $selectCols,
+            ['checker_id']
+        );
+
         /*
         |--------------------------------------------------------------------------
         | TODAY ORDERS (10 PM → 10 PM based strictly on received_at)
@@ -265,9 +271,18 @@ if ($request->query('date')) {
                     ['DELIVERED', 'CANCELLED']
                 )
             )->count(),
-            'untouched_orders' => $statusWindowOrders->filter(
-                fn($o) => empty($o->drawer_id)
-            )->count(),
+            'untouched_orders' => DB::table(DB::raw("({$untouchedRawUnion}) as orders"))
+                ->where('received_at', '>=', $shiftStartLocal)
+                ->where('received_at', '<', $shiftEndLocal)
+                ->when($projectId, fn($q) => $q->where('project_id', $projectId))
+                ->where(function ($q) {
+                    $q->whereNull('drawer_id')->orWhere('drawer_id', 0);
+                })
+                ->where(function ($q) {
+                    $q->whereNull('checker_id')->orWhere('checker_id', 0);
+                })
+                ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+                ->count(),
             'drawing_process' => $statusWindowOrders->where('workflow_state', 'IN_DRAW')->count(),
             'sent_to_fixing' => $statusWindowOrders->where('workflow_state', 'PENDING_BY_DRAWER')->count(),
         ];
@@ -362,15 +377,49 @@ if ($request->query('date')) {
         | Min Remaining
         |--------------------------------------------------------------------------
         */
-        $untouchedMin = $batches
-            ->where('done', 0)
-            ->sortBy('remaining_minutes')
+        $untouchedMin = DB::table(DB::raw("({$untouchedRawUnion}) as orders"))
+            ->selectRaw("
+                order_number,
+                batch_number,
+                received_at,
+                GREATEST(TIMESTAMPDIFF(MINUTE, ?, {$batchDueInExpr}), 0) as remaining_minutes
+            ", [$batchNowPkt])
+            ->where('received_at', '>=', $shiftStartLocal)
+            ->where('received_at', '<', $shiftEndLocal)
+            ->when($projectId, fn($q) => $q->where('project_id', $projectId))
+            ->whereNotNull('due_in')
+            ->whereRaw("{$batchDueInExpr} >= ?", [$batchNowPkt])
+            ->where(function ($q) {
+                $q->whereNull('drawer_id')->orWhere('drawer_id', 0);
+            })
+            ->where(function ($q) {
+                $q->whereNull('checker_id')->orWhere('checker_id', 0);
+            })
+            ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+            ->orderBy('remaining_minutes')
             ->first();
 
         if ($untouchedMin) {
-            $untouchedMin['remaining_time'] =
-                floor($untouchedMin['min_remaining_minutes'] / 60) . 'h ' .
-                ($untouchedMin['min_remaining_minutes'] % 60) . 'm';
+            $remainingMinutes = (int) $untouchedMin->remaining_minutes;
+            $untouchedMin = [
+                'batch_no' => $untouchedMin->batch_number,
+                'batch_label' => $untouchedMin->batch_number
+                    ? 'Batch ' . str_pad((string) $untouchedMin->batch_number, 2, '0', STR_PAD_LEFT)
+                    : null,
+                'order_number' => $untouchedMin->order_number,
+                'received_time' => $untouchedMin->received_at
+                    ? \Carbon\Carbon::parse($untouchedMin->received_at, 'Asia/Karachi')->format('h:i A')
+                    : null,
+                'remaining_minutes' => $remainingMinutes,
+                'remaining_time' => floor($remainingMinutes / 60) . 'h ' . ($remainingMinutes % 60) . 'm',
+                'plans' => 1,
+                'done' => 0,
+                'pending' => 1,
+                'fixing' => 0,
+                'drawing' => 0,
+                'min_remaining_minutes' => $remainingMinutes,
+                'max_remaining_minutes' => $remainingMinutes,
+            ];
         }
 
         $fixedMin = $batches

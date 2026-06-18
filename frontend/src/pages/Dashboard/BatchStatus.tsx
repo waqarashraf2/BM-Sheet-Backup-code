@@ -194,10 +194,12 @@ plansRemaining.forEach((p) => {
       text += `\n`;
     }
 
+    const untouchedTopRemaining = rawResponse?.untouched_min?.remaining_time;
+
     // Top Plans
-    if (rawResponse?.untouched_min?.remaining_time) {
+    if (untouchedTopRemaining) {
       text += `Untouched Top plan\n`;
-      text += `Least Remaining Time: ${rawResponse.untouched_min.remaining_time}\n\n`;
+      text += `Least Remaining Time: ${untouchedTopRemaining}\n\n`;
     }
 
     if (rawResponse?.fixed_min?.remaining_time) {
@@ -221,10 +223,12 @@ plansRemaining.forEach((p) => {
   const displayDate = formatDate(selectedDate);
   const totalOrders = rawResponse?.total_orders;
   const maxHourlyOrders = Math.max(1, ...hourlyCounts.map((item) => Number(item.orders || 0)));
+
+  const untouchedTopRemaining = rawResponse?.untouched_min?.remaining_time || '-';
   const topPlans = [
-    { label: 'Untouched Top', value: rawResponse?.untouched_min?.remaining_time },
-    { label: 'Fixed Top', value: rawResponse?.fixed_min?.remaining_time },
-  ].filter((item) => item.value);
+    { label: 'Untouched Top Remaining', value: untouchedTopRemaining },
+    { label: 'Fixed Top Remaining', value: rawResponse?.fixed_min?.remaining_time ?? '-' },
+  ];
 
   const normalizeRemainingTime = (value?: string) => {
     if (!value) return '-';
