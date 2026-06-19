@@ -877,7 +877,15 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                         $rawValue = trim($rawValue);
                     }
 
-                    if (in_array($dbColumn, ['total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count'], true)) {
+                    if ($dbColumn === 'total_raw_files') {
+                        // This field can contain provider text/codes, not only counts.
+                        if ($rawValue !== '' && $rawValue !== null) {
+                            $orderData[$dbColumn] = (string) $rawValue;
+                        }
+                        continue;
+                    }
+
+                    if (in_array($dbColumn, ['hdr_images_count', 'single_images_count', 'final_images_count'], true)) {
                         // Only write the key when a real value is provided.
                         // Omitting it lets MySQL use the column DEFAULT (avoids NULL into NOT NULL columns).
                         if ($rawValue !== '' && $rawValue !== null) {
@@ -891,7 +899,7 @@ private function processCsvString(string $csvText, Project $project, OrderImport
             }
 
             // Fallback for image counts when incoming header text has slight formatting differences.
-            $readImageCount = function (string $column) use ($data): ?int {
+            $readImageValue = function (string $column) use ($data): ?string {
                 $raw = $data[$column] ?? null;
 
                 if ($raw === null) {
@@ -913,7 +921,17 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                     return null;
                 }
 
-                return (int) preg_replace('/[^0-9\-]/', '', (string) $raw);
+                return (string) $raw;
+            };
+
+            $readImageCount = function (string $column) use ($readImageValue): ?int {
+                $raw = $readImageValue($column);
+
+                if ($raw === null) {
+                    return null;
+                }
+
+                return (int) preg_replace('/[^0-9\-]/', '', $raw);
             };
 
             foreach (['total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count'] as $imgCol) {
@@ -921,7 +939,10 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                     continue;
                 }
 
-                $imgValue = $readImageCount($imgCol);
+                $imgValue = $imgCol === 'total_raw_files'
+                    ? $readImageValue($imgCol)
+                    : $readImageCount($imgCol);
+
                 if ($imgValue !== null) {
                     $orderData[$imgCol] = $imgValue;
                 }

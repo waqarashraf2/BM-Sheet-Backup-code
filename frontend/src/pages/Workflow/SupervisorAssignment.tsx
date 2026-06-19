@@ -1537,7 +1537,6 @@ export default function SupervisorAssignment() {
     return withRequiredRoleColumns(selectedRoleColumns);
   }, [allowDirectCheckerAssignment, isPhotoEnhancementQueue, isProject16, projectColumns]);
   const integerOnlyColumns = useMemo(() => new Set([
-    'total_raw_files',
     'hdr_images_count',
     'single_images_count',
     'final_images_count',
@@ -2316,28 +2315,27 @@ export default function SupervisorAssignment() {
       const nextValue = toApiDateTimeValue(itDateTimeDraft);
       const currentReceivedAt = toApiDateTimeValue(toDateTimeLocalValue(targetOrder.received_at || null));
       const nextReceivedAt = toApiDateTimeValue(receivedAtDraft);
-      const nextTotalRawFiles = parseOptionalNonNegativeInteger(totalRawFilesDraft);
+      const nextTotalRawFiles = totalRawFilesDraft.trim() === '' ? null : totalRawFilesDraft.trim();
       const nextHdrImagesCount = parseOptionalNonNegativeInteger(hdrImagesCountDraft);
       const nextSingleImagesCount = parseOptionalNonNegativeInteger(singleImagesCountDraft);
       const nextFinalImagesCount = parseOptionalNonNegativeInteger(finalImagesCountDraft);
       const nextEditedImagesCount = parseOptionalNonNegativeInteger(editedImagesCountDraft);
 
       if (
-        Number.isNaN(nextTotalRawFiles)
-        || Number.isNaN(nextHdrImagesCount)
+        Number.isNaN(nextHdrImagesCount)
         || Number.isNaN(nextSingleImagesCount)
         || Number.isNaN(nextFinalImagesCount)
         || Number.isNaN(nextEditedImagesCount)
       ) {
         toast({
           title: 'Invalid counts',
-          description: 'Image count fields must be whole numbers (0 or greater).',
+          description: 'HDR, single, final, and edited image count fields must be whole numbers (0 or greater).',
           type: 'error',
         });
         return;
       }
 
-      const currentTotalRawFiles = (targetOrder as any).total_raw_files ?? null;
+      const currentTotalRawFiles = (targetOrder as any).total_raw_files == null ? null : String((targetOrder as any).total_raw_files);
       const currentHdrImagesCount = (targetOrder as any).hdr_images_count ?? null;
       const currentSingleImagesCount = (targetOrder as any).single_images_count ?? null;
       const currentFinalImagesCount = (targetOrder as any).final_images_count ?? null;
@@ -2372,7 +2370,7 @@ export default function SupervisorAssignment() {
         project_id: number;
         it_datetime?: string | null;
         received_at?: string | null;
-        total_raw_files?: number | null;
+        total_raw_files?: string | null;
         hdr_images_count?: number | null;
         single_images_count?: number | null;
         final_images_count?: number | null;
@@ -3495,9 +3493,7 @@ export default function SupervisorAssignment() {
                   </label>
                   <input
                     id="order-total-raw-files"
-                    type="number"
-                    min={0}
-                    step={1}
+                    type="text"
                     value={totalRawFilesDraft}
                     onChange={(e) => setTotalRawFilesDraft(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"

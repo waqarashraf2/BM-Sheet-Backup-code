@@ -78,7 +78,7 @@ class Order extends Model
         'metadata' => 'array',
         'attachments' => 'array',
         'images' => 'integer',
-        'total_raw_files' => 'integer',
+        'total_raw_files' => 'string',
         'hdr_images_count' => 'integer',
         'single_images_count' => 'integer',
         'final_images_count' => 'integer',

@@ -2853,6 +2853,7 @@ public function startTimer(Request $request, int $id)
             'plan_type' => 'nullable|string|max:255',
             'code' => 'nullable|string|max:255',
             'it_datetime' => 'nullable|date',
+            'total_raw_files' => 'nullable|string|max:255',
             'project_id' => 'nullable|integer|exists:projects,id',
         ]);
 
@@ -2902,18 +2903,22 @@ public function startTimer(Request $request, int $id)
             $itDatetime = $itDatetime === '' ? null : $itDatetime;
         }
 
+        $totalRawFiles = trim((string) ($request->input('total_raw_files') ?? ''));
+        $totalRawFiles = $totalRawFiles === '' ? null : $totalRawFiles;
+
         $hasInstructionInput = $request->exists('instruction');
         $hasPlanTypeInput = $request->exists('plan_type');
         $hasCodeInput = $request->exists('code');
         $hasItDatetimeInput = $request->exists('it_datetime');
+        $hasTotalRawFilesInput = $request->exists('total_raw_files');
 
-        if (!$hasInstructionInput && !$hasPlanTypeInput && !$hasCodeInput && !$hasItDatetimeInput) {
+        if (!$hasInstructionInput && !$hasPlanTypeInput && !$hasCodeInput && !$hasItDatetimeInput && !$hasTotalRawFilesInput) {
             return response()->json([
                 'message' => 'Nothing to update.',
             ], 422);
         }
 
-        DB::transaction(function () use ($order, $actor, $instruction, $planType, $code, $itDatetime, $hasInstructionInput, $hasPlanTypeInput, $hasCodeInput, $hasItDatetimeInput) {
+        DB::transaction(function () use ($order, $actor, $instruction, $planType, $code, $itDatetime, $totalRawFiles, $hasInstructionInput, $hasPlanTypeInput, $hasCodeInput, $hasItDatetimeInput, $hasTotalRawFilesInput) {
             $before = [];
             $after = [];
             $orderUpdates = [];
@@ -2940,6 +2945,12 @@ public function startTimer(Request $request, int $id)
                 $before['it_datetime'] = $order->it_datetime;
                 $after['it_datetime'] = $itDatetime;
                 $orderUpdates['it_datetime'] = $itDatetime;
+            }
+
+            if ($hasTotalRawFilesInput) {
+                $before['total_raw_files'] = $order->total_raw_files;
+                $after['total_raw_files'] = $totalRawFiles;
+                $orderUpdates['total_raw_files'] = $totalRawFiles;
             }
 
             if (!empty($orderUpdates)) {
@@ -2970,6 +2981,10 @@ public function startTimer(Request $request, int $id)
                     $crmData['it_datetime'] = $itDatetime;
                 }
 
+                if ($hasTotalRawFilesInput && Schema::hasColumn('crm_order_assignments', 'total_raw_files')) {
+                    $crmData['total_raw_files'] = $totalRawFiles;
+                }
+
                 if ($existingCrm) {
                     DB::table('crm_order_assignments')
                         ->where('id', $existingCrm->id)
@@ -2991,11 +3006,12 @@ public function startTimer(Request $request, int $id)
                         + ($hasPlanTypeInput ? 1 : 0)
                         + ($hasCodeInput ? 1 : 0)
                         + ($hasItDatetimeInput ? 1 : 0)
+                        + ($hasTotalRawFilesInput ? 1 : 0)
                     ) > 1
                     ? 'update_order_details'
                     : ($hasCodeInput
                         ? 'update_code'
-                        : ($hasPlanTypeInput ? 'update_plan_type' : ($hasItDatetimeInput ? 'update_it_datetime' : 'update_instruction'))),
+                        : ($hasPlanTypeInput ? 'update_plan_type' : ($hasItDatetimeInput ? 'update_it_datetime' : ($hasTotalRawFilesInput ? 'update_total_raw_files' : 'update_instruction')))),
                 'Order',
                 (int) $order->id,
                 (int) $order->project_id,
@@ -3007,12 +3023,12 @@ public function startTimer(Request $request, int $id)
         return response()->json([
             'order' => $order->fresh(),
             'message' => (
-                (($hasInstructionInput ? 1 : 0) + ($hasPlanTypeInput ? 1 : 0) + ($hasCodeInput ? 1 : 0) + ($hasItDatetimeInput ? 1 : 0)) > 1
+                (($hasInstructionInput ? 1 : 0) + ($hasPlanTypeInput ? 1 : 0) + ($hasCodeInput ? 1 : 0) + ($hasItDatetimeInput ? 1 : 0) + ($hasTotalRawFilesInput ? 1 : 0)) > 1
             )
                 ? 'Order details updated successfully.'
                 : ($hasCodeInput
                     ? 'Code updated successfully.'
-                    : ($hasPlanTypeInput ? 'Plan type updated successfully.' : ($hasItDatetimeInput ? 'IT datetime updated successfully.' : 'Instruction updated successfully.'))),
+                    : ($hasPlanTypeInput ? 'Plan type updated successfully.' : ($hasItDatetimeInput ? 'IT datetime updated successfully.' : ($hasTotalRawFilesInput ? 'Total raw files updated successfully.' : 'Instruction updated successfully.')))),
         ]);
     }
 

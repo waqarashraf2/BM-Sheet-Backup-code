@@ -273,7 +273,7 @@ export const workflowService = {
       code?: string | null;
       it_datetime?: string | null;
       received_at?: string | null;
-      total_raw_files?: number | null;
+      total_raw_files?: string | number | null;
       hdr_images_count?: number | null;
       single_images_count?: number | null;
       final_images_count?: number | null;

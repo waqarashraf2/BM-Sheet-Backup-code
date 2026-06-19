@@ -5188,9 +5188,15 @@ if ($useDueInFirstOrdering) {
                 // Handle optional columns that may not exist in all tables
                 foreach ($optionalCols as $optCol) {
                     if (self::columnExists($tableName, $optCol)) {
-                        $cols .= ", {$optCol}";
+                        if ($optCol === 'total_raw_files') {
+                            $cols .= ", CAST(`{$optCol}` AS CHAR) as {$optCol}";
+                        } else {
+                            $cols .= ", {$optCol}";
+                        }
                     } else {
-                        $cols .= ", NULL as {$optCol}";
+                        $cols .= $optCol === 'total_raw_files'
+                            ? ", CAST(NULL AS CHAR) as {$optCol}"
+                            : ", NULL as {$optCol}";
                     }
                 }
                 $rangeSql = isset($receivedAtRanges[(int) $pid])
@@ -5204,7 +5210,9 @@ if ($useDueInFirstOrdering) {
             $firstTable = ProjectOrderService::getTableName($projectIds[0] ?? 0);
             $fallbackCols = $selectCols;
             foreach ($optionalCols as $optCol) {
-                $fallbackCols .= ", NULL as {$optCol}";
+                $fallbackCols .= $optCol === 'total_raw_files'
+                    ? ", CAST(NULL AS CHAR) as {$optCol}"
+                    : ", NULL as {$optCol}";
             }
             return "SELECT {$fallbackCols} FROM `{$firstTable}` WHERE 1=0";
         }
