@@ -278,6 +278,9 @@ export const workflowService = {
       single_images_count?: number | null;
       final_images_count?: number | null;
       edited_images_count?: number | null;
+      flambient_order_count?: number | null;
+      day_to_dusk_count?: number | null;
+      object_removal_count?: number | null;
       project_id?: number;
     }
   ) =>

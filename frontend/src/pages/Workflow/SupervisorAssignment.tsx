@@ -156,6 +156,9 @@ export default function SupervisorAssignment() {
   const [singleImagesCountDraft, setSingleImagesCountDraft] = useState('');
   const [finalImagesCountDraft, setFinalImagesCountDraft] = useState('');
   const [editedImagesCountDraft, setEditedImagesCountDraft] = useState('');
+  const [flambientOrderCountDraft, setFlambientOrderCountDraft] = useState('');
+  const [dayToDuskCountDraft, setDayToDuskCountDraft] = useState('');
+  const [objectRemovalCountDraft, setObjectRemovalCountDraft] = useState('');
   const [planTypeDraft, setPlanTypeDraft] = useState('');
   const [codeDraft, setCodeDraft] = useState('');
   const [updatingInstructionId, setUpdatingInstructionId] = useState<number | null>(null);
@@ -1381,6 +1384,21 @@ export default function SupervisorAssignment() {
         label: 'Edited Images',
         width: '6%',
       },
+      flambient_order_count: {
+        key: 'flambient_order_count',
+        label: 'Flambient',
+        width: '6%',
+      },
+      day_to_dusk_count: {
+        key: 'day_to_dusk_count',
+        label: 'Day to Dusk',
+        width: '6%',
+      },
+      object_removal_count: {
+        key: 'object_removal_count',
+        label: 'Object Removal',
+        width: '6%',
+      },
       VARIANT_no: {
         key: 'VARIANT_no',
         label: 'Variant',
@@ -1474,6 +1492,9 @@ export default function SupervisorAssignment() {
       'single_images_count',
       'final_images_count',
       'edited_images_count',
+      'flambient_order_count',
+      'day_to_dusk_count',
+      'object_removal_count',
     ].some((field) => {
       if (visiblePrimaryFieldSet.has(field)) return true;
 
@@ -1541,6 +1562,9 @@ export default function SupervisorAssignment() {
     'single_images_count',
     'final_images_count',
     'edited_images_count',
+    'flambient_order_count',
+    'day_to_dusk_count',
+    'object_removal_count',
     'VARIANT_no',
     '__batch_number',
   ]), []);
@@ -1958,6 +1982,9 @@ export default function SupervisorAssignment() {
       setSingleImagesCountDraft((order as any).single_images_count == null ? '' : String((order as any).single_images_count));
       setFinalImagesCountDraft((order as any).final_images_count == null ? '' : String((order as any).final_images_count));
       setEditedImagesCountDraft((order as any).edited_images_count == null ? '' : String((order as any).edited_images_count));
+      setFlambientOrderCountDraft((order as any).flambient_order_count == null ? '' : String((order as any).flambient_order_count));
+      setDayToDuskCountDraft((order as any).day_to_dusk_count == null ? '' : String((order as any).day_to_dusk_count));
+      setObjectRemovalCountDraft((order as any).object_removal_count == null ? '' : String((order as any).object_removal_count));
     };
     const instructionValue = getOrderInstructionValue(order as AssignmentOrder & Record<string, any>);
     const rawValue = column.key === 'instruction'
@@ -2036,6 +2063,9 @@ export default function SupervisorAssignment() {
       'single_images_count',
       'final_images_count',
       'edited_images_count',
+      'flambient_order_count',
+      'day_to_dusk_count',
+      'object_removal_count',
     ].includes(column.key)
       ? {
         onContextMenu: (e: React.MouseEvent<HTMLTableCellElement>) => {
@@ -2176,6 +2206,9 @@ export default function SupervisorAssignment() {
       case 'single_images_count':
       case 'final_images_count':
       case 'edited_images_count':
+      case 'flambient_order_count':
+      case 'day_to_dusk_count':
+      case 'object_removal_count':
         return (
           <td
             {...additionalTimingAndCountCellProps}
@@ -2320,16 +2353,22 @@ export default function SupervisorAssignment() {
       const nextSingleImagesCount = parseOptionalNonNegativeInteger(singleImagesCountDraft);
       const nextFinalImagesCount = parseOptionalNonNegativeInteger(finalImagesCountDraft);
       const nextEditedImagesCount = parseOptionalNonNegativeInteger(editedImagesCountDraft);
+      const nextFlambientOrderCount = parseOptionalNonNegativeInteger(flambientOrderCountDraft);
+      const nextDayToDuskCount = parseOptionalNonNegativeInteger(dayToDuskCountDraft);
+      const nextObjectRemovalCount = parseOptionalNonNegativeInteger(objectRemovalCountDraft);
 
       if (
         Number.isNaN(nextHdrImagesCount)
         || Number.isNaN(nextSingleImagesCount)
         || Number.isNaN(nextFinalImagesCount)
         || Number.isNaN(nextEditedImagesCount)
+        || Number.isNaN(nextFlambientOrderCount)
+        || Number.isNaN(nextDayToDuskCount)
+        || Number.isNaN(nextObjectRemovalCount)
       ) {
         toast({
           title: 'Invalid counts',
-          description: 'HDR, single, final, and edited image count fields must be whole numbers (0 or greater).',
+          description: 'Image count fields must be whole numbers (0 or greater).',
           type: 'error',
         });
         return;
@@ -2340,6 +2379,9 @@ export default function SupervisorAssignment() {
       const currentSingleImagesCount = (targetOrder as any).single_images_count ?? null;
       const currentFinalImagesCount = (targetOrder as any).final_images_count ?? null;
       const currentEditedImagesCount = (targetOrder as any).edited_images_count ?? null;
+      const currentFlambientOrderCount = (targetOrder as any).flambient_order_count ?? null;
+      const currentDayToDuskCount = (targetOrder as any).day_to_dusk_count ?? null;
+      const currentObjectRemovalCount = (targetOrder as any).object_removal_count ?? null;
 
       if (
         currentValue === nextValue
@@ -2349,6 +2391,9 @@ export default function SupervisorAssignment() {
         && currentSingleImagesCount === nextSingleImagesCount
         && currentFinalImagesCount === nextFinalImagesCount
         && currentEditedImagesCount === nextEditedImagesCount
+        && currentFlambientOrderCount === nextFlambientOrderCount
+        && currentDayToDuskCount === nextDayToDuskCount
+        && currentObjectRemovalCount === nextObjectRemovalCount
       ) {
         setShowItDateTimeEditor(null);
         setItDateTimeDraft('');
@@ -2358,6 +2403,9 @@ export default function SupervisorAssignment() {
         setSingleImagesCountDraft('');
         setFinalImagesCountDraft('');
         setEditedImagesCountDraft('');
+        setFlambientOrderCountDraft('');
+        setDayToDuskCountDraft('');
+        setObjectRemovalCountDraft('');
         toast({
           title: 'No changes',
           description: 'Timing and image count values are unchanged.',
@@ -2375,6 +2423,9 @@ export default function SupervisorAssignment() {
         single_images_count?: number | null;
         final_images_count?: number | null;
         edited_images_count?: number | null;
+        flambient_order_count?: number | null;
+        day_to_dusk_count?: number | null;
+        object_removal_count?: number | null;
       } = {
         project_id: targetOrder.project_id,
       };
@@ -2385,6 +2436,9 @@ export default function SupervisorAssignment() {
       if (currentSingleImagesCount !== nextSingleImagesCount) payload.single_images_count = nextSingleImagesCount;
       if (currentFinalImagesCount !== nextFinalImagesCount) payload.final_images_count = nextFinalImagesCount;
       if (currentEditedImagesCount !== nextEditedImagesCount) payload.edited_images_count = nextEditedImagesCount;
+      if (currentFlambientOrderCount !== nextFlambientOrderCount) payload.flambient_order_count = nextFlambientOrderCount;
+      if (currentDayToDuskCount !== nextDayToDuskCount) payload.day_to_dusk_count = nextDayToDuskCount;
+      if (currentObjectRemovalCount !== nextObjectRemovalCount) payload.object_removal_count = nextObjectRemovalCount;
 
       const res = await workflowService.updateInstruction(targetOrder.id, payload);
 
@@ -2399,6 +2453,9 @@ export default function SupervisorAssignment() {
             ...(payload.single_images_count !== undefined ? { single_images_count: nextSingleImagesCount } : {}),
             ...(payload.final_images_count !== undefined ? { final_images_count: nextFinalImagesCount } : {}),
             ...(payload.edited_images_count !== undefined ? { edited_images_count: nextEditedImagesCount } : {}),
+            ...(payload.flambient_order_count !== undefined ? { flambient_order_count: nextFlambientOrderCount } : {}),
+            ...(payload.day_to_dusk_count !== undefined ? { day_to_dusk_count: nextDayToDuskCount } : {}),
+            ...(payload.object_removal_count !== undefined ? { object_removal_count: nextObjectRemovalCount } : {}),
           }
           : order
       )));
@@ -2411,6 +2468,9 @@ export default function SupervisorAssignment() {
       setSingleImagesCountDraft('');
       setFinalImagesCountDraft('');
       setEditedImagesCountDraft('');
+      setFlambientOrderCountDraft('');
+      setDayToDuskCountDraft('');
+      setObjectRemovalCountDraft('');
       toast({
         title: 'Order timing and counts updated',
         description: res.data?.message || `Updated timing/count fields for order ${targetOrder.order_number}.`,
@@ -3423,6 +3483,9 @@ export default function SupervisorAssignment() {
           setSingleImagesCountDraft('');
           setFinalImagesCountDraft('');
           setEditedImagesCountDraft('');
+          setFlambientOrderCountDraft('');
+          setDayToDuskCountDraft('');
+          setObjectRemovalCountDraft('');
         }}
         title={hasItDateTimeEditorFields ? 'Update Timing & Counts' : 'Update IT Date Time'}
         subtitle={`Order ${showItDateTimeEditor?.order_number || ''}`}
@@ -3441,6 +3504,9 @@ export default function SupervisorAssignment() {
                 setSingleImagesCountDraft('');
                 setFinalImagesCountDraft('');
                 setEditedImagesCountDraft('');
+                setFlambientOrderCountDraft('');
+                setDayToDuskCountDraft('');
+                setObjectRemovalCountDraft('');
               }}
             >
               Cancel
@@ -3564,6 +3630,57 @@ export default function SupervisorAssignment() {
                     step={1}
                     value={editedImagesCountDraft}
                     onChange={(e) => setEditedImagesCountDraft(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  />
+                </div>
+              )}
+
+              {visiblePrimaryFieldSet.has('flambient_order_count') && (
+                <div className="space-y-2">
+                  <label htmlFor="order-flambient-count" className="block text-sm font-medium text-slate-700">
+                    Flambient Count
+                  </label>
+                  <input
+                    id="order-flambient-count"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={flambientOrderCountDraft}
+                    onChange={(e) => setFlambientOrderCountDraft(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  />
+                </div>
+              )}
+
+              {visiblePrimaryFieldSet.has('day_to_dusk_count') && (
+                <div className="space-y-2">
+                  <label htmlFor="order-day-to-dusk-count" className="block text-sm font-medium text-slate-700">
+                    Day to Dusk Count
+                  </label>
+                  <input
+                    id="order-day-to-dusk-count"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={dayToDuskCountDraft}
+                    onChange={(e) => setDayToDuskCountDraft(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  />
+                </div>
+              )}
+
+              {visiblePrimaryFieldSet.has('object_removal_count') && (
+                <div className="space-y-2">
+                  <label htmlFor="order-object-removal-count" className="block text-sm font-medium text-slate-700">
+                    Object Removal Count
+                  </label>
+                  <input
+                    id="order-object-removal-count"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={objectRemovalCountDraft}
+                    onChange={(e) => setObjectRemovalCountDraft(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                   />
                 </div>

@@ -4549,6 +4549,7 @@ $endDate = $request->input('end_date');
             'current_layer', 'file_uploader_id', 'file_uploader_name',
             'fassign_time', 'file_uploaded', 'file_upload_date',
             'images', 'total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count', 'edited_images_count',
+            'flambient_order_count', 'day_to_dusk_count', 'object_removal_count',
             'it_datetime',
         ];
 
@@ -4591,7 +4592,7 @@ $endDate = $request->input('end_date');
 
         // Overlay CRM assignments (survives external cron truncation of project tables)
         // LEFT JOIN crm_order_assignments and COALESCE to prefer CRM values
-        $unionQuery = "SELECT qo.id, qo.order_number, qo.client_portal_id, qo.orignal_image_id, qo.clint_order_number, qo.VARIANT_no, qo.batch_number, qo.date, qo.bedrooms, qo.images, qo.total_raw_files, qo.hdr_images_count, qo.single_images_count, qo.final_images_count, qo.edited_images_count, qo.it_datetime, qo.project_id, qo.client_reference, qo.address, qo.client_name, qo.company, qo.branch, qo.photographer, qo.code, qo.plan_type, qo.instruction,"
+        $unionQuery = "SELECT qo.id, qo.order_number, qo.client_portal_id, qo.orignal_image_id, qo.clint_order_number, qo.VARIANT_no, qo.batch_number, qo.date, qo.bedrooms, qo.images, qo.total_raw_files, qo.hdr_images_count, qo.single_images_count, qo.final_images_count, qo.edited_images_count, qo.flambient_order_count, qo.day_to_dusk_count, qo.object_removal_count, qo.it_datetime, qo.project_id, qo.client_reference, qo.address, qo.client_name, qo.company, qo.branch, qo.photographer, qo.code, qo.plan_type, qo.instruction,"
             . "COALESCE(NULLIF(coa.current_layer,''), qo.current_layer) as current_layer, "
             . "COALESCE(coa.workflow_state, qo.workflow_state) as workflow_state, "
             . "qo.priority, "

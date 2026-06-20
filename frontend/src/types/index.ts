@@ -969,6 +969,9 @@ export interface AssignmentOrder {
   single_images_count?: number | null;
   final_images_count?: number | null;
   edited_images_count?: number | null;
+  flambient_order_count?: number | null;
+  day_to_dusk_count?: number | null;
+  object_removal_count?: number | null;
   instruction?: string | null;
   instructions?: string | null;
   supervisor_notes?: string | null;
