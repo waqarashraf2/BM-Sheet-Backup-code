@@ -657,6 +657,22 @@ export default function SupervisorAssignment() {
     () => Object.entries(roleCompletions).sort(([roleA], [roleB]) => roleSortWeight(roleA) - roleSortWeight(roleB) || roleA.localeCompare(roleB)),
     [roleCompletions, roleSortWeight]
   );
+  const project51EditorAccountSummary = useMemo(
+    () => project51PortalAccounts.editors.map((account) => ({
+      id: account.id,
+      label: account.name || account.resource_name,
+      count: Number(account.pending_assigned_count || 0),
+    })),
+    [project51PortalAccounts.editors]
+  );
+  const project51QcAccountSummary = useMemo(
+    () => project51PortalAccounts.qc_accounts.map((account) => ({
+      id: account.id,
+      label: account.name || account.resource_name,
+      count: Number(account.pending_assigned_count || 0),
+    })),
+    [project51PortalAccounts.qc_accounts]
+  );
   const statusButtons = useMemo(() => {
     const buttons = [
       { key: 'all', label: 'All', count: counts.today_total },
@@ -3007,7 +3023,7 @@ export default function SupervisorAssignment() {
             <div className="bg-white rounded-xl border border-slate-200/60 overflow-hidden">
               <button onClick={() => setStatsOpen(!statsOpen)}
                 className="w-full flex items-center justify-between px-4 py-2 hover:bg-slate-50 transition-colors">
-                <div className="flex items-center gap-4 text-xs">
+                <div className="flex flex-wrap items-center gap-3 text-xs">
                   <BarChart3 className="w-4 h-4 text-brand-600" />
                   <span className="font-bold text-slate-700">{counts.today_total} Today</span>
                   <span className="text-brand-600">{counts.assigned} Assigned</span>
@@ -3016,6 +3032,42 @@ export default function SupervisorAssignment() {
                   {orderedRoleCompletionEntries.map(([role, rc]) => (
                     <span key={role} className="text-slate-500 capitalize">{role}: <b className="text-slate-700">{rc.today_completed}</b></span>
                   ))}
+                  {project51EditorAccountSummary.length > 0 && (
+                    <div className="flex max-w-[48%] flex-wrap items-center gap-1 border-l border-slate-200 pl-3">
+                      <span className="font-semibold text-slate-600">Editor</span>
+                      {project51EditorAccountSummary.map((account) => (
+                        <span
+                          key={account.id}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                            account.count === 0
+                              ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-100'
+                              : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
+                          }`}
+                          title={`${account.label}: ${account.count} active orders`}
+                        >
+                          {account.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {project51QcAccountSummary.length > 0 && (
+                    <div className="flex max-w-[48%] flex-wrap items-center gap-1 border-l border-slate-200 pl-3">
+                      <span className="font-semibold text-slate-600">QC</span>
+                      {project51QcAccountSummary.map((account) => (
+                        <span
+                          key={account.id}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                            account.count === 0
+                              ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-100'
+                              : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
+                          }`}
+                          title={`${account.label}: ${account.count} active orders`}
+                        >
+                          {account.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {!isProject16 && (
                     <>
                       <span className="border-l border-slate-300 pl-4 text-red-600 font-semibold">

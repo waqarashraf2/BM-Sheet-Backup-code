@@ -158,6 +158,11 @@ export default function WorkerDashboard() {
   const isQA = user?.role === 'qa';
   const isFirstStageWorker = isDrawer || isDesigner;
   const firstStageLabel = isDesigner ? 'Designer' : 'Drawer';
+  const holdActionLabel = isFirstStageWorker ? 'Pending' : 'Hold';
+  const holdActionTitle = isFirstStageWorker ? 'Move Order to Pending' : 'Put Order On Hold';
+  const holdActionSubtitle = isFirstStageWorker
+    ? 'Move this order to pending by drawer/fixing until it is reassigned'
+    : 'Temporarily pause this order until issues are resolved';
   const isQueueWorker = isFirstStageWorker || isChecker || isFiller || isQA;
   const isProject12Filler = isFiller && user?.project?.id === 12;
   const currentProjectId = currentOrder?.project_id ?? user?.project?.id ?? null;
@@ -1285,7 +1290,7 @@ export default function WorkerDashboard() {
                         )}
 
                         <Button variant="secondary" onClick={() => setShowHold(true)} icon={<Clock className="h-4 w-4" />}>
-                          Hold
+                          {holdActionLabel}
                         </Button>
                       </div>
                     </div>
@@ -1608,7 +1613,7 @@ export default function WorkerDashboard() {
                     )}
                     {canHold && (
                       <Button variant="secondary" onClick={() => setShowHold(true)} icon={<Clock className="h-4 w-4" />}>
-                        Hold
+                        {holdActionLabel}
                       </Button>
                     )}
                   </div>
@@ -1815,8 +1820,8 @@ export default function WorkerDashboard() {
       <Modal
         open={showHold}
         onClose={() => setShowHold(false)}
-        title="Put Order On Hold"
-        subtitle="Temporarily pause this order until issues are resolved"
+        title={holdActionTitle}
+        subtitle={holdActionSubtitle}
         variant="warning"
         size="md"
         footer={
@@ -1828,24 +1833,24 @@ export default function WorkerDashboard() {
               disabled={!holdReason || holdReason.length < 10}
               className="flex-1 bg-amber-500 hover:bg-amber-600 focus-visible:ring-amber-500/30"
             >
-              Confirm Hold
+              Confirm {holdActionLabel}
             </Button>
           </>
         }
       >
         <Textarea
           id="hold-reason"
-          label="Reason for Hold"
+          label={`Reason for ${holdActionLabel}`}
           required
           value={holdReason}
           onChange={e => setHoldReason(e.target.value)}
-          placeholder="Explain why this order needs to be held (minimum 10 characters)..."
+          placeholder={`Explain why this order needs to be ${isFirstStageWorker ? 'pending' : 'held'} (minimum 10 characters)...`}
           rows={4}
           showCharCount
           maxLength={300}
           currentLength={holdReason.length}
           error={holdReason.length > 0 && holdReason.length < 10 ? 'Please provide at least 10 characters' : undefined}
-          hint="This will pause the order and notify supervisors"
+          hint={isFirstStageWorker ? 'This will move the order to pending and notify supervisors' : 'This will pause the order and notify supervisors'}
         />
       </Modal>
     </AnimatedPage>

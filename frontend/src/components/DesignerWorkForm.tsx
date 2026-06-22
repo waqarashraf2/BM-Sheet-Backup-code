@@ -527,14 +527,14 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
         {/* Pending panel */}
         {showPending && (
           <div className="px-6 py-4 border-t border-amber-200 bg-amber-50 space-y-3">
-            <h4 className="text-sm font-semibold text-amber-800">Put On Hold</h4>
+            <h4 className="text-sm font-semibold text-amber-800">Move to Pending</h4>
             <Textarea
               id="pending-reason"
               label="Reason"
               required
               value={pendingReason}
               onChange={e => setPendingReason(e.target.value)}
-              placeholder="Explain why this needs to be held (min 10 chars)..."
+              placeholder="Explain why this needs to be pending (min 10 chars)..."
               rows={3}
               showCharCount
               maxLength={300}
@@ -543,7 +543,7 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
             <div className="flex items-center gap-2">
               <Button variant="secondary" onClick={() => setShowPending(false)} className="flex-1">Cancel</Button>
               <Button onClick={handlePending} loading={submitting} disabled={!pendingReason || pendingReason.length < 10} className="flex-1 bg-amber-500 hover:bg-amber-600">
-                Confirm Hold
+                Confirm Pending
               </Button>
             </div>
           </div>
@@ -557,7 +557,7 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
               onClick={() => setShowPending(true)}
               icon={<Clock className="h-4 w-4" />}
             >
-              Hold
+              Pending
             </Button>
             <Button
               onClick={handleSubmitDesign}

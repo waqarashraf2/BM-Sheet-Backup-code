@@ -5172,7 +5172,7 @@ if ($useDueInFirstOrdering) {
             'role_completions' => $roleCompletions,
         ];
 
-        $project51PortalAccounts = $this->buildProject51PortalAccountsForAssignment($projectIds);
+        $project51PortalAccounts = $this->buildProject51PortalAccountsForAssignment($projectIds, $dateFilter, $startDate, $endDate);
         if ($project51PortalAccounts !== null) {
             $responseData['project_51_portal_accounts'] = $project51PortalAccounts;
         }
@@ -5180,7 +5180,12 @@ if ($useDueInFirstOrdering) {
         return response()->json($this->sanitizeAssignmentDashboardJson($responseData));
     }
 
-    private function buildProject51PortalAccountsForAssignment(array $projectIds): ?array
+    private function buildProject51PortalAccountsForAssignment(
+        array $projectIds,
+        ?string $dateFilter = null,
+        ?string $startDate = null,
+        ?string $endDate = null
+    ): ?array
     {
         if (!in_array(self::PROJECT_51_ID, array_map('intval', $projectIds), true)) {
             return null;
@@ -5203,8 +5208,8 @@ if ($useDueInFirstOrdering) {
             ->orderBy('resource_name')
             ->get(['id', 'client_user_id', 'resource_name', 'first_name', 'last_name', 'account_type']);
 
-        $pendingByEditorAccount = $this->project51PendingCountByAccount($ordersTable, 'editor_portal_account_id');
-        $pendingByQcAccount = $this->project51PendingCountByAccount($ordersTable, 'qc_portal_account_id');
+        $pendingByEditorAccount = $this->project51PendingCountByAccount($ordersTable, 'editor_portal_account_id', $dateFilter, $startDate, $endDate);
+        $pendingByQcAccount = $this->project51PendingCountByAccount($ordersTable, 'qc_portal_account_id', $dateFilter, $startDate, $endDate);
 
         $formatAccount = function ($account, \Illuminate\Support\Collection $pendingCounts) {
             $name = trim((string) ($account->first_name . ' ' . $account->last_name));
@@ -5231,15 +5236,37 @@ if ($useDueInFirstOrdering) {
         ];
     }
 
-    private function project51PendingCountByAccount(string $ordersTable, string $accountColumn): \Illuminate\Support\Collection
+    private function project51PendingCountByAccount(
+        string $ordersTable,
+        string $accountColumn,
+        ?string $dateFilter = null,
+        ?string $startDate = null,
+        ?string $endDate = null
+    ): \Illuminate\Support\Collection
     {
         if (!self::columnExists($ordersTable, $accountColumn)) {
             return collect();
         }
 
-        return DB::table($ordersTable)
+        $query = DB::table($ordersTable)
             ->whereNotNull($accountColumn)
-            ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+            ->whereNotIn('workflow_state', ['COMPLETED', 'DELIVERED', 'CANCELLED']);
+
+        if (self::columnExists($ordersTable, 'received_at')) {
+            $project = Project::find(self::PROJECT_51_ID);
+            if ($project) {
+                $range = $this->buildAssignmentDashboardProjectRange(
+                    $project,
+                    $startDate,
+                    $endDate,
+                    $dateFilter,
+                    config('app.timezone')
+                );
+                $this->applyProjectAwareRangeConstraint($query, $range, 'received_at');
+            }
+        }
+
+        return $query
             ->selectRaw("{$accountColumn} as account_id, COUNT(*) as pending_count")
             ->groupBy($accountColumn)
             ->pluck('pending_count', 'account_id');

@@ -1235,9 +1235,9 @@ public function cancelOrder(Request $request, int $id)
     }
 
     // =========================================
-    // ✅ DRAWER → PENDING
+    // Drawer/designer -> pending by drawer/fixing
     // =========================================
-    if ($user->role === 'drawer') {
+    if (in_array($user->role, ['drawer', 'designer'], true)) {
 
         if (!self::isOrderAssignedToUser($order, $user)) {
             return response()->json([
@@ -1245,9 +1245,9 @@ public function cancelOrder(Request $request, int $id)
             ], 403);
         }
 
-        if (!in_array($order->workflow_state, ['IN_DRAW'])) {
+        if (!in_array($order->workflow_state, ['IN_DRAW', 'IN_DESIGN'], true)) {
             return response()->json([
-                'message' => 'Order is not in drawing state.'
+                'message' => 'Order is not in drawing/design state.'
             ], 422);
         }
 
