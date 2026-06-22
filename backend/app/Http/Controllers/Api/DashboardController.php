@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\Invoice;
 use App\Models\Project;
+use App\Models\Project51PortalAccount;
 use App\Models\User;
 use App\Models\WorkItem;
 use App\Services\StateMachine;
@@ -22,6 +23,8 @@ class DashboardController extends Controller
     private const ASSIGNMENT_DASHBOARD_STORAGE_TIMEZONE = 'Asia/Karachi';
     private const ASSIGNMENT_DASHBOARD_VIETNAM_PROJECT_ID = 16;
     private const ASSIGNMENT_DASHBOARD_VIETNAM_TIMEZONE = 'Asia/Ho_Chi_Minh';
+    private const PROJECT_51_ID = 51;
+    private const PROJECT_51_PORTAL_ACCOUNTS_TABLE = 'project_51_portal_accounts';
     private const ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS = [
         16 => 2,
         2  => 0,  // Project 2 (Focal PB) stores due_in as naive UTC; +5h converts to PKT for frontend
@@ -4551,6 +4554,9 @@ $endDate = $request->input('end_date');
             'images', 'total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count', 'edited_images_count',
             'flambient_order_count', 'day_to_dusk_count', 'object_removal_count',
             'it_datetime',
+            'editor_portal_account_id', 'qc_portal_account_id',
+            'editor_login_name', 'qc_account_name',
+            'fixing_started_at', 'fixing_completed_at', 'fixing_time_seconds',
         ];
 
         // Push the received_at range into each project SELECT so MySQL can use
@@ -4592,7 +4598,7 @@ $endDate = $request->input('end_date');
 
         // Overlay CRM assignments (survives external cron truncation of project tables)
         // LEFT JOIN crm_order_assignments and COALESCE to prefer CRM values
-        $unionQuery = "SELECT qo.id, qo.order_number, qo.client_portal_id, qo.orignal_image_id, qo.clint_order_number, qo.VARIANT_no, qo.batch_number, qo.date, qo.bedrooms, qo.images, qo.total_raw_files, qo.hdr_images_count, qo.single_images_count, qo.final_images_count, qo.edited_images_count, qo.flambient_order_count, qo.day_to_dusk_count, qo.object_removal_count, qo.it_datetime, qo.project_id, qo.client_reference, qo.address, qo.client_name, qo.company, qo.branch, qo.photographer, qo.code, qo.plan_type, qo.instruction,"
+        $unionQuery = "SELECT qo.id, qo.order_number, qo.client_portal_id, qo.orignal_image_id, qo.clint_order_number, qo.VARIANT_no, qo.batch_number, qo.date, qo.bedrooms, qo.images, qo.total_raw_files, qo.hdr_images_count, qo.single_images_count, qo.final_images_count, qo.edited_images_count, qo.flambient_order_count, qo.day_to_dusk_count, qo.object_removal_count, qo.it_datetime, qo.editor_portal_account_id, qo.qc_portal_account_id, qo.editor_login_name, qo.qc_account_name, qo.fixing_started_at, qo.fixing_completed_at, qo.fixing_time_seconds, qo.project_id, qo.client_reference, qo.address, qo.client_name, qo.company, qo.branch, qo.photographer, qo.code, qo.plan_type, qo.instruction,"
             . "COALESCE(NULLIF(coa.current_layer,''), qo.current_layer) as current_layer, "
             . "COALESCE(coa.workflow_state, qo.workflow_state) as workflow_state, "
             . "qo.priority, "
@@ -4986,6 +4992,15 @@ if ($useDueInFirstOrdering) {
             $order->total_images = $commentMeta['total_images'] ?? null;
             $order->final_images = $commentMeta['final_images'] ?? null;
 
+            if ($order->fixing_time_seconds === null && $order->fixing_started_at && $order->fixing_completed_at) {
+                try {
+                    $order->fixing_time_seconds = Carbon::parse($order->fixing_started_at)
+                        ->diffInSeconds(Carbon::parse($order->fixing_completed_at), false);
+                } catch (\Throwable $e) {
+                    $order->fixing_time_seconds = null;
+                }
+            }
+
             return $order;
         });
 
@@ -5157,7 +5172,77 @@ if ($useDueInFirstOrdering) {
             'role_completions' => $roleCompletions,
         ];
 
+        $project51PortalAccounts = $this->buildProject51PortalAccountsForAssignment($projectIds);
+        if ($project51PortalAccounts !== null) {
+            $responseData['project_51_portal_accounts'] = $project51PortalAccounts;
+        }
+
         return response()->json($this->sanitizeAssignmentDashboardJson($responseData));
+    }
+
+    private function buildProject51PortalAccountsForAssignment(array $projectIds): ?array
+    {
+        if (!in_array(self::PROJECT_51_ID, array_map('intval', $projectIds), true)) {
+            return null;
+        }
+
+        $ordersTable = ProjectOrderService::getTableName(self::PROJECT_51_ID);
+        if (
+            !self::tableExists(self::PROJECT_51_PORTAL_ACCOUNTS_TABLE)
+            || !self::tableExists($ordersTable)
+        ) {
+            return [
+                'editors' => [],
+                'qc_accounts' => [],
+            ];
+        }
+
+        $accounts = Project51PortalAccount::query()
+            ->where('is_active', true)
+            ->orderBy('first_name')
+            ->orderBy('resource_name')
+            ->get(['id', 'client_user_id', 'resource_name', 'first_name', 'last_name', 'account_type']);
+
+        $pendingByEditorAccount = $this->project51PendingCountByAccount($ordersTable, 'editor_portal_account_id');
+        $pendingByQcAccount = $this->project51PendingCountByAccount($ordersTable, 'qc_portal_account_id');
+
+        $formatAccount = function ($account, \Illuminate\Support\Collection $pendingCounts) {
+            $name = trim((string) ($account->first_name . ' ' . $account->last_name));
+
+            return [
+                'id' => (int) $account->id,
+                'client_user_id' => (int) $account->client_user_id,
+                'resource_name' => $account->resource_name,
+                'name' => $name !== '' ? $name : $account->resource_name,
+                'account_type' => $account->account_type,
+                'pending_assigned_count' => (int) ($pendingCounts[$account->id] ?? 0),
+            ];
+        };
+
+        return [
+            'editors' => $accounts
+                ->filter(fn ($account) => in_array($account->account_type, ['editor', 'both'], true))
+                ->map(fn ($account) => $formatAccount($account, $pendingByEditorAccount))
+                ->values(),
+            'qc_accounts' => $accounts
+                ->filter(fn ($account) => in_array($account->account_type, ['qc', 'both'], true))
+                ->map(fn ($account) => $formatAccount($account, $pendingByQcAccount))
+                ->values(),
+        ];
+    }
+
+    private function project51PendingCountByAccount(string $ordersTable, string $accountColumn): \Illuminate\Support\Collection
+    {
+        if (!self::columnExists($ordersTable, $accountColumn)) {
+            return collect();
+        }
+
+        return DB::table($ordersTable)
+            ->whereNotNull($accountColumn)
+            ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+            ->selectRaw("{$accountColumn} as account_id, COUNT(*) as pending_count")
+            ->groupBy($accountColumn)
+            ->pluck('pending_count', 'account_id');
     }
 
  

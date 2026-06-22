@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Order;
+use App\Models\Project51PortalAccount;
 use App\Models\WorkItem;
 use App\Models\Project;
 use App\Services\StateMachine;
@@ -21,6 +22,9 @@ use Illuminate\Support\Facades\Schema;
 class WorkflowController extends Controller
 {
     private static array $tableExistsCache = [];
+    private static array $columnExistsCache = [];
+    private const PROJECT_51_ID = 51;
+    private const PROJECT_51_PORTAL_ACCOUNTS_TABLE = 'project_51_portal_accounts';
 
     private static function tableExists(string $table): bool
     {
@@ -29,6 +33,16 @@ class WorkflowController extends Controller
         }
 
         return self::$tableExistsCache[$table];
+    }
+
+    private static function columnExists(string $table, string $column): bool
+    {
+        $key = "{$table}.{$column}";
+        if (!array_key_exists($key, self::$columnExistsCache)) {
+            self::$columnExistsCache[$key] = self::tableExists($table) && Schema::hasColumn($table, $column);
+        }
+
+        return self::$columnExistsCache[$key];
     }
 
     // ═══════════════════════════════════════════
@@ -1238,17 +1252,20 @@ public function cancelOrder(Request $request, int $id)
         }
 
         DB::transaction(function () use ($order, $user, $request) {
+            $pendingUpdates = [
+                'status' => 'pending',
+                'workflow_state' => 'PENDING_BY_DRAWER',
+                'rejection_reason' => $request->hold_reason,
+                'rejection_type' => 'pending',
+                'assigned_to' => null,
+                'updated_at' => now(),
+            ];
+
+            $pendingUpdates = array_merge($pendingUpdates, self::buildFixingStartedUpdates($order));
 
             DB::table($order->getTable())
                 ->where('id', $order->id)
-                ->update([
-                    'status' => 'pending',
-                    'workflow_state' => 'PENDING_BY_DRAWER',
-                    'rejection_reason' => $request->hold_reason,
-                    'rejection_type' => 'pending',
-                    'assigned_to' => null,
-                    'updated_at' => now(),
-                ]);
+                ->update($pendingUpdates);
 
             if ($user->wip_count > 0) {
                 $user->decrement('wip_count');
@@ -2638,6 +2655,7 @@ public function startTimer(Request $request, int $id)
                     $assignData['qa_id']   = $newUser->id;
                     $assignData['qa_name'] = $newUser->name;
                 }
+                $assignData = array_merge($assignData, self::buildFixingCompletedUpdates($order));
                 $order->update($assignData);
                 $newUser->increment('wip_count');
 
@@ -3151,6 +3169,7 @@ public function startTimer(Request $request, int $id)
         $request->validate([
             'drawer_user_id' => 'required|exists:users,id',
             'project_id' => 'nullable|integer|exists:projects,id',
+            'editor_portal_account_id' => 'nullable|integer',
         ]);
 
         $actor = $request->user();
@@ -3176,13 +3195,20 @@ public function startTimer(Request $request, int $id)
         }
 
         // Verify order state
-        if (!in_array($order->workflow_state, ['RECEIVED', 'PENDING_QA_REVIEW', 'QUEUED_DRAW', 'IN_DRAW', 'REJECTED_BY_CHECK'])) {
+        if (!in_array($order->workflow_state, ['RECEIVED', 'PENDING_QA_REVIEW', 'QUEUED_DRAW', 'IN_DRAW', 'PENDING_BY_DRAWER', 'REJECTED_BY_CHECK'])) {
             return response()->json(['message' => 'Order cannot be assigned to drawer from its current state.'], 422);
         }
 
-        DB::transaction(function () use ($order, $drawerUser, $actor) {
+        $project51PortalAccountUpdates = $this->buildProject51PortalAccountUpdates(
+            $order,
+            $request->input('editor_portal_account_id') ? (int) $request->input('editor_portal_account_id') : null,
+            null
+        );
+
+        DB::transaction(function () use ($order, $drawerUser, $actor, $project51PortalAccountUpdates) {
             // Get old assignee if any and safely decrement their wip_count
             $oldAssignee = $order->assigned_to;
+            $fixingCompletionUpdates = self::buildFixingCompletedUpdates($order);
             if ($oldAssignee) {
                 \App\Models\User::where('id', $oldAssignee)->where('wip_count', '>', 0)->decrement('wip_count');
             }
@@ -3202,13 +3228,23 @@ public function startTimer(Request $request, int $id)
             }
 
             // Now assign to the specific drawer — set role-specific columns
-            $order->update([
+            $assignmentUpdates = [
                 'assigned_to'  => $drawerUser->id,
                 'team_id'      => $drawerUser->team_id,
                 'drawer_id'    => $drawerUser->id,
                 'drawer_name'  => $drawerUser->name,
                 'dassign_time' => now(),
-            ]);
+            ];
+
+            if (!empty($project51PortalAccountUpdates)) {
+                $assignmentUpdates = array_merge($assignmentUpdates, $project51PortalAccountUpdates);
+            }
+
+            if (!empty($fixingCompletionUpdates)) {
+                $assignmentUpdates = array_merge($assignmentUpdates, $fixingCompletionUpdates);
+            }
+
+            $order->update($assignmentUpdates);
 
             // Increment drawer's WIP
             $drawerUser->increment('wip_count');
@@ -3837,6 +3873,8 @@ public function assignRole(Request $request, int $id)
         'role' => 'required|in:drawer,designer,checker,filler,qa',
         'user_id' => 'required|exists:users,id',
         'project_id' => 'nullable|integer|exists:projects,id',
+        'editor_portal_account_id' => 'nullable|integer',
+        'qc_portal_account_id' => 'nullable|integer',
     ]);
 
     $actor = $request->user();
@@ -3861,6 +3899,12 @@ public function assignRole(Request $request, int $id)
         return response()->json(['message' => 'Designer assignment is only enabled for PH_2_LAYER workflow orders.'], 422);
     }
 
+    $project51PortalAccountUpdates = $this->buildProject51PortalAccountUpdates(
+        $order,
+        $request->input('editor_portal_account_id') ? (int) $request->input('editor_portal_account_id') : null,
+        $request->input('qc_portal_account_id') ? (int) $request->input('qc_portal_account_id') : null
+    );
+
     // DONE LOCK
 // DONE LOCK (optional warning only, does not block assignment)
 [, $doneCol] = self::getRoleColumns($role);
@@ -3876,7 +3920,7 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
 
     $cols = self::getRoleAssignmentColumns($role);
 
-    DB::transaction(function () use ($order, $user, $cols, $actor, $role, $queuedState) {
+    DB::transaction(function () use ($order, $user, $cols, $actor, $role, $queuedState, $project51PortalAccountUpdates) {
 
         $oldAssignedTo = $order->assigned_to;
         $drawerIsDone = strtolower(trim((string) ($order->drawer_done ?? ''))) === 'yes';
@@ -3889,6 +3933,14 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
             $cols['id_col']   => $user->id,
             $cols['name_col'] => $user->name,
         ];
+
+        if (!empty($project51PortalAccountUpdates)) {
+            $updates = array_merge($updates, $project51PortalAccountUpdates);
+        }
+
+        if (!$isCheckerPreAssignment) {
+            $updates = array_merge($updates, self::buildFixingCompletedUpdates($order));
+        }
 
         // Checker can be reserved before drawing starts without becoming the
         // active worker or advancing the order past the drawer.
@@ -4019,6 +4071,169 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
         'order' => $order->fresh(),
         'message' => ucfirst($role) . " assigned: {$user->name}",
     ]);
+}
+
+private function buildProject51PortalAccountUpdates(Order $order, ?int $editorAccountId, ?int $qcAccountId): array
+{
+    if ((int) $order->project_id !== self::PROJECT_51_ID) {
+        return [];
+    }
+
+    if (!$editorAccountId && !$qcAccountId) {
+        return [];
+    }
+
+    if (!self::tableExists(self::PROJECT_51_PORTAL_ACCOUNTS_TABLE)) {
+        throw \Illuminate\Validation\ValidationException::withMessages([
+            'portal_account' => 'Project 51 portal account table is not available.',
+        ]);
+    }
+
+    $ordersTable = $order->getTable();
+    $updates = [];
+
+    if ($editorAccountId) {
+        $this->ensureProject51OrderColumns($ordersTable, [
+            'editor_portal_account_id',
+            'editor_login_name',
+        ]);
+
+        $editorAccount = $this->findProject51PortalAccount($editorAccountId, 'editor');
+        $this->assertProject51PortalAccountHasNoPendingOrder(
+            $ordersTable,
+            'editor_portal_account_id',
+            $editorAccount->id,
+            (int) $order->id,
+            'Editor account already has a pending order.'
+        );
+
+        $updates['editor_portal_account_id'] = $editorAccount->id;
+        $updates['editor_login_name'] = $editorAccount->resource_name;
+    }
+
+    if ($qcAccountId) {
+        $this->ensureProject51OrderColumns($ordersTable, [
+            'qc_portal_account_id',
+            'qc_account_name',
+        ]);
+
+        $qcAccount = $this->findProject51PortalAccount($qcAccountId, 'qc');
+        $this->assertProject51PortalAccountHasNoPendingOrder(
+            $ordersTable,
+            'qc_portal_account_id',
+            $qcAccount->id,
+            (int) $order->id,
+            'QC account already has a pending order.'
+        );
+
+        $updates['qc_portal_account_id'] = $qcAccount->id;
+        $updates['qc_account_name'] = $qcAccount->resource_name;
+    }
+
+    return $updates;
+}
+
+private static function buildFixingStartedUpdates(Order $order): array
+{
+    $table = $order->getTable();
+    $updates = [];
+
+    if (self::columnExists($table, 'fixing_started_at')) {
+        $updates['fixing_started_at'] = now();
+    }
+
+    if (self::columnExists($table, 'fixing_completed_at')) {
+        $updates['fixing_completed_at'] = null;
+    }
+
+    if (self::columnExists($table, 'fixing_time_seconds')) {
+        $updates['fixing_time_seconds'] = null;
+    }
+
+    return $updates;
+}
+
+private static function buildFixingCompletedUpdates(Order $order): array
+{
+    if ((string) ($order->workflow_state ?? '') !== 'PENDING_BY_DRAWER') {
+        return [];
+    }
+
+    $table = $order->getTable();
+    $completedAt = now();
+    $updates = [];
+
+    if (self::columnExists($table, 'fixing_completed_at')) {
+        $updates['fixing_completed_at'] = $completedAt;
+    }
+
+    if (
+        self::columnExists($table, 'fixing_time_seconds')
+        && self::columnExists($table, 'fixing_started_at')
+        && !empty($order->fixing_started_at)
+    ) {
+        try {
+            $seconds = \Carbon\Carbon::parse($order->fixing_started_at)->diffInSeconds($completedAt, false);
+            $updates['fixing_time_seconds'] = max(0, (int) $seconds);
+        } catch (\Throwable $e) {
+            // Keep assignment working even if old data has an invalid timestamp.
+        }
+    }
+
+    return $updates;
+}
+
+private function ensureProject51OrderColumns(string $ordersTable, array $columns): void
+{
+    foreach ($columns as $column) {
+        if (!self::columnExists($ordersTable, $column)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                $column => "Project 51 order column {$column} is not available.",
+            ]);
+        }
+    }
+}
+
+private function findProject51PortalAccount(int $accountId, string $type): Project51PortalAccount
+{
+    $account = Project51PortalAccount::query()
+        ->whereKey($accountId)
+        ->where('is_active', true)
+        ->first();
+
+    if (!$account) {
+        throw \Illuminate\Validation\ValidationException::withMessages([
+            "{$type}_portal_account_id" => ucfirst($type) . ' portal account was not found.',
+        ]);
+    }
+
+    if (!in_array($account->account_type, [$type, 'both'], true)) {
+        throw \Illuminate\Validation\ValidationException::withMessages([
+            "{$type}_portal_account_id" => ucfirst($type) . ' portal account type is not allowed for this assignment.',
+        ]);
+    }
+
+    return $account;
+}
+
+private function assertProject51PortalAccountHasNoPendingOrder(
+    string $ordersTable,
+    string $accountColumn,
+    int $accountId,
+    int $currentOrderId,
+    string $message
+): void {
+    $hasPendingOrder = DB::table($ordersTable)
+        ->where($accountColumn, $accountId)
+        ->where('id', '!=', $currentOrderId)
+        ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+        ->exists();
+
+    if ($hasPendingOrder) {
+        throw \Illuminate\Validation\ValidationException::withMessages([
+            $accountColumn => $message,
+        ]);
+    }
 }
 
 
