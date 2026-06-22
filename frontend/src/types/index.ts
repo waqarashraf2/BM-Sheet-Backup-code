@@ -943,6 +943,15 @@ export interface AssignmentWorker {
   today_completed: number;
 }
 
+export interface Project51PortalAccount {
+  id: number;
+  client_user_id: number;
+  resource_name: string;
+  name: string;
+  account_type: 'editor' | 'qc' | 'both' | string;
+  pending_assigned_count: number;
+}
+
 export interface QueueProject {
   id: number;
   code: string;
@@ -1011,6 +1020,13 @@ export interface AssignmentOrder {
   received_at: string | null;
   delivered_at: string | null;
   created_at: string | null;
+  editor_portal_account_id?: number | null;
+  qc_portal_account_id?: number | null;
+  editor_login_name?: string | null;
+  qc_account_name?: string | null;
+  fixing_started_at?: string | null;
+  fixing_completed_at?: string | null;
+  fixing_time_seconds?: number | null;
 }
 
 export interface AssignmentDateStat {
@@ -1051,6 +1067,10 @@ export interface AssignmentDashboardData {
   };
   date_stats: AssignmentDateStat[];
   role_completions: Record<string, AssignmentRoleCompletion>;
+  project_51_portal_accounts?: {
+    editors: Project51PortalAccount[];
+    qc_accounts: Project51PortalAccount[];
+  };
 }
 
 // ═══════════════════════════════════════════

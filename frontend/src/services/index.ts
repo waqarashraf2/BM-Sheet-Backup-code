@@ -257,12 +257,22 @@ export const workflowService = {
     api.post<{ order: Order; message: string }>(`/workflow/orders/${orderId}/assign-to-qa`, { qa_user_id: qaUserId, ...(projectId ? { project_id: projectId } : {}) }),
 
   // QA: Assign order to drawer in team
-  assignToDrawer: (orderId: number, drawerUserId: number, projectId?: number) =>
-    api.post<{ order: Order; message: string }>(`/workflow/orders/${orderId}/assign-to-drawer`, { drawer_user_id: drawerUserId, ...(projectId ? { project_id: projectId } : {}) }),
+  assignToDrawer: (orderId: number, drawerUserId: number, projectId?: number, options?: { editor_portal_account_id?: number | null }) =>
+    api.post<{ order: Order; message: string }>(`/workflow/orders/${orderId}/assign-to-drawer`, {
+      drawer_user_id: drawerUserId,
+      ...(projectId ? { project_id: projectId } : {}),
+      ...(options?.editor_portal_account_id ? { editor_portal_account_id: options.editor_portal_account_id } : {}),
+    }),
 
   // PM: Assign role (drawer/checker/qa) to an order
-  assignRole: (orderId: number, role: string, userId: number, projectId?: number) =>
-    api.post<{ order: Order; message: string }>(`/workflow/orders/${orderId}/assign-role`, { role, user_id: userId, ...(projectId ? { project_id: projectId } : {}) }),
+  assignRole: (orderId: number, role: string, userId: number, projectId?: number, options?: { editor_portal_account_id?: number | null; qc_portal_account_id?: number | null }) =>
+    api.post<{ order: Order; message: string }>(`/workflow/orders/${orderId}/assign-role`, {
+      role,
+      user_id: userId,
+      ...(projectId ? { project_id: projectId } : {}),
+      ...(options?.editor_portal_account_id ? { editor_portal_account_id: options.editor_portal_account_id } : {}),
+      ...(options?.qc_portal_account_id ? { qc_portal_account_id: options.qc_portal_account_id } : {}),
+    }),
 
   // Supervisor: Update order instruction / plan type
   updateInstruction: (
@@ -281,6 +291,8 @@ export const workflowService = {
       flambient_order_count?: number | null;
       day_to_dusk_count?: number | null;
       object_removal_count?: number | null;
+      editor_portal_account_id?: number | null;
+      qc_portal_account_id?: number | null;
       project_id?: number;
     }
   ) =>

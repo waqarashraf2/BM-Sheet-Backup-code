@@ -5,7 +5,7 @@ import { useSelector } from 'react-redux';
 import type { RootState } from '../../store/store';
 import { useSmartPolling } from '../../hooks/useSmartPolling';
 import { useNewOrderHighlight } from '../../hooks/useNewOrderHighlight';
-import type { AssignmentWorker, AssignmentOrder, AssignmentDateStat, AssignmentRoleCompletion, ProjectColumn, QueueInfo, Team } from '../../types';
+import type { AssignmentWorker, AssignmentOrder, AssignmentDateStat, AssignmentRoleCompletion, Project51PortalAccount, ProjectColumn, QueueInfo, Team } from '../../types';
 import { AnimatedPage, Modal, Button, Textarea, useToast } from '../../components/ui';
 import ChecklistModal from '../../components/ChecklistModal';
 import {
@@ -118,6 +118,7 @@ export default function SupervisorAssignment() {
   const [counts, setCounts] = useState({ today_total: 0, pending: 0, pending_by_drawer: 0, completed: 0, amends: 0, assigned: 0, unassigned: 0, rejected: 0 });
   const [dateStats, setDateStats] = useState<AssignmentDateStat[]>([]);
   const [roleCompletions, setRoleCompletions] = useState<Record<string, AssignmentRoleCompletion>>({});
+  const [project51PortalAccounts, setProject51PortalAccounts] = useState<{ editors: Project51PortalAccount[]; qc_accounts: Project51PortalAccount[] }>({ editors: [], qc_accounts: [] });
   const [queueInfo, setQueueInfo] = useState<QueueInfo | null>(null);
   const [projectLabel, setProjectLabel] = useState('');
 
@@ -163,6 +164,14 @@ export default function SupervisorAssignment() {
   const [codeDraft, setCodeDraft] = useState('');
   const [updatingInstructionId, setUpdatingInstructionId] = useState<number | null>(null);
   const [updatingItDateTimeId, setUpdatingItDateTimeId] = useState<number | null>(null);
+  const [updatingPortalAccountCell, setUpdatingPortalAccountCell] = useState<string | null>(null);
+  const [portalAccountMenu, setPortalAccountMenu] = useState<{
+    order: AssignmentOrder;
+    accountType: 'editor' | 'qc';
+    left: number;
+    top: number;
+    width: number;
+  } | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectColumns, setProjectColumns] = useState<ProjectColumn[]>([]);
   const [projectTeams, setProjectTeams] = useState<Team[]>([]);
@@ -337,6 +346,10 @@ export default function SupervisorAssignment() {
       });
       setDateStats(d.date_stats || []);
       setRoleCompletions(d.role_completions || {});
+      setProject51PortalAccounts({
+        editors: d.project_51_portal_accounts?.editors ?? [],
+        qc_accounts: d.project_51_portal_accounts?.qc_accounts ?? [],
+      });
       setQueueInfo(d.queue || null);
       setProjectLabel(d.project ? `${d.project.name} (${d.project.country})` : '');
     } catch (e) {
@@ -1061,7 +1074,12 @@ export default function SupervisorAssignment() {
       if (worker) {
         const roleColMap: Record<string, string> = { drawer: 'drawer_name', checker: 'checker_name', filler: 'file_uploader_name', qa: 'qa_name' };
         const roleIdMap: Record<string, string> = { drawer: 'drawer_id', checker: 'checker_id', filler: 'file_uploader_id', qa: 'qa_id' };
-        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, [roleColMap[role]]: worker.name, [roleIdMap[role]]: worker.id } : o));
+
+        setOrders(prev => prev.map(o => o.id === orderId ? {
+          ...o,
+          [roleColMap[role]]: worker.name,
+          [roleIdMap[role]]: worker.id,
+        } : o));
       }
 
       const roleLabel = role === 'drawer' && isPhotoEnhancementQueue ? 'designer' : role;
@@ -1100,6 +1118,16 @@ export default function SupervisorAssignment() {
     if (diffMin < 1) return '< 1m';
     const hrs = Math.floor(diffMin / 60);
     const mins = diffMin % 60;
+    return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+  };
+
+  const fmtSecondsDuration = (seconds?: number | string | null): string => {
+    const value = typeof seconds === 'string' ? Number(seconds) : seconds;
+    if (value == null || !Number.isFinite(value) || value < 0) return '-';
+    if (value < 60) return `${Math.floor(value)}s`;
+    const totalMinutes = Math.floor(value / 60);
+    const hrs = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
     return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
   };
 
@@ -1972,6 +2000,87 @@ export default function SupervisorAssignment() {
     }
   };
 
+  const handleUpdateProject51PortalAccount = useCallback(async (
+    order: AssignmentOrder,
+    accountType: 'editor' | 'qc',
+    accountIdValue: string,
+  ) => {
+    const accountId = Number(accountIdValue);
+    const accounts = accountType === 'editor'
+      ? project51PortalAccounts.editors
+      : project51PortalAccounts.qc_accounts;
+    const account = accounts.find((item) => item.id === accountId);
+
+    if (!account || order.project_id !== 51) {
+      return;
+    }
+
+    const accountLabel = account.name || account.resource_name;
+    const cellKey = `${order.id}:${accountType}`;
+
+    try {
+      setUpdatingPortalAccountCell(cellKey);
+      await workflowService.updateInstruction(order.id, {
+        project_id: order.project_id,
+        ...(accountType === 'editor'
+          ? { editor_portal_account_id: account.id }
+          : { qc_portal_account_id: account.id }),
+      });
+
+      setOrders((prev) => prev.map((item) => item.id === order.id ? {
+        ...item,
+        ...(accountType === 'editor'
+          ? {
+            editor_portal_account_id: account.id,
+            editor_login_name: accountLabel,
+          }
+          : {
+            qc_portal_account_id: account.id,
+            qc_account_name: accountLabel,
+          }),
+      } : item));
+
+      toast({
+        title: accountType === 'editor' ? 'Editor account updated' : 'QC account updated',
+        description: `${accountLabel} saved for order ${order.order_number}.`,
+        type: 'success',
+      });
+      setPortalAccountMenu(null);
+    } catch (e: any) {
+      console.error(e);
+      toast({
+        title: 'Account update failed',
+        description: e?.response?.data?.message
+          || e?.response?.data?.errors?.editor_portal_account_id?.[0]
+          || e?.response?.data?.errors?.qc_portal_account_id?.[0]
+          || 'Could not update account name.',
+        type: 'error',
+      });
+    } finally {
+      setUpdatingPortalAccountCell(null);
+    }
+  }, [project51PortalAccounts.editors, project51PortalAccounts.qc_accounts, toast]);
+
+  const handleOpenProject51PortalAccountMenu = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    order: AssignmentOrder,
+    accountType: 'editor' | 'qc',
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+
+    setPortalAccountMenu((current) => (
+      current?.order.id === order.id && current.accountType === accountType
+        ? null
+        : {
+          order,
+          accountType,
+          left: rect.left,
+          top: rect.bottom + 4,
+          width: Math.max(rect.width, 150),
+        }
+    ));
+  };
+
   const renderPrimaryCell = (order: AssignmentOrder, column: AssignmentTableColumn) => {
     const openItEditor = () => {
       setShowItDateTimeEditor(order);
@@ -2192,12 +2301,81 @@ export default function SupervisorAssignment() {
         );
 
       case 'received_at':
+      case 'fixing_started_at':
+      case 'fixing_completed_at':
         return (
           <td
             {...additionalTimingAndCountCellProps}
-            className="px-3 py-2 text-slate-600 cursor-context-menu"
+            className={`px-3 py-2 text-slate-600 ${column.key === 'received_at' ? 'cursor-context-menu' : ''}`}
           >
-            {fmtProjectDateTime(order.received_at)}
+            {fmtProjectDateTime((order as any)[column.key] || null)}
+          </td>
+        );
+
+      case 'fixing_time_seconds':
+        return (
+          <td className={column.cellClassName || 'px-3 py-2 text-slate-700'}>
+            {fmtSecondsDuration((order as any).fixing_time_seconds)}
+          </td>
+        );
+
+      case 'editor_login_name':
+        if (order.project_id === 51 && project51PortalAccounts.editors.length > 0) {
+          const cellKey = `${order.id}:editor`;
+          const selectedEditorAccount = project51PortalAccounts.editors.find(
+            (account) => account.id === Number(order.editor_portal_account_id)
+          );
+          const editorAccountLabel = selectedEditorAccount
+            ? (selectedEditorAccount.name || selectedEditorAccount.resource_name)
+            : (order.editor_login_name || '-');
+          return (
+            <td className={column.cellClassName || 'px-3 py-2 text-slate-700'}>
+              <button
+                type="button"
+                onClick={(e) => handleOpenProject51PortalAccountMenu(e, order, 'editor')}
+                disabled={updatingPortalAccountCell === cellKey}
+                className="group -mx-1 inline-flex w-full items-center justify-between gap-1 rounded px-1 py-0.5 text-left text-[11px] text-slate-700 transition-colors hover:bg-brand-50 focus:outline-none focus:ring-1 focus:ring-brand-500/30 disabled:opacity-60"
+              >
+                <span className="truncate">{editorAccountLabel}</span>
+                <ChevronDown className="h-3 w-3 flex-shrink-0 text-slate-400 group-hover:text-brand-600" />
+              </button>
+            </td>
+          );
+        }
+
+        return (
+          <td className={column.cellClassName || 'px-3 py-2 text-slate-700'}>
+            {order.editor_login_name || '-'}
+          </td>
+        );
+
+      case 'qc_account_name':
+        if (order.project_id === 51 && project51PortalAccounts.qc_accounts.length > 0) {
+          const cellKey = `${order.id}:qc`;
+          const selectedQcAccount = project51PortalAccounts.qc_accounts.find(
+            (account) => account.id === Number(order.qc_portal_account_id)
+          );
+          const qcAccountLabel = selectedQcAccount
+            ? (selectedQcAccount.name || selectedQcAccount.resource_name)
+            : (order.qc_account_name || '-');
+          return (
+            <td className={column.cellClassName || 'px-3 py-2 text-slate-700'}>
+              <button
+                type="button"
+                onClick={(e) => handleOpenProject51PortalAccountMenu(e, order, 'qc')}
+                disabled={updatingPortalAccountCell === cellKey}
+                className="group -mx-1 inline-flex w-full items-center justify-between gap-1 rounded px-1 py-0.5 text-left text-[11px] text-slate-700 transition-colors hover:bg-brand-50 focus:outline-none focus:ring-1 focus:ring-brand-500/30 disabled:opacity-60"
+              >
+                <span className="truncate">{qcAccountLabel}</span>
+                <ChevronDown className="h-3 w-3 flex-shrink-0 text-slate-400 group-hover:text-brand-600" />
+              </button>
+            </td>
+          );
+        }
+
+        return (
+          <td className={column.cellClassName || 'px-3 py-2 text-slate-700'}>
+            {order.qc_account_name || '-'}
           </td>
         );
 
@@ -3320,6 +3498,51 @@ export default function SupervisorAssignment() {
           onClose={() => setShowChecklist(null)} />
       )}
 
+      {portalAccountMenu && (() => {
+        const accounts = portalAccountMenu.accountType === 'editor'
+          ? project51PortalAccounts.editors
+          : project51PortalAccounts.qc_accounts;
+        const selectedAccountId = portalAccountMenu.accountType === 'editor'
+          ? portalAccountMenu.order.editor_portal_account_id
+          : portalAccountMenu.order.qc_portal_account_id;
+
+        return (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setPortalAccountMenu(null)} />
+            <div
+              className="fixed z-50 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-2xl"
+              style={{
+                top: Math.min(portalAccountMenu.top, window.innerHeight - 280),
+                left: Math.min(portalAccountMenu.left, window.innerWidth - portalAccountMenu.width - 12),
+                width: portalAccountMenu.width,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {accounts.map((account) => {
+                const accountLabel = account.name || account.resource_name;
+                const isSelected = Number(selectedAccountId) === account.id;
+
+                return (
+                  <button
+                    key={account.id}
+                    type="button"
+                    onClick={() => handleUpdateProject51PortalAccount(portalAccountMenu.order, portalAccountMenu.accountType, String(account.id))}
+                    className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
+                      isSelected
+                        ? 'bg-brand-50 font-semibold text-brand-700'
+                        : 'text-slate-700 hover:bg-brand-50 hover:text-brand-700'
+                    }`}
+                  >
+                    <span className="truncate">{accountLabel}</span>
+                    {isSelected && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        );
+      })()}
+
       {contextMenu && (
         <div
           className="fixed z-50 min-w-[160px] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl"
@@ -3703,10 +3926,10 @@ export default function SupervisorAssignment() {
                 {/* Backdrop */}
                 <div className="fixed inset-0 z-40" onClick={() => { setAssignDropdown(null); setAssignSearch(''); }} />
                 {/* Dropdown panel */}
-                <div className="fixed z-50 bg-white rounded-xl shadow-2xl border border-slate-200 w-64 max-h-80 flex flex-col overflow-hidden"
+                <div className="fixed z-50 bg-white rounded-xl shadow-2xl border border-slate-200 w-72 max-h-[26rem] flex flex-col overflow-hidden"
                   style={{
-                    top: Math.min((assignDropdown.anchorRect?.bottom ?? 200) + 4, window.innerHeight - 330),
-                    left: Math.min((assignDropdown.anchorRect?.left ?? 200), window.innerWidth - 280),
+                    top: Math.min((assignDropdown.anchorRect?.bottom ?? 200) + 4, window.innerHeight - 430),
+                    left: Math.min((assignDropdown.anchorRect?.left ?? 200), window.innerWidth - 304),
                   }}>
                   {/* Header */}
                   <div className="px-3 py-2 border-b border-slate-100 bg-slate-50">

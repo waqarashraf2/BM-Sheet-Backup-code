@@ -166,6 +166,28 @@ public function getAllColumns(Request $request)
                     'order' => $col->order_index
                 ];
             })->values();
+
+        $savedColumnKeys = $mapped->pluck('field')->all();
+        $nextOrder = ((int) ($mapped->max('order') ?? 0)) + 1;
+
+        $missingColumns = collect($actualColumns)
+            ->reject(fn ($col) => in_array($col, $savedColumnKeys, true))
+            ->map(function ($col) use ($projectId, &$nextOrder) {
+                return [
+                    'id' => null,
+                    'project_id' => (int) $projectId,
+                    'name' => $col,
+                    'label' => ucfirst(str_replace('_', ' ', $col)),
+                    'field' => $col,
+                    'visible' => false,
+                    'sortable' => true,
+                    'width' => 120,
+                    'order' => $nextOrder++,
+                ];
+            })
+            ->values();
+
+        $mapped = $mapped->concat($missingColumns)->values();
     } 
     // ✅ ELSE → generate default columns from DB
     else {

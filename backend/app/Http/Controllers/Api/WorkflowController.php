@@ -2879,6 +2879,8 @@ public function startTimer(Request $request, int $id)
             'flambient_order_count' => 'nullable|integer|min:0',
             'day_to_dusk_count' => 'nullable|integer|min:0',
             'object_removal_count' => 'nullable|integer|min:0',
+            'editor_portal_account_id' => 'nullable|integer',
+            'qc_portal_account_id' => 'nullable|integer',
             'project_id' => 'nullable|integer|exists:projects,id',
         ]);
 
@@ -2902,6 +2904,15 @@ public function startTimer(Request $request, int $id)
         $order = $projectId
             ? (Order::findInProject($projectId, $id) ?? Order::findOrFailGlobal($id))
             : self::findOrderForUser($id, $actor);
+        $project51PortalAccountUpdates = $this->buildProject51PortalAccountUpdates(
+            $order,
+            $request->exists('editor_portal_account_id') && $request->input('editor_portal_account_id')
+                ? (int) $request->input('editor_portal_account_id')
+                : null,
+            $request->exists('qc_portal_account_id') && $request->input('qc_portal_account_id')
+                ? (int) $request->input('qc_portal_account_id')
+                : null
+        );
 
         $managementRoles = ['ceo', 'director', 'operations_manager', 'project_manager'];
 
@@ -2949,19 +2960,21 @@ public function startTimer(Request $request, int $id)
         $hasCodeInput = $request->exists('code');
         $hasItDatetimeInput = $request->exists('it_datetime');
         $hasTotalRawFilesInput = $request->exists('total_raw_files');
+        $hasEditorPortalAccountInput = $request->exists('editor_portal_account_id');
+        $hasQcPortalAccountInput = $request->exists('qc_portal_account_id');
         $countInputFields = array_values(array_filter(
             $countFields,
             fn ($countField) => $request->exists($countField)
         ));
         $hasCountInput = !empty($countInputFields);
 
-        if (!$hasInstructionInput && !$hasPlanTypeInput && !$hasCodeInput && !$hasItDatetimeInput && !$hasTotalRawFilesInput && !$hasCountInput) {
+        if (!$hasInstructionInput && !$hasPlanTypeInput && !$hasCodeInput && !$hasItDatetimeInput && !$hasTotalRawFilesInput && !$hasCountInput && !$hasEditorPortalAccountInput && !$hasQcPortalAccountInput) {
             return response()->json([
                 'message' => 'Nothing to update.',
             ], 422);
         }
 
-        DB::transaction(function () use ($order, $actor, $instruction, $planType, $code, $itDatetime, $totalRawFiles, $countInputFields, $countValues, $hasInstructionInput, $hasPlanTypeInput, $hasCodeInput, $hasItDatetimeInput, $hasTotalRawFilesInput, $hasCountInput) {
+        DB::transaction(function () use ($order, $actor, $instruction, $planType, $code, $itDatetime, $totalRawFiles, $countInputFields, $countValues, $hasInstructionInput, $hasPlanTypeInput, $hasCodeInput, $hasItDatetimeInput, $hasTotalRawFilesInput, $hasCountInput, $hasEditorPortalAccountInput, $hasQcPortalAccountInput, $project51PortalAccountUpdates) {
             $before = [];
             $after = [];
             $orderUpdates = [];
@@ -3000,6 +3013,20 @@ public function startTimer(Request $request, int $id)
                 $before[$countField] = $order->{$countField};
                 $after[$countField] = $countValues[$countField];
                 $orderUpdates[$countField] = $countValues[$countField];
+            }
+
+            if ($hasEditorPortalAccountInput && isset($project51PortalAccountUpdates['editor_portal_account_id'])) {
+                $before['editor_login_name'] = $order->editor_login_name;
+                $after['editor_login_name'] = $project51PortalAccountUpdates['editor_login_name'];
+                $orderUpdates['editor_portal_account_id'] = $project51PortalAccountUpdates['editor_portal_account_id'];
+                $orderUpdates['editor_login_name'] = $project51PortalAccountUpdates['editor_login_name'];
+            }
+
+            if ($hasQcPortalAccountInput && isset($project51PortalAccountUpdates['qc_portal_account_id'])) {
+                $before['qc_account_name'] = $order->qc_account_name;
+                $after['qc_account_name'] = $project51PortalAccountUpdates['qc_account_name'];
+                $orderUpdates['qc_portal_account_id'] = $project51PortalAccountUpdates['qc_portal_account_id'];
+                $orderUpdates['qc_account_name'] = $project51PortalAccountUpdates['qc_account_name'];
             }
 
             if (!empty($orderUpdates)) {
@@ -4108,7 +4135,7 @@ private function buildProject51PortalAccountUpdates(Order $order, ?int $editorAc
         );
 
         $updates['editor_portal_account_id'] = $editorAccount->id;
-        $updates['editor_login_name'] = $editorAccount->resource_name;
+        $updates['editor_login_name'] = trim((string) $editorAccount->first_name) ?: $editorAccount->resource_name;
     }
 
     if ($qcAccountId) {
@@ -4127,7 +4154,7 @@ private function buildProject51PortalAccountUpdates(Order $order, ?int $editorAc
         );
 
         $updates['qc_portal_account_id'] = $qcAccount->id;
-        $updates['qc_account_name'] = $qcAccount->resource_name;
+        $updates['qc_account_name'] = trim((string) $qcAccount->first_name) ?: $qcAccount->resource_name;
     }
 
     return $updates;
