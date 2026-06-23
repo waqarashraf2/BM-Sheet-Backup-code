@@ -28,6 +28,31 @@ interface ProjectStats {
     online_users?: OnlineUser[];
     client_name_counts?: ClientNameCount[];
     batch_count?: number;
+    project_3_operations_report?: ProjectThreeOperationsReport;
+}
+
+interface ProjectThreeHourlyDone {
+    label: string;
+    start_at: string;
+    end_at: string;
+    done_orders: number;
+}
+
+interface ProjectThreePendingDate {
+    date: string;
+    day_label: string;
+    total_orders?: number;
+    pending_orders: number;
+    done_orders?: number;
+    delayed_orders: number;
+}
+
+interface ProjectThreeOperationsReport {
+    project_name?: string;
+    generated_at?: string;
+    hourly_done: ProjectThreeHourlyDone[];
+    last_10_days_pending: ProjectThreePendingDate[];
+    previous_pending_summary?: ProjectThreePendingDate;
 }
 
 interface OnlineUser {
@@ -238,7 +263,11 @@ type RoleCompletionEntry = {
 /* ================= COMPONENT ================= */
 
 const ProjectsView: React.FC = () => {
-    const teamBreakdownProjectId = 16;
+    const batchStatusProjectId = 16;
+    const teamBreakdownProjectIds = [16, 3];
+    const canShowTeamBreakdown = (projectId?: number | null) => (
+        typeof projectId === 'number' && teamBreakdownProjectIds.includes(projectId)
+    );
     const specialClientProjectIds = [14, 9, 46];
 
     const roleLabelMap: Record<string, string> = {
@@ -474,7 +503,7 @@ const ProjectsView: React.FC = () => {
     }, [selectedDate, startDate, endDate, dateFilterType]);
 
     const loadProjectTeamsIfNeeded = async (projectId: number) => {
-        if (projectId !== teamBreakdownProjectId || loadingProjectTeams || projectTeams.length > 0) return;
+        if (!canShowTeamBreakdown(projectId) || loadingProjectTeams || projectTeams.length > 0) return;
 
         try {
             setLoadingProjectTeams(true);
@@ -489,7 +518,7 @@ const ProjectsView: React.FC = () => {
     };
 
     const loadBatchStatusIfNeeded = async (projectId: number) => {
-        if (projectId !== teamBreakdownProjectId || loadingBatchStatus || batchStatus) return;
+        if (projectId !== batchStatusProjectId || loadingBatchStatus || batchStatus) return;
 
         try {
             setLoadingBatchStatus(true);
@@ -517,9 +546,10 @@ const ProjectsView: React.FC = () => {
     const handleTeamDetailTabClick = (tab: TeamDetailTab) => {
         setTeamDetailTab(tab);
 
-        if (!selectedProject || selectedProject.project_id !== teamBreakdownProjectId) return;
+        if (!selectedProject || !canShowTeamBreakdown(selectedProject.project_id)) return;
 
         if (tab === 'batch') {
+            if (selectedProject.project_id !== batchStatusProjectId) return;
             void loadBatchStatusIfNeeded(selectedProject.project_id);
             return;
         }
@@ -550,7 +580,7 @@ const ProjectsView: React.FC = () => {
     }, [breakdown]);
 
     const allTeams = useMemo(() => {
-        if (selectedProject?.project_id !== teamBreakdownProjectId) return [];
+        if (!canShowTeamBreakdown(selectedProject?.project_id)) return [];
 
         // Build a map of breakdown teams by team_id for quick lookup
         const breakdownMap = new Map<number, TeamBreakdown>();
@@ -676,7 +706,7 @@ const ProjectsView: React.FC = () => {
             Number(b.total_done_selected_date ?? b.total_done ?? 0) -
             Number(a.total_done_selected_date ?? a.total_done ?? 0)
         );
-    }, [breakdown, projectTeams, selectedProject?.project_id, teamBreakdownProjectId]);
+    }, [breakdown, projectTeams, selectedProject?.project_id]);
 
     const visibleTeams = useMemo(() => {
         return allTeams.filter((team) => {
@@ -689,7 +719,7 @@ const ProjectsView: React.FC = () => {
     }, [allTeams]);
 
     const unassignedTeam = useMemo(() => {
-        if (selectedProject?.project_id !== teamBreakdownProjectId || !Array.isArray(breakdown?.teams)) return null;
+        if (!canShowTeamBreakdown(selectedProject?.project_id) || !Array.isArray(breakdown?.teams)) return null;
 
         return breakdown.teams.find((team) => {
             const teamName = (team.team_name || '').trim().toLowerCase();
@@ -901,7 +931,7 @@ const ProjectsView: React.FC = () => {
                                         const clientNameCounts = detailProject.client_name_counts ?? [];
                                         const showClientNamesAsProjects =
                                             specialClientProjectIds.includes(project.project_id) && clientNameCounts.length > 0;
-                                        const showTeamBreakdown = project.project_id === teamBreakdownProjectId
+                                        const showTeamBreakdown = canShowTeamBreakdown(project.project_id)
                                             && (allTeams.length > 0 || Boolean(unassignedTeam) || Boolean(batchStatus) || projectTeams.length > 0);
                                         const roleCardsToRender = showTeamBreakdown ? [] : visibleRoles;
                                         const onlineUsers = getProjectOnlineUsers(detailProject);
@@ -925,6 +955,12 @@ const ProjectsView: React.FC = () => {
                                             { label: 'Untouched Top Remaining', value: batchUntouchedTopRemaining },
                                             { label: 'Fixed Top Remaining', value: batchStatus?.fixed_min?.remaining_time ?? '-' },
                                         ];
+                                        const projectThreeReport = detailProject.project_3_operations_report;
+                                        const projectThreeHourlyDone = projectThreeReport?.hourly_done ?? [];
+                                        const projectThreeAllPendingDates = projectThreeReport?.last_10_days_pending ?? [];
+                                        const projectThreePreviousPending = projectThreeReport?.previous_pending_summary;
+                                        const projectThreePendingDates = projectThreeAllPendingDates.filter((item) => item.date !== projectThreePreviousPending?.date);
+                                        const maxProjectThreeDone = Math.max(1, ...projectThreeHourlyDone.map((item) => Number(item.done_orders || 0)));
 
                                         return (
                                             <React.Fragment key={project.project_id}>
@@ -1002,6 +1038,100 @@ const ProjectsView: React.FC = () => {
                                                                 </div>
                                                             ) : (
                                                                 <div className="space-y-3">
+                                                                    {project.project_id === 3 && projectThreeReport && (
+                                                                        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                                                                            <div className="flex flex-col gap-1 border-b border-slate-100 bg-slate-50/80 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                                                                                <div>
+                                                                                    <h3 className="text-xs md:text-sm font-bold text-slate-800">{projectThreeReport.project_name || 'Focal MP'} 24 Hours Report</h3>
+                                                                                    <p className="text-[10px] md:text-xs text-slate-500">Done orders by selected-date completed/delivered time, previous-date summary, and last 10 days active pending.</p>
+                                                                                </div>
+                                                                                {projectThreeReport.generated_at && (
+                                                                                    <span className="text-[10px] font-medium text-slate-400">Updated {projectThreeReport.generated_at}</span>
+                                                                                )}
+                                                                            </div>
+                                                                            <div className="grid gap-4 p-4 lg:grid-cols-2">
+                                                                                <div>
+                                                                                    <div className="mb-2 flex items-center justify-between">
+                                                                                        <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Done by Time</h4>
+                                                                                        <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-[#0f766e] ring-1 ring-teal-100">
+                                                                                            24 hr
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    <div className="grid gap-x-5 gap-y-1.5 sm:grid-cols-2">
+                                                                                        {projectThreeHourlyDone.length > 0 ? projectThreeHourlyDone.map((item) => (
+                                                                                            <div key={`${item.start_at}-${item.end_at}`} className="grid grid-cols-[88px_1fr_38px] items-center gap-2 text-[11px]">
+                                                                                                <span className="font-medium text-slate-500">{item.label}</span>
+                                                                                                <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                                                                                                    <div
+                                                                                                        className="h-full rounded-full bg-[#2AA7A0]"
+                                                                                                        style={{ width: `${Math.max(4, (Number(item.done_orders || 0) / maxProjectThreeDone) * 100)}%` }}
+                                                                                                    />
+                                                                                                </div>
+                                                                                                <span className="text-right font-bold text-slate-700">{Number(item.done_orders || 0)}</span>
+                                                                                            </div>
+                                                                                        )) : (
+                                                                                            <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-400">No done orders in last 24 hours.</div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                                <div>
+                                                                                    <div className="mb-2 flex items-center justify-between">
+                                                                                        <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Pending by Date</h4>
+                                                                                        <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-100">
+                                                                                            Last 10 days
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    {projectThreePreviousPending && (
+                                                                                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs">
+                                                                                            <span className="font-semibold text-slate-700">{projectThreePreviousPending.day_label || 'Previous'}</span>
+                                                                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                                                                <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-slate-100">
+                                                                                                    Received {Number(projectThreePreviousPending.total_orders || 0)}
+                                                                                                </span>
+                                                                                                <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
+                                                                                                    Pending {Number(projectThreePreviousPending.pending_orders || 0)}
+                                                                                                </span>
+                                                                                                <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-[#0f766e] ring-1 ring-teal-100">
+                                                                                                    Done {Number(projectThreePreviousPending.done_orders || 0)}
+                                                                                                </span>
+                                                                                                {Number(projectThreePreviousPending.delayed_orders || 0) > 0 && (
+                                                                                                    <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-rose-100">
+                                                                                                        Delay {Number(projectThreePreviousPending.delayed_orders || 0)}
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    )}
+                                                                                    <div className="space-y-1.5">
+                                                                                        {projectThreePendingDates.length > 0 ? projectThreePendingDates.map((item) => (
+                                                                                            <div key={item.date} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2 text-xs">
+                                                                                                <span className="font-semibold text-slate-700">{item.day_label}</span>
+                                                                                                <div className="flex items-center gap-1.5">
+                                                                                                    <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-slate-100">
+                                                                                                        Received {Number(item.total_orders || 0)}
+                                                                                                    </span>
+                                                                                                    <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
+                                                                                                        Pending {Number(item.pending_orders || 0)}
+                                                                                                    </span>
+                                                                                                    <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-[#0f766e] ring-1 ring-teal-100">
+                                                                                                        Done {Number(item.done_orders || 0)}
+                                                                                                    </span>
+                                                                                                    {Number(item.delayed_orders || 0) > 0 && (
+                                                                                                        <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-rose-100">
+                                                                                                            Delay {Number(item.delayed_orders || 0)}
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        )) : (
+                                                                                            <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-400">No active pending orders in the last 10 days.</div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+
                                                                     {showClientNamesAsProjects && (
                                                                         <div className="rounded-xl border border-teal-200 bg-gradient-to-br from-teal-50 to-cyan-50 overflow-hidden shadow-sm">
                                                                             <div className="flex items-center justify-between px-4 py-3 border-b border-teal-200 bg-gradient-to-r from-teal-600 to-teal-700">
@@ -1053,12 +1183,12 @@ const ProjectsView: React.FC = () => {
                                                                                         tab: 'unassigned' as TeamDetailTab,
                                                                                         suffix: `D ${teamSummary.unassignedDrawers} / C ${teamSummary.unassignedCheckers}`,
                                                                                     },
-                                                                                    {
+                                                                                    ...(project.project_id === batchStatusProjectId ? [{
                                                                                         label: 'Overall Status',
                                                                                         value: batchCount,
                                                                                         tab: 'batch' as TeamDetailTab,
                                                                                         showValue: false,
-                                                                                    },
+                                                                                    }] : []),
                                                                                 ].map((item) => {
                                                                                     const isSelected = teamDetailTab === item.tab;
                                                                                     return (

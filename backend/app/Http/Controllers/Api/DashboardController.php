@@ -1328,7 +1328,7 @@ if ($request->query('date')) {
         }
 
         // Cache key includes date range, selected project and role
-        $cacheKey = 'ceo_pstats:v2:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0')
+        $cacheKey = 'ceo_pstats:v4:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0')
             . ':' . ($selectedRole ?? 'all') . ':' . ($detailOnly ? 'detail' : ($summaryOnly ? 'summary_only' : 'summary'));
         if (\Illuminate\Support\Facades\Cache::has($cacheKey)) {
             return response()->json(\Illuminate\Support\Facades\Cache::get($cacheKey));
@@ -1377,12 +1377,14 @@ if ($request->query('date')) {
                 'countries' => [],
                 'selected_project_breakdown' => $breakdown,
                 'project_detail' => $selectedProject
-                    ? [
+                    ? array_merge([
                         'project_id' => (int) $selectedProject->id,
                         'online_users' => $this->getProjectStatsOnlineUsers([(int) $selectedProject->id], now()->subMinutes(15))->get((int) $selectedProject->id, collect())->values()->all(),
                         'client_name_counts' => $this->getProjectStatsClientNameCounts((int) $selectedProject->id, $startDate, $endDate),
                         'batch_count' => $this->getProjectStatsBatchCount((int) $selectedProject->id, $endDate),
-                    ]
+                    ], (int) $selectedProject->id === 3 ? [
+                        'project_3_operations_report' => $this->buildProjectThreeOperationsReport($startDate, $endDate),
+                    ] : [])
                     : null,
             ];
 
@@ -1951,6 +1953,220 @@ $userCounts = User::whereIn('project_id', $projectIds)
         ];
         \Illuminate\Support\Facades\Cache::put($cacheKey, $responseData, 60);
         return response()->json($responseData);
+    }
+
+    private function buildProjectThreeOperationsReport(?string $startDate = null, ?string $endDate = null): array
+    {
+        $projectId = 3;
+        $project = Project::find($projectId);
+        $projectTimezone = $this->resolveAssignmentDashboardProjectTimezone($project?->timezone);
+        $table = \App\Services\ProjectOrderService::getTableName($projectId);
+
+        if (!self::tableExists($table)) {
+            return [
+                'project_name' => $project?->name ?? 'Focal MP',
+                'generated_at' => now($projectTimezone)->toDateTimeString(),
+                'hourly_done' => [],
+                'last_10_days_pending' => [],
+                'previous_pending_summary' => [
+                    'date' => null,
+                    'day_label' => null,
+                    'total_orders' => 0,
+                    'pending_orders' => 0,
+                    'done_orders' => 0,
+                    'delayed_orders' => 0,
+                ],
+            ];
+        }
+
+        return [
+            'project_name' => $project?->name ?? 'Focal MP',
+            'generated_at' => now($projectTimezone)->toDateTimeString(),
+            'hourly_done' => $this->buildProjectThreeHourlyDoneReport($table, $projectTimezone, $startDate),
+            'last_10_days_pending' => $this->buildProjectThreePendingDateReport($table, $projectTimezone),
+            'previous_pending_summary' => $this->buildProjectThreePreviousPendingSummary(
+                $table,
+                $projectTimezone,
+                $startDate,
+                $endDate
+            ),
+        ];
+    }
+
+    private function buildProjectThreeHourlyDoneReport(string $table, string $projectTimezone, ?string $date = null): array
+    {
+        $completionExpression = $this->projectThreeCompletionTimestampExpression($table);
+
+        if ($completionExpression === null) {
+            return [];
+        }
+
+        $reportDate = $date
+            ? Carbon::parse($date, $projectTimezone)
+            : now($projectTimezone);
+        $rangeStart = $reportDate->copy()->startOfDay();
+        $rangeEnd = $reportDate->copy()->addDay()->startOfDay();
+
+        $rows = DB::table($table)
+            ->whereNotNull(DB::raw($completionExpression))
+            ->whereBetween(DB::raw($completionExpression), [
+                $rangeStart->toDateTimeString(),
+                $rangeEnd->toDateTimeString(),
+            ])
+            ->selectRaw("{$completionExpression} as completed_time")
+            ->get();
+
+        $slots = [];
+        for ($slotStart = $rangeStart->copy(); $slotStart->lt($rangeEnd); $slotStart->addHours(2)) {
+            $slotEnd = $slotStart->copy()->addHours(2);
+
+            $doneCount = $rows->filter(function ($row) use ($slotStart, $slotEnd, $projectTimezone) {
+                try {
+                    $completedAt = Carbon::parse($row->completed_time, $projectTimezone);
+                } catch (\Throwable $e) {
+                    return false;
+                }
+
+                return $completedAt->gte($slotStart) && $completedAt->lt($slotEnd);
+            })->count();
+
+            $slots[] = [
+                'label' => strtolower($slotStart->format('ha')) . ' to ' . strtolower($slotEnd->format('ha')),
+                'start_at' => $slotStart->toDateTimeString(),
+                'end_at' => $slotEnd->toDateTimeString(),
+                'done_orders' => $doneCount,
+            ];
+        }
+
+        return $slots;
+    }
+
+    private function buildProjectThreePendingDateReport(string $table, string $projectTimezone): array
+    {
+        if (!self::columnExists($table, 'received_at')) {
+            return [];
+        }
+
+        $rangeStart = now($projectTimezone)->subDays(9)->startOfDay();
+        $rangeEnd = now($projectTimezone)->endOfDay();
+        $hasDueIn = self::columnExists($table, 'due_in');
+
+        $query = DB::table($table)
+            ->whereBetween('received_at', [
+                $rangeStart->toDateTimeString(),
+                $rangeEnd->toDateTimeString(),
+            ])
+            ->selectRaw('DATE(received_at) as received_date, COUNT(*) as total_count')
+            ->selectRaw(
+                "SUM(CASE WHEN workflow_state NOT IN ('PENDING_BY_DRAWER', 'REJECTED_BY_CHECK', 'REJECTED BY CHECK', 'COMPLETED', 'DELIVERED', 'CANCELLED') THEN 1 ELSE 0 END) as pending_count"
+            )
+            ->selectRaw(
+                "SUM(CASE WHEN workflow_state IN ('COMPLETED', 'DELIVERED') THEN 1 ELSE 0 END) as done_count"
+            );
+
+        if ($hasDueIn) {
+            $query->selectRaw(
+                "SUM(CASE WHEN workflow_state NOT IN ('PENDING_BY_DRAWER', 'REJECTED_BY_CHECK', 'REJECTED BY CHECK', 'COMPLETED', 'DELIVERED', 'CANCELLED') AND due_in IS NOT NULL AND due_in < ? THEN 1 ELSE 0 END) as delayed_count",
+                [now($projectTimezone)->toDateTimeString()]
+            );
+        } else {
+            $query->selectRaw('0 as delayed_count');
+        }
+
+        return $query
+            ->groupBy('received_date')
+            ->orderBy('received_date')
+            ->get()
+            ->filter(fn ($row) => (int) $row->pending_count > 0)
+            ->map(function ($row) use ($projectTimezone) {
+                $date = Carbon::parse($row->received_date, $projectTimezone);
+
+                return [
+                    'date' => $date->toDateString(),
+                    'day_label' => $date->format('d M'),
+                    'total_orders' => (int) ($row->total_count ?? 0),
+                    'pending_orders' => (int) $row->pending_count,
+                    'done_orders' => (int) ($row->done_count ?? 0),
+                    'delayed_orders' => (int) ($row->delayed_count ?? 0),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function buildProjectThreePreviousPendingSummary(
+        string $table,
+        string $projectTimezone,
+        ?string $startDate,
+        ?string $endDate
+    ): array {
+        if (!self::columnExists($table, 'received_at')) {
+            return [
+                'date' => null,
+                'day_label' => null,
+                'total_orders' => 0,
+                'pending_orders' => 0,
+                'done_orders' => 0,
+                'delayed_orders' => 0,
+            ];
+        }
+
+        $baseDate = $startDate ?: $endDate ?: now($projectTimezone)->toDateString();
+        $previousDate = Carbon::parse($baseDate, $projectTimezone)->subDay();
+        $hasDueIn = self::columnExists($table, 'due_in');
+
+        $query = DB::table($table)
+            ->whereBetween('received_at', [
+                $previousDate->copy()->startOfDay()->toDateTimeString(),
+                $previousDate->copy()->endOfDay()->toDateTimeString(),
+            ])
+            ->selectRaw('COUNT(*) as total_orders')
+            ->selectRaw(
+                "SUM(CASE WHEN workflow_state NOT IN ('PENDING_BY_DRAWER', 'REJECTED_BY_CHECK', 'REJECTED BY CHECK', 'COMPLETED', 'DELIVERED', 'CANCELLED') THEN 1 ELSE 0 END) as pending_orders"
+            )
+            ->selectRaw(
+                "SUM(CASE WHEN workflow_state IN ('COMPLETED', 'DELIVERED') THEN 1 ELSE 0 END) as done_orders"
+            );
+
+        if ($hasDueIn) {
+            $query->selectRaw(
+                "SUM(CASE WHEN workflow_state NOT IN ('PENDING_BY_DRAWER', 'REJECTED_BY_CHECK', 'REJECTED BY CHECK', 'COMPLETED', 'DELIVERED', 'CANCELLED') AND due_in IS NOT NULL AND due_in < ? THEN 1 ELSE 0 END) as delayed_orders",
+                [now($projectTimezone)->toDateTimeString()]
+            );
+        } else {
+            $query->selectRaw('0 as delayed_orders');
+        }
+
+        $row = $query->first();
+
+        return [
+            'date' => $previousDate->toDateString(),
+            'day_label' => $previousDate->format('d M'),
+            'total_orders' => (int) ($row->total_orders ?? 0),
+            'pending_orders' => (int) ($row->pending_orders ?? 0),
+            'done_orders' => (int) ($row->done_orders ?? 0),
+            'delayed_orders' => (int) ($row->delayed_orders ?? 0),
+        ];
+    }
+
+    private function projectThreeCompletionTimestampExpression(string $table): ?string
+    {
+        $hasDeliveredAt = self::columnExists($table, 'delivered_at');
+        $hasCompletedAt = self::columnExists($table, 'completed_at');
+
+        if ($hasDeliveredAt && $hasCompletedAt) {
+            return 'COALESCE(delivered_at, completed_at)';
+        }
+
+        if ($hasDeliveredAt) {
+            return 'delivered_at';
+        }
+
+        if ($hasCompletedAt) {
+            return 'completed_at';
+        }
+
+        return null;
     }
 
     private function getProjectStatsOnlineUsers(array $projectIds, Carbon $onlineCutoff)
