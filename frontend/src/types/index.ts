@@ -768,6 +768,82 @@ export interface TimeWiseCountWorker {
   }>;
 }
 
+export interface TimeWiseCountTeamStatus {
+  project_id: number;
+  project_name: string;
+  team_id: number | null;
+  team_name: string;
+  is_online?: boolean;
+  received: number;
+  done: number;
+  pending: number;
+  delayed: number;
+  drawers?: TimeWiseCountTeamMember[];
+  checkers?: TimeWiseCountTeamMember[];
+}
+
+export interface TimeWiseCountTeamMember {
+  id: number;
+  name: string;
+  role: 'drawer' | 'checker';
+  is_online?: boolean;
+  total_assigned: number;
+  total_done: number;
+  wip: number;
+  selected_wip?: number;
+}
+
+export interface ProjectThreeHourlyDone {
+  label: string;
+  start_at: string;
+  end_at: string;
+  done_orders: number;
+}
+
+export interface ProjectThreePendingDate {
+  date: string | null;
+  day_label: string | null;
+  total_orders?: number;
+  pending_orders: number;
+  done_orders?: number;
+  delayed_orders: number;
+}
+
+export interface ProjectThreeOperationsReport {
+  project_name?: string;
+  generated_at?: string;
+  hourly_done: ProjectThreeHourlyDone[];
+  last_10_days_pending: ProjectThreePendingDate[];
+  previous_pending_summary?: ProjectThreePendingDate;
+}
+
+export interface TimeWiseProjectStatus {
+  project_id: number;
+  project_code?: string;
+  project_name: string;
+  workflow_type?: WorkflowType;
+  received_orders: number;
+  pending_orders: number;
+  delayed_pending_orders: number;
+  done_orders: number;
+  delayed_done_orders: number;
+  untouched_orders: number;
+  total_staff: number;
+  present_staff: number;
+  absent_staff: number;
+  online_staff: number;
+  team_summary?: {
+    total_teams: number;
+    online_teams: number;
+    offline_teams: number;
+    unassigned: number;
+    unassigned_drawers?: number;
+    unassigned_checkers?: number;
+  };
+  team_statuses: TimeWiseCountTeamStatus[];
+  project_3_operations_report?: ProjectThreeOperationsReport;
+}
+
 export interface TimeWiseCountData {
   start_at: string;
   end_at: string;
@@ -775,9 +851,14 @@ export interface TimeWiseCountData {
   projects: TimeWiseCountProject[];
   summary: TimeWiseCountSummary[];
   workers: TimeWiseCountWorker[];
+  project_statuses?: TimeWiseProjectStatus[];
+  team_statuses?: TimeWiseCountTeamStatus[];
   totals: {
     done: number;
     wip: number;
+    received?: number;
+    pending?: number;
+    delayed?: number;
   };
 }
 

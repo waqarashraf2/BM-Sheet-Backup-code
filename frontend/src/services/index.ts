@@ -350,7 +350,7 @@ export const dashboardService = {
   // OM/PM: role completion counts within a date-time range and current WIP
   timeWiseCounts: (
     dashboard: 'operations' | 'project-manager',
-    params: { start_at: string; end_at: string; project_id?: number }
+    params: { start_at: string; end_at: string; project_id?: number; status_only?: boolean | 1 | 0 }
   ) =>
     api.get<import('../types').TimeWiseCountData>(`/dashboard/${dashboard}`, {
       params: { ...params, report: 'time-wise-counts' },

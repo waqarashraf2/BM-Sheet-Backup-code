@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import {
-  CalendarClock, CheckSquare, Eye, Loader2, Palette, Pencil,
+  CalendarClock, CheckSquare, ChevronDown, ChevronUp, Eye, Loader2, Palette, Pencil,
   Search, TimerReset,
 } from 'lucide-react';
 import { dashboardService } from '../../services';
@@ -81,6 +81,13 @@ function normalizeReport(payload: Partial<TimeWiseCountData> | null | undefined)
       projects: Array.isArray(worker?.projects) ? worker.projects : [],
     }))
     : [];
+  const teamStatuses = Array.isArray(payload?.team_statuses) ? payload.team_statuses : [];
+  const projectStatuses = Array.isArray(payload?.project_statuses)
+    ? payload.project_statuses.map((project) => ({
+      ...project,
+      team_statuses: Array.isArray(project?.team_statuses) ? project.team_statuses : [],
+    }))
+    : [];
 
   return {
     start_at: payload?.start_at || '',
@@ -89,9 +96,14 @@ function normalizeReport(payload: Partial<TimeWiseCountData> | null | undefined)
     projects: Array.isArray(payload?.projects) ? payload.projects : [],
     summary,
     workers,
+    project_statuses: projectStatuses,
+    team_statuses: teamStatuses,
     totals: {
       done: Number(payload?.totals?.done ?? summary.reduce((total, item) => total + Number(item?.done || 0), 0)),
       wip: Number(payload?.totals?.wip ?? summary.reduce((total, item) => total + Number(item?.wip || 0), 0)),
+      received: Number(payload?.totals?.received ?? teamStatuses.reduce((total, item) => total + Number(item?.received || 0), 0)),
+      pending: Number(payload?.totals?.pending ?? teamStatuses.reduce((total, item) => total + Number(item?.pending || 0), 0)),
+      delayed: Number(payload?.totals?.delayed ?? teamStatuses.reduce((total, item) => total + Number(item?.delayed || 0), 0)),
     },
   };
 }
@@ -106,8 +118,13 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
   const [projectId, setProjectId] = useState('');
   const [search, setSearch] = useState('');
   const [data, setData] = useState<TimeWiseCountData | null>(null);
+  const [statusData, setStatusData] = useState<TimeWiseCountData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
   const [error, setError] = useState('');
+  const [statusError, setStatusError] = useState('');
+  const [openStatusProjectId, setOpenStatusProjectId] = useState<number | null>(null);
+  const [openStatusTeamKey, setOpenStatusTeamKey] = useState<string | null>(null);
 
   const generateReport = async () => {
     if (!startAt || !endAt) {
@@ -149,6 +166,50 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
     }
   };
 
+  const fetchTeamStatus = async () => {
+    if (!startAt || !endAt) {
+      setStatusError('Select both start and end date-time values.');
+      return;
+    }
+    if (new Date(startAt) > new Date(endAt)) {
+      setStatusError('Start date-time must be before the end date-time.');
+      return;
+    }
+
+    try {
+      setStatusLoading(true);
+      setStatusError('');
+      const response = await dashboardService.timeWiseCounts(
+        dashboard,
+        {
+          start_at: apiDateTime(startAt),
+          end_at: apiDateTime(endAt),
+          ...(projectId ? { project_id: Number(projectId) } : {}),
+          status_only: 1,
+        }
+      );
+
+      const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
+      if (typeof response.data === 'string' || contentType.includes('text/html')) {
+        throw new Error('The dashboard API is not reaching Laravel.');
+      }
+
+      const normalized = normalizeReport(response.data);
+      setStatusData(normalized);
+      setOpenStatusProjectId(normalized.project_statuses?.[0]?.project_id ?? null);
+      setOpenStatusTeamKey(null);
+    } catch (requestError: any) {
+      setStatusData(null);
+      setStatusError(
+        requestError?.response?.data?.message
+        || requestError?.message
+        || 'Unable to generate the team status report.'
+      );
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
   const filteredWorkers = (data?.workers || []).filter((worker) => {
     const meta = roleMeta[worker.role];
     const searchValue = search.trim().toLowerCase();
@@ -168,6 +229,7 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
     if (item.role === 'drawer' || item.role === 'checker') return hasFloorPlan || item.workers > 0;
     return true;
   });
+  const projectStatuses = statusData?.project_statuses || [];
 
   return (
     <div className="space-y-5">
@@ -184,7 +246,7 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
           <label className="block">
             <span className="block text-xs font-medium text-slate-600 mb-1.5">From date & time</span>
             <input
@@ -229,6 +291,17 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
               {loading ? 'Generating...' : 'Generate result'}
             </button>
           </div>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={fetchTeamStatus}
+              disabled={statusLoading}
+              className="w-full h-10 inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {statusLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
+              {statusLoading ? 'Fetching...' : 'Fetch team status'}
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -236,7 +309,269 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
             {error}
           </div>
         )}
+        {statusError && (
+          <div className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+            {statusError}
+          </div>
+        )}
       </div>
+
+      {statusData && (
+        <div className="bg-white rounded-xl ring-1 ring-black/[0.04] overflow-hidden">
+          <div className="border-b border-slate-100 px-4 py-4">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900">Project status report</h4>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  Separate OM/PM report for assigned projects. Project rows follow the project status layout and selected date-time range.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
+                <span className="rounded-md bg-slate-50 px-2 py-1 text-slate-700 ring-1 ring-slate-100">
+                  {statusData.totals.received || 0} received
+                </span>
+                <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700 ring-1 ring-emerald-100">
+                  {statusData.totals.done || 0} done
+                </span>
+                <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700 ring-1 ring-amber-100">
+                  {statusData.totals.pending || 0} pending
+                </span>
+              </div>
+            </div>
+            {projectStatuses.length === 0 ? (
+              <div className="rounded-lg bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">
+                No project status found for this date-time range.
+              </div>
+            ) : (
+              <div className="overflow-x-auto custom-scrollbar">
+                <table className="min-w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-y border-slate-100 bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400">
+                      <th className="px-3 py-2 font-semibold">Project</th>
+                      <th className="px-3 py-2 text-right font-semibold">Received</th>
+                      <th className="px-3 py-2 text-right font-semibold">Pending</th>
+                      <th className="px-3 py-2 text-right font-semibold">Delayed Pend.</th>
+                      <th className="px-3 py-2 text-right font-semibold">Completed</th>
+                      <th className="px-3 py-2 text-right font-semibold">Delayed Done</th>
+                      <th className="px-3 py-2 text-right font-semibold">Staff</th>
+                      <th className="px-3 py-2 text-right font-semibold">Online</th>
+                      <th className="px-3 py-2 text-right font-semibold">Present</th>
+                      <th className="px-3 py-2 text-right font-semibold">Absent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {projectStatuses.map((project) => {
+                      const isOpen = openStatusProjectId === project.project_id;
+                      const report = project.project_3_operations_report;
+                      const hourly = report?.hourly_done || [];
+                      const pendingDates = (report?.last_10_days_pending || [])
+                        .filter((item) => item.date !== report?.previous_pending_summary?.date);
+                      const maxDone = Math.max(1, ...hourly.map((item) => Number(item.done_orders || 0)));
+
+                      return (
+                        <Fragment key={project.project_id}>
+                          <tr key={project.project_id} className="border-b border-slate-50 hover:bg-slate-50/60">
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() => setOpenStatusProjectId(isOpen ? null : project.project_id)}
+                                className="inline-flex items-center gap-2 font-semibold text-slate-800"
+                              >
+                                {isOpen ? <ChevronUp className="h-3.5 w-3.5 text-brand-600" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-400" />}
+                                {project.project_name}
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-700">{project.received_orders}</td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums text-amber-700">{project.pending_orders}</td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums text-rose-600">{project.delayed_pending_orders}</td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums text-emerald-700">{project.done_orders}</td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums text-rose-600">{project.delayed_done_orders}</td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-600">{project.total_staff}</td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums text-teal-700">{project.online_staff}</td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-600">{project.present_staff}</td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums text-rose-500">{project.absent_staff}</td>
+                          </tr>
+                          {isOpen && (
+                            <tr key={`${project.project_id}-detail`}>
+                              <td colSpan={10} className="bg-slate-50/60 px-4 py-4">
+                                {report && (
+                                  <div className="mb-4 rounded-xl border border-slate-200 bg-white">
+                                    <div className="border-b border-slate-100 px-4 py-3">
+                                      <h5 className="text-sm font-bold text-slate-900">{report.project_name || project.project_name} 24 Hours Report</h5>
+                                      <p className="text-[11px] text-slate-500">Hourly done, previous pending summary, and last 10 days active pending.</p>
+                                    </div>
+                                    <div className="grid gap-4 p-4 lg:grid-cols-2">
+                                      <div>
+                                        <h6 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Done by time</h6>
+                                        <div className="grid gap-x-5 gap-y-1.5 sm:grid-cols-2">
+                                          {hourly.map((item) => (
+                                            <div key={`${item.start_at}-${item.end_at}`} className="grid grid-cols-[88px_1fr_38px] items-center gap-2 text-[11px]">
+                                              <span className="font-medium text-slate-500">{item.label}</span>
+                                              <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                                                <div className="h-full rounded-full bg-[#2AA7A0]" style={{ width: `${Math.max(4, (Number(item.done_orders || 0) / maxDone) * 100)}%` }} />
+                                              </div>
+                                              <span className="text-right font-bold text-slate-700">{Number(item.done_orders || 0)}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <h6 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Pending by date</h6>
+                                        <div className="space-y-1.5">
+                                          {report.previous_pending_summary && (
+                                            <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
+                                              <span className="font-semibold text-slate-700">{report.previous_pending_summary.day_label || 'Previous'}</span>
+                                              <span className="text-[10px] font-bold text-slate-700">Received {Number(report.previous_pending_summary.total_orders || 0)}</span>
+                                              <span className="text-[10px] font-bold text-amber-700">Pending {Number(report.previous_pending_summary.pending_orders || 0)}</span>
+                                              <span className="text-[10px] font-bold text-[#0f766e]">Done {Number(report.previous_pending_summary.done_orders || 0)}</span>
+                                            </div>
+                                          )}
+                                          {pendingDates.map((item) => (
+                                            <div key={item.date || item.day_label} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2">
+                                              <span className="font-semibold text-slate-700">{item.day_label}</span>
+                                              <span className="text-[10px] font-bold text-slate-700">Received {Number(item.total_orders || 0)}</span>
+                                              <span className="text-[10px] font-bold text-amber-700">Pending {Number(item.pending_orders || 0)}</span>
+                                              <span className="text-[10px] font-bold text-[#0f766e]">Done {Number(item.done_orders || 0)}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                <div className="rounded-xl border border-slate-200 bg-white">
+                                  <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <h5 className="text-sm font-bold text-slate-900">{project.project_name} Team Status</h5>
+                                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                                      <span className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-bold text-slate-800">
+                                        Total Teams {Number(project.team_summary?.total_teams || 0)}
+                                      </span>
+                                      <span className="rounded-lg border border-emerald-100 bg-emerald-50 px-2.5 py-1 font-bold text-emerald-700">
+                                        Online Teams {Number(project.team_summary?.online_teams || 0)}
+                                      </span>
+                                      <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-bold text-slate-600">
+                                        Offline Teams {Number(project.team_summary?.offline_teams || 0)}
+                                      </span>
+                                      <span className="rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-1 font-bold text-amber-700">
+                                        Unassigned {Number(project.team_summary?.unassigned || 0)}
+                                        <span className="ml-1 text-[10px] font-semibold text-amber-600">
+                                          D {Number(project.team_summary?.unassigned_drawers || 0)} / C {Number(project.team_summary?.unassigned_checkers || 0)}
+                                        </span>
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="overflow-x-auto">
+                                    <table className="min-w-full text-xs">
+                                      <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400">
+                                        <tr>
+                                          <th className="px-3 py-2 text-left">Team</th>
+                                          <th className="px-3 py-2 text-left">Status</th>
+                                          <th className="px-3 py-2 text-right">Received</th>
+                                          <th className="px-3 py-2 text-right">Done</th>
+                                          <th className="px-3 py-2 text-right">Pending</th>
+                                          <th className="px-3 py-2 text-right">Delayed</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {project.team_statuses.map((team) => {
+                                          const teamKey = `${project.project_id}-${team.team_id ?? 'unassigned'}`;
+                                          const isTeamOpen = openStatusTeamKey === teamKey;
+                                          const drawers = Array.isArray(team.drawers) ? team.drawers : [];
+                                          const checkers = Array.isArray(team.checkers) ? team.checkers : [];
+
+                                          return (
+                                            <Fragment key={teamKey}>
+                                              <tr className="border-t border-slate-50">
+                                                <td className="px-3 py-2">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setOpenStatusTeamKey(isTeamOpen ? null : teamKey)}
+                                                    className="inline-flex items-center gap-2 font-semibold text-slate-700 hover:text-brand-700"
+                                                  >
+                                                    {isTeamOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                                                    {team.team_name}
+                                                  </button>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                  {team.team_id ? (
+                                                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${team.is_online ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                      {team.is_online ? 'Online' : 'Offline'}
+                                                    </span>
+                                                  ) : (
+                                                    <span className="text-[10px] font-semibold text-slate-400">-</span>
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2 text-right font-semibold text-slate-700">{team.received}</td>
+                                                <td className="px-3 py-2 text-right font-semibold text-emerald-700">{team.done}</td>
+                                                <td className="px-3 py-2 text-right font-semibold text-amber-700">{team.pending}</td>
+                                                <td className="px-3 py-2 text-right font-semibold text-rose-600">{team.delayed}</td>
+                                              </tr>
+                                              {isTeamOpen && (
+                                                <tr className="border-t border-slate-100 bg-slate-50/60">
+                                                  <td colSpan={6} className="px-3 py-3">
+                                                    <div className="grid gap-3 lg:grid-cols-2">
+                                                      {[
+                                                        { title: 'Drawers', people: drawers, tone: 'teal' },
+                                                        { title: 'Checkers', people: checkers, tone: 'violet' },
+                                                      ].map((section) => (
+                                                        <div key={section.title} className="rounded-lg border border-slate-200 bg-white">
+                                                          <div className={`flex items-center justify-between border-b px-3 py-2 text-[11px] font-bold uppercase tracking-wide ${section.tone === 'teal' ? 'border-teal-100 bg-teal-50 text-teal-700' : 'border-violet-100 bg-violet-50 text-violet-700'}`}>
+                                                            <span>{section.title} · {section.people.length}</span>
+                                                            <span>
+                                                              {section.people.reduce((total, person) => total + Number(person.total_done || 0), 0)} done
+                                                            </span>
+                                                          </div>
+                                                          {section.people.length === 0 ? (
+                                                            <div className="px-3 py-4 text-center text-[11px] font-medium text-slate-400">No members found</div>
+                                                          ) : (
+                                                            <div className="divide-y divide-slate-100">
+                                                              {section.people.map((person) => (
+                                                                <div key={`${section.title}-${person.id}`} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-3 py-2 text-[11px]">
+                                                                  <div className="min-w-0">
+                                                                    <div className="truncate font-semibold text-slate-700">{person.name}</div>
+                                                                    <div className={person.is_online ? 'text-emerald-600' : 'text-slate-400'}>
+                                                                      {person.is_online ? 'Online' : 'Offline'}
+                                                                    </div>
+                                                                  </div>
+                                                                  <span className="rounded-md bg-slate-50 px-2 py-1 font-semibold text-slate-600">
+                                                                    {Number(person.total_assigned || 0)} assign
+                                                                  </span>
+                                                                  <span className="rounded-md bg-emerald-50 px-2 py-1 font-bold text-emerald-700">
+                                                                    {Number(person.total_done || 0)} done
+                                                                  </span>
+                                                                  <span className="rounded-md bg-slate-50 px-2 py-1 font-semibold text-slate-500">
+                                                                    {Number(person.selected_wip ?? person.wip ?? 0)} wip
+                                                                  </span>
+                                                                </div>
+                                                              ))}
+                                                            </div>
+                                                          )}
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  </td>
+                                                </tr>
+                                              )}
+                                            </Fragment>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {data && (
         <div className="bg-white rounded-xl ring-1 ring-black/[0.04] overflow-hidden">
