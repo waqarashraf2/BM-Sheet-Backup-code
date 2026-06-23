@@ -49,6 +49,25 @@ function isImageLike(name: string, url: string): boolean {
     return IMAGE_EXTENSIONS.some((ext) => lowerName.endsWith(ext) || lowerUrl.includes(ext));
 }
 
+function isAutoPreviewFloorplan(url: string): boolean {
+    try {
+        const parsed = new URL(url);
+        const pathParts = parsed.pathname.toLowerCase().split('/');
+        const fileName = pathParts[pathParts.length - 1] || '';
+
+        return pathParts.includes('floorplansraw') && fileName.startsWith('image_picker_');
+    } catch {
+        const lowerUrl = url.toLowerCase();
+        const fileName = lowerUrl.split('/').pop() || '';
+
+        return lowerUrl.includes('/floorplansraw/') && fileName.startsWith('image_picker_');
+    }
+}
+
+function getLinkKey(link: OrderAssetLink): string {
+    return `${link.source_table}-${link.id}`;
+}
+
 export default function OrderAssetLinks() {
     const navigate = useNavigate();
     const { jobOrderId: routeJobOrderId } = useParams<{ jobOrderId: string }>();
@@ -66,6 +85,7 @@ export default function OrderAssetLinks() {
     const [error, setError] = useState<string | null>(null);
     const [data, setData] = useState<OrderAssetLinksResponse | null>(null);
     const [brokenImageIds, setBrokenImageIds] = useState<Record<number, boolean>>({});
+    const [previewedImageKeys, setPreviewedImageKeys] = useState<Record<string, boolean>>({});
     const [projectColumns, setProjectColumns] = useState<Array<{ field: string; visible: boolean; label?: string; name?: string }>>([]);
 
     const loadLinks = async () => {
@@ -86,11 +106,13 @@ export default function OrderAssetLinks() {
             const primary = await workflowService.orderAssetLinks(jobOrderId, requestedProjectId);
             setData(primary.data);
             setBrokenImageIds({});
+            setPreviewedImageKeys({});
         } catch (primaryError) {
             try {
                 const fallback = await workflowService.orderImageLinks(jobOrderId, requestedProjectId);
                 setData(fallback.data);
                 setBrokenImageIds({});
+                setPreviewedImageKeys({});
             } catch {
                 console.error('Failed to fetch order asset links:', primaryError);
                 setData(null);
@@ -145,6 +167,11 @@ export default function OrderAssetLinks() {
     const imageLinks = useMemo(() => {
         return sortedLinks.filter((link) => isImageLike(link.name, link.url));
     }, [sortedLinks]);
+
+    const autoPreviewImageKey = useMemo(() => {
+        const floorplanLink = imageLinks.find((link) => isAutoPreviewFloorplan(link.url));
+        return floorplanLink ? getLinkKey(floorplanLink) : null;
+    }, [imageLinks]);
 
     const visibleFieldSet = useMemo(() => {
         const set = new Set<string>();
@@ -310,14 +337,16 @@ export default function OrderAssetLinks() {
                             <h2 className="text-sm font-semibold text-slate-700 mb-3">Image Assets</h2>
                             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                                 {imageLinks.map((link) => {
+                                    const linkKey = getLinkKey(link);
                                     const broken = !!brokenImageIds[link.id];
+                                    const shouldLoadPreview = linkKey === autoPreviewImageKey || !!previewedImageKeys[linkKey];
 
                                     return (
-                                        <div key={`${link.source_table}-${link.id}`} className="bg-white rounded-xl ring-1 ring-black/[0.05] overflow-hidden">
+                                        <div key={linkKey} className="bg-white rounded-xl ring-1 ring-black/[0.05] overflow-hidden">
                                             <div className="h-52 bg-slate-100 flex items-center justify-center">
                                                 {broken ? (
                                                     <div className="text-slate-500 text-sm">Preview unavailable</div>
-                                                ) : (
+                                                ) : shouldLoadPreview ? (
                                                     <img
                                                         src={link.url}
                                                         alt={link.name}
@@ -325,6 +354,15 @@ export default function OrderAssetLinks() {
                                                         loading="lazy"
                                                         onError={() => setBrokenImageIds((prev) => ({ ...prev, [link.id]: true }))}
                                                     />
+                                                ) : (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setPreviewedImageKeys((prev) => ({ ...prev, [linkKey]: true }))}
+                                                        className="inline-flex items-center gap-2 text-sm px-3 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-white"
+                                                    >
+                                                        <ImageIcon className="w-4 h-4" />
+                                                        Preview
+                                                    </button>
                                                 )}
                                             </div>
 
