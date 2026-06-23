@@ -64,8 +64,11 @@ export default function OperationsManagerDashboard() {
   };
 
   const handleDeleteTeam = async (team: DashboardTeamPerformance) => {
-    const projectId = team.project_id ?? selectedTeamProjectId;
-    if (!projectId) return;
+    const projectId = team.project_id;
+    if (!projectId) {
+      setTeamError('Team project is missing. Refresh the dashboard and try again.');
+      return;
+    }
     const staffCount = team.staff_count ?? 0;
     if (staffCount > 0) {
       setTeamError('Only empty teams can be deleted. Move members first.');
@@ -91,9 +94,9 @@ export default function OperationsManagerDashboard() {
   const handleUpdateTeam = async () => {
     if (!editingTeam || !editTeamName.trim()) return;
 
-    const projectId = editingTeam.project_id ?? selectedTeamProjectId;
+    const projectId = editingTeam.project_id;
     if (!projectId) {
-      setTeamError('Project is required to update team.');
+      setTeamError('Team project is missing. Refresh the dashboard and try again.');
       return;
     }
 

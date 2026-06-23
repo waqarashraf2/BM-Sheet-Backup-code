@@ -3341,6 +3341,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             return [
                 'id' => $team->id,
                 'name' => $team->name,
+                'project_id' => (int) $team->project_id,
                 'project_code' => $team->project->code ?? '-',
                 'qa_lead' => $team->qaLead?->name ?? 'Unassigned',
                 'staff_count' => $teamStaff->count(),
@@ -4399,6 +4400,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             return [
                 'id' => $team->id,
                 'name' => $team->name,
+                'project_id' => (int) $team->project_id,
                 'project_code' => $team->project->code ?? '-',
                 'qa_lead' => $team->qaLead?->name ?? 'Unassigned',
                 'staff_count' => $teamStaff->count(),
