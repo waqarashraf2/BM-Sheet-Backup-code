@@ -275,6 +275,7 @@ class FocalCrmService
         // Parse DateAssigned
         $receivedAt = $this->parseDateAssigned($job['DateAssigned'] ?? null, $now);
         $dueDate = (clone $receivedAt)->modify('+3 days');
+        $dueIn = (clone $receivedAt)->modify('+6 hours');
 
         return [
             'order_number' => $orderNumber,
@@ -292,6 +293,7 @@ class FocalCrmService
             'workflow_state' => 'RECEIVED',
             'workflow_type' => 'FP_3_LAYER',
             'received_at' => $receivedAt->format('Y-m-d H:i:s'),
+            'due_in' => $dueIn->format('Y-m-d H:i:s'),
             'due_date' => $dueDate->format('Y-m-d'),
             'priority' => 'normal',
             'import_source' => 'api',
@@ -329,24 +331,24 @@ class FocalCrmService
         }
 
         try {
-            // Try multiple formats
+            // Parse the portal timestamp without converting it to the server timezone.
+            // This ensures the wall-clock hour/minute values are stored unchanged.
             $formats = ['d/m/Y H:i:s', 'd/m/Y', 'Y-m-d H:i:s', 'Y-m-d'];
-            
+            $portalTz = new DateTimeZone('UTC');
+
             foreach ($formats as $format) {
-                $parsed = DateTime::createFromFormat($format, $dateString, new DateTimeZone($this->timezone));
-                if ($parsed) {
+                $parsed = DateTime::createFromFormat($format, $dateString, $portalTz);
+                if ($parsed instanceof DateTime) {
                     return $parsed;
                 }
             }
 
-            // Fallback to strtotime
-            $timestamp = strtotime(str_replace('/', '-', $dateString));
-            if ($timestamp) {
-                $dt = new DateTime('@' . $timestamp, new DateTimeZone($this->timezone));
-                return $dt;
+            $normalized = str_replace('/', '-', $dateString);
+            try {
+                return new DateTime($normalized, $portalTz);
+            } catch (Exception $e) {
+                return $fallback;
             }
-
-            return $fallback;
 
         } catch (Exception $e) {
             Log::warning('Failed to parse DateAssigned', [
@@ -540,8 +542,9 @@ class FocalCrmService
 
     /**
      * Store job image metadata from the job payload or assetdetail endpoint.
-     * This importer does not alter upstream client portal state (no accept requests).
-     * Safe to fetch asset detail for image discovery only.
+     * Accept is triggered only after the order exists locally in DB.
+     * This avoids pre-accepting jobs before they are persisted, which can
+     * prevent later import of the same order if the portal removes accepted jobs.
      */
     protected function storeJobAssets(array $job): void
     {
@@ -552,6 +555,13 @@ class FocalCrmService
 
         $this->ensureImagesTableExists();
 
+        if (!$this->orderExists($jobOrderId)) {
+            Log::warning('Skipping image fetch because order is not stored locally yet', [
+                'job_order_id' => $jobOrderId,
+            ]);
+            return;
+        }
+
         // First try to extract from payload
         $images = $this->extractImagesFromJob($job);
         Log::info('FocalCRM payload image extraction', [
@@ -560,15 +570,18 @@ class FocalCrmService
             'check_assets' => $job['CheckAssets'] ?? null,
         ]);
 
-        // If payload has no images, fetch from assetdetail endpoint
-        if (empty($images)) {
-            $assetDetail = $this->fetchAssetDetail($jobOrderId);
-            $images = $this->extractImagesFromAssetDetail($assetDetail);
-            Log::info('FocalCRM assetdetail image extraction', [
-                'job_order_id' => $jobOrderId,
-                'images_found' => count($images),
-            ]);
+        // Accept only after the order is stored locally, then fetch asset detail
+        $this->acceptJob($jobOrderId);
+        $assetDetail = $this->fetchAssetDetail($jobOrderId);
+        $assetImages = $this->extractImagesFromAssetDetail($assetDetail);
+        if (!empty($assetImages)) {
+            $images = array_merge($images, $assetImages);
         }
+
+        Log::info('FocalCRM assetdetail image extraction', [
+            'job_order_id' => $jobOrderId,
+            'images_found' => count($assetImages),
+        ]);
 
         if (empty($images)) {
             Log::warning('No image URLs found for order', [
@@ -609,6 +622,80 @@ class FocalCrmService
             'attempted_inserts' => count($images),
             'inserted_rows' => $inserted,
         ]);
+    }
+
+    protected function orderExists(string $jobOrderId): bool
+    {
+        return DB::table($this->tableName)
+            ->where('client_portal_id', $jobOrderId)
+            ->exists();
+    }
+
+    protected function acceptJob(string $jobOrderId): bool
+    {
+        if (!$this->orderExists($jobOrderId)) {
+            Log::warning('Skipping accept because order does not exist locally', [
+                'job_order_id' => $jobOrderId,
+            ]);
+            return false;
+        }
+
+        try {
+            $endpoints = [
+                str_replace('/v3/', '/v2/', rtrim($this->apiUrl, '/')) . '/' . $jobOrderId . '/accept',
+                rtrim($this->apiUrl, '/') . '/' . $jobOrderId . '/accept',
+            ];
+
+            foreach ($endpoints as $acceptUrl) {
+                $response = Http::timeout(60)
+                    ->withHeaders([
+                        'Accept' => '*/*',
+                        'Supplier-Secret' => $this->supplierSecret,
+                        'Ocp-Apim-Subscription-Key' => $this->subscriptionKey,
+                    ])
+                    ->post($acceptUrl, [
+                        'supplierReference' => 'BM-' . uniqid('', true),
+                    ]);
+
+                if ($response->successful()) {
+                    Log::info('FocalCRM job accepted successfully', [
+                        'job_order_id' => $jobOrderId,
+                        'url' => $acceptUrl,
+                        'status' => $response->status(),
+                        'response' => $response->json(),
+                    ]);
+                    return true;
+                }
+
+                if (in_array($response->status(), [409, 422, 400], true)) {
+                    Log::warning('FocalCRM accept request did not succeed but may already be accepted or invalid', [
+                        'job_order_id' => $jobOrderId,
+                        'url' => $acceptUrl,
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+                    return false;
+                }
+
+                Log::debug('FocalCRM accept endpoint response', [
+                    'job_order_id' => $jobOrderId,
+                    'url' => $acceptUrl,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+            }
+
+            Log::warning('FocalCRM accept endpoint not available for job', [
+                'job_order_id' => $jobOrderId,
+            ]);
+            return false;
+        } catch (Exception $e) {
+            Log::warning('FocalCRM accept request failed', [
+                'job_order_id' => $jobOrderId,
+                'error' => $e->getMessage(),
+            ]);
+            return false;
+        }
     }
 
     /**

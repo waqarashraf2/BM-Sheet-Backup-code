@@ -12,9 +12,15 @@ import type {
 
 export interface ClientPortalUploadStatus {
   required: boolean;
+  can_upload?: boolean;
   uploaded: boolean;
   submitted: boolean;
   status: 'not_required' | 'not_uploaded' | 'uploading' | 'uploaded' | 'submitted' | 'failed' | 'submit_failed';
+  order_id?: number;
+  project_id?: number;
+  job_order_id?: string | null;
+  order_number?: string | null;
+  client_reference?: string | null;
   file_names: string[];
   uploaded_at: string | null;
   submitted_at: string | null;
@@ -230,9 +236,10 @@ export const workflowService = {
   getClientPortalUploadStatus: (orderId: number) =>
     api.get<ClientPortalUploadStatus>(`/workflow/orders/${orderId}/client-portal/status`),
 
-  uploadToClientPortal: (orderId: number, files: File[]) => {
+  uploadToClientPortal: (orderId: number, files: File[], jobOrderId?: string) => {
     const formData = new FormData();
     files.forEach(file => formData.append('files[]', file, file.name));
+    if (jobOrderId) formData.append('job_order_id', jobOrderId);
     return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
       `/workflow/orders/${orderId}/client-portal/upload`,
       formData,

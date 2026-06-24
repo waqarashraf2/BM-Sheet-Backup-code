@@ -7,7 +7,7 @@ import { useSmartPolling } from '../../hooks/useSmartPolling';
 import type { Order, WorkerDashboardData, ProjectColumn } from '../../types';
 import { REJECTION_CODES } from '../../types';
 import { AnimatedPage, PageHeader, StatCard, StatusBadge, Modal, Button, Select, Textarea, WorkerDashboardSkeleton } from '../../components/ui';
-import { Play, X, Clock, Target, Inbox, CheckCircle, History, BarChart3, TrendingUp, Loader2, ClipboardList, Pencil, Eye, Palette, Info, Upload, User as UserIcon, Image as ImageIcon } from 'lucide-react';
+import { Play, X, Clock, Target, Inbox, CheckCircle, History, BarChart3, TrendingUp, Loader2, ClipboardList, Pencil, Eye, Palette, Info, Upload, UploadCloud, User as UserIcon, Image as ImageIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
 import DrawerWorkForm from '../../components/DrawerWorkForm';
 import CheckerWorkForm from '../../components/CheckerWorkForm';
@@ -30,6 +30,7 @@ interface PerformanceStats {
 // Role-specific labels and icons
 const CLIENT_NAME_PROJECT_IDS = [7, 8, 9, 10, 11, 12, 14, 46, 42,];
 const IMAGE_LINK_PROJECT_IDS = [1, 22, 25, 26];
+const CLIENT_PORTAL_UPLOAD_PROJECT_IDS = [22, 23];
 
 const ROLE_CONFIG: Record<string, { label: string; icon: any; description: string }> = {
   drawer: {
@@ -308,9 +309,56 @@ export default function WorkerDashboard() {
   }, [getPhotoEnhancementClientOrderNumber, isPhotoEnhancementOrder]);
 
   const shouldShowOrderAssetsButton = useCallback((order: Order): boolean => {
-    if (!(isDrawer || isDesigner || isChecker)) return false;
-    return IMAGE_LINK_PROJECT_IDS.includes(order.project_id);
+    if (!order) return false;
+
+    const workflowType = String(order.workflow_type || '').toUpperCase();
+
+    if (workflowType === 'PH_2_LAYER') {
+      return false;
+    }
+
+    if (workflowType === 'FP_3_LAYER') {
+      return order.project_id === 1 && (isDrawer || isDesigner || isChecker);
+    }
+
+    return IMAGE_LINK_PROJECT_IDS.includes(order.project_id)
+      && (isDrawer || isDesigner || isChecker);
   }, [isChecker, isDesigner, isDrawer]);
+
+  const shouldShowClientUploadButton = useCallback((order: Order): boolean => {
+    if (!order) return false;
+    return String(order.workflow_type || '').toUpperCase() === 'PH_2_LAYER'
+      && CLIENT_PORTAL_UPLOAD_PROJECT_IDS.includes(Number(order.project_id))
+      && isQA;
+  }, [isQA]);
+
+  const openClientUploadPage = useCallback((order: Order) => {
+    const metadata = (order.metadata || {}) as Record<string, unknown>;
+    const jobOrderId = String(
+      (order as any).client_portal_id
+      || (order as any).client_order_number
+      || (order as any).clint_order_number
+      || (order as any).client_order_no
+      || metadata.client_order_number
+      || metadata.clint_order_number
+      || metadata.client_order_no
+      || order.order_number
+      || ''
+    ).trim();
+    const clientReference = String((order as any).client_reference || metadata.client_reference || '').trim();
+    const clientName = String((order as any).client_name || metadata.client_name || '').trim();
+
+    const params = new URLSearchParams({
+      projectId: String(order.project_id),
+      displayOrder: getDisplayOrderNumber(order),
+      orderNumber: String(order.order_number || ''),
+      clientName,
+      clientReference,
+      jobOrderId,
+    });
+
+    navigate(`/client-upload/${order.id}?${params.toString()}`);
+  }, [getDisplayOrderNumber, navigate]);
 
   const getOrderAssetsLookupValue = useCallback((order: Order): string => {
     if (isPhotoEnhancementOrder(order)) {
@@ -320,6 +368,21 @@ export default function WorkerDashboard() {
 
     return String(order.order_number || '').trim();
   }, [getPhotoEnhancementClientOrderNumber, isPhotoEnhancementOrder]);
+
+  const getOrderClientReference = useCallback((order: Order): string => {
+    const metadata = (order.metadata || {}) as Record<string, string>;
+    const clientReference = String(order.client_reference || metadata.client_reference || '').trim();
+    const clientName = String((order as any).client_name || metadata.client_name || '').trim();
+
+    if (IMAGE_LINK_PROJECT_IDS.includes(order.project_id)) {
+      if (clientReference && clientName) {
+        return `${clientReference} (${clientName})`;
+      }
+      return clientReference || clientName || '';
+    }
+
+    return clientReference || '';
+  }, []);
 
   const openOrderAssetsPage = useCallback((order: Order) => {
     const jobOrderId = getOrderAssetsLookupValue(order);
@@ -334,12 +397,12 @@ export default function WorkerDashboard() {
       displayOrder: getDisplayOrderNumber(order),
       orderNumber: String(order.order_number || ''),
       clientName: String((order as any).client_name || metadata.client_name || ''),
-      clientReference: String(order.client_reference || metadata.client_reference || ''),
+      clientReference: getOrderClientReference(order),
       clientOrderNumber,
     });
 
     navigate(`/order-assets/${encodeURIComponent(jobOrderId)}?${params.toString()}`);
-  }, [getDisplayOrderNumber, getOrderAssetsLookupValue, getPhotoEnhancementClientOrderNumber, navigate]);
+  }, [getDisplayOrderNumber, getOrderAssetsLookupValue, getOrderClientReference, getPhotoEnhancementClientOrderNumber, navigate]);
   const getDisplayPlanType = useCallback((order: Order): string => {
     const rawPlanType = (order as any).plan_type || ((order.metadata as Record<string, string> | null)?.plan_type);
     return rawPlanType || '—';
@@ -1203,6 +1266,12 @@ export default function WorkerDashboard() {
                             <StatusBadge status={currentOrder.priority} />
                           </div>
                         )}
+                        {IMAGE_LINK_PROJECT_IDS.includes(currentOrder.project_id) && getOrderClientReference(currentOrder) && (
+                          <div>
+                            <div className="text-xs text-slate-400 mb-1">Order Reference</div>
+                            <div className="text-sm font-semibold text-slate-900">{getOrderClientReference(currentOrder)}</div>
+                          </div>
+                        )}
                         {showClientName && (
                           <div>
                             <div className="text-xs text-slate-400 mb-1">Client Name</div>
@@ -1273,7 +1342,15 @@ export default function WorkerDashboard() {
                           {isDesigner ? 'Open Design Form' : isDrawer ? 'Open Work Form' : isQA ? 'Open QA Review' : isFiller ? 'Open Filler Form' : 'Open Check Form'}
                         </Button>
 
-                        {shouldShowOrderAssetsButton(currentOrder) && (
+                        {shouldShowClientUploadButton(currentOrder) ? (
+                          <Button
+                            variant="secondary"
+                            onClick={() => openClientUploadPage(currentOrder)}
+                            icon={<UploadCloud className="h-4 w-4" />}
+                          >
+                            Upload Images
+                          </Button>
+                        ) : shouldShowOrderAssetsButton(currentOrder) ? (
                           <Button
                             variant="secondary"
                             onClick={() => openOrderAssetsPage(currentOrder)}
@@ -1281,7 +1358,7 @@ export default function WorkerDashboard() {
                           >
                             View Images
                           </Button>
-                        )}
+                        ) : null}
 
                         {!isFirstStageWorker && (
                           <Button variant="danger" onClick={() => setShowReject(true)} icon={<X className="h-4 w-4" />}>
@@ -1474,7 +1551,16 @@ export default function WorkerDashboard() {
                                     </Button>
                                   )}
 
-                                  {shouldShowOrderAssetsButton(order) && (
+                                  {shouldShowClientUploadButton(order) ? (
+                                    <Button
+                                      size="sm"
+                                      variant="secondary"
+                                      onClick={() => openClientUploadPage(order)}
+                                      icon={<UploadCloud className="h-3.5 w-3.5" />}
+                                    >
+                                      Upload Images
+                                    </Button>
+                                  ) : shouldShowOrderAssetsButton(order) ? (
                                     <Button
                                       size="sm"
                                       variant="secondary"
@@ -1483,7 +1569,7 @@ export default function WorkerDashboard() {
                                     >
                                       {order.project_id === 1 ? 'Files / Portal Check' : 'Images'}
                                     </Button>
-                                  )}
+                                  ) : null}
                                 </div>
                               </td>
                             </tr>
@@ -1539,6 +1625,12 @@ export default function WorkerDashboard() {
                       <div>
                         <div className="text-xs text-slate-400 mb-1">Client Name</div>
                         <div className="text-sm font-semibold text-slate-900">{(currentOrder as any).client_name || 'N/A'}</div>
+                      </div>
+                    )}
+                    {IMAGE_LINK_PROJECT_IDS.includes(currentOrder.project_id) && getOrderClientReference(currentOrder) && (
+                      <div>
+                        <div className="text-xs text-slate-400 mb-1">Order Reference</div>
+                        <div className="text-sm font-semibold text-slate-900">{getOrderClientReference(currentOrder)}</div>
                       </div>
                     )}
                     {isProjectFieldVisible('priority') && (

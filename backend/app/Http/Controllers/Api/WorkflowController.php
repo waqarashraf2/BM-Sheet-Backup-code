@@ -2789,7 +2789,9 @@ public function startTimer(Request $request, int $id)
     public function orderDetails(Request $request, int $id)
     {
         $user = $request->user();
-        $order = Order::findOrFailGlobal($id);
+        $order = in_array($user->role, ['drawer', 'checker', 'filler', 'qa', 'designer'])
+            ? self::findOrderForUser($id, $user)
+            : Order::findOrFailGlobal($id);
         $order->load(['project', 'team', 'assignedUser', 'workItems.assignedUser']);
 
         // Project isolation check for production users

@@ -1,7 +1,7 @@
 // StatusBadge component
 
 interface StatusBadgeProps {
-  status: string;
+  status?: string | null;
   size?: 'xs' | 'sm' | 'md';
   dot?: boolean;
 }
@@ -63,12 +63,13 @@ function formatLabel(status: string): string {
 }
 
 export default function StatusBadge({ status, size = 'sm', dot = true }: StatusBadgeProps) {
-  const st = statusStyles[status] || defaultStyle;
+  const safeStatus = String(status || 'unknown');
+  const st = statusStyles[safeStatus] || defaultStyle;
 
   return (
     <span className={`inline-flex items-center gap-1.5 font-medium rounded-full ${st.bg} ${st.text} ${sizeClasses[size]}`}>
       {dot && <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />}
-      {formatLabel(status)}
+      {formatLabel(safeStatus)}
     </span>
   );
 }

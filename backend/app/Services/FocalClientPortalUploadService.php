@@ -31,10 +31,19 @@ class FocalClientPortalUploadService
             && $this->isRequiredForProject((int) $order->project_id);
     }
 
+    public function canUploadForOrder(Order $order, ?string $jobOrderId = null): bool
+    {
+        return strtoupper((string) $order->workflow_type) === 'PH_2_LAYER'
+            && $this->isRequiredForProject((int) $order->project_id)
+            && $this->rawJobOrderId($order, $jobOrderId) !== '';
+    }
+
     public function status(Order $order): array
     {
         $required = $this->isRequiredForOrder($order);
-        $upload = $required && Schema::hasTable('client_portal_uploads')
+        $canUpload = $this->canUploadForOrder($order);
+        $jobOrderId = $this->rawJobOrderId($order);
+        $upload = $canUpload && Schema::hasTable('client_portal_uploads')
             ? ClientPortalUpload::query()
                 ->where('project_id', $order->project_id)
                 ->where('order_id', $order->id)
@@ -44,9 +53,15 @@ class FocalClientPortalUploadService
 
         return [
             'required' => $required,
+            'can_upload' => $canUpload,
             'uploaded' => in_array($upload?->status, ['uploaded', 'submitted', 'submit_failed'], true),
             'submitted' => $upload?->status === 'submitted',
-            'status' => $upload?->status ?? ($required ? 'not_uploaded' : 'not_required'),
+            'status' => $upload?->status ?? ($canUpload ? 'not_uploaded' : 'not_required'),
+            'order_id' => (int) $order->id,
+            'project_id' => (int) $order->project_id,
+            'job_order_id' => $jobOrderId !== '' ? $jobOrderId : null,
+            'order_number' => $order->order_number,
+            'client_reference' => $order->client_reference,
             'file_names' => $upload?->file_names ?? [],
             'uploaded_at' => $upload?->uploaded_at?->toIso8601String(),
             'submitted_at' => $upload?->submitted_at?->toIso8601String(),
@@ -57,16 +72,16 @@ class FocalClientPortalUploadService
     /**
      * @param array<int, UploadedFile> $files
      */
-    public function upload(Order $order, User $user, array $files): ClientPortalUpload
+    public function upload(Order $order, User $user, array $files, ?string $requestedJobOrderId = null): ClientPortalUpload
     {
         $projectId = (int) $order->project_id;
-        if (!$this->isRequiredForOrder($order)) {
+        if (!$this->canUploadForOrder($order, $requestedJobOrderId)) {
             throw ValidationException::withMessages([
-                'project_id' => 'Client portal upload is not enabled for this order.',
+                'order' => 'Client portal upload is not enabled for this order.',
             ]);
         }
 
-        $jobOrderId = $this->jobOrderId($order);
+        $jobOrderId = $this->jobOrderId($order, $requestedJobOrderId);
         $fileNames = collect($files)
             ->map(fn (UploadedFile $file) => $file->getClientOriginalName())
             ->values();
@@ -192,9 +207,9 @@ class FocalClientPortalUploadService
         }
     }
 
-    private function jobOrderId(Order $order): string
+    private function jobOrderId(Order $order, ?string $requestedJobOrderId = null): string
     {
-        $jobOrderId = trim((string) ($order->client_portal_id ?: $order->order_number));
+        $jobOrderId = $this->rawJobOrderId($order, $requestedJobOrderId);
         if ($jobOrderId === '') {
             throw ValidationException::withMessages([
                 'order' => 'The client portal job/order ID is missing.',
@@ -202,6 +217,30 @@ class FocalClientPortalUploadService
         }
 
         return $jobOrderId;
+    }
+
+    private function rawJobOrderId(Order $order, ?string $requestedJobOrderId = null): string
+    {
+        $storedJobOrderId = trim((string) ($order->client_portal_id ?: $order->order_number));
+        $requestedJobOrderId = trim((string) $requestedJobOrderId);
+
+        if ($storedJobOrderId !== '') {
+            if ($requestedJobOrderId !== '' && strcasecmp($requestedJobOrderId, $storedJobOrderId) !== 0) {
+                throw ValidationException::withMessages([
+                    'job_order_id' => 'The submitted client portal job ID does not match this order.',
+                ]);
+            }
+
+            return $storedJobOrderId;
+        }
+
+        if ($requestedJobOrderId !== '' && !preg_match('/^[A-Za-z0-9._-]{1,120}$/', $requestedJobOrderId)) {
+            throw ValidationException::withMessages([
+                'job_order_id' => 'The submitted client portal job ID is invalid.',
+            ]);
+        }
+
+        return $requestedJobOrderId;
     }
 
     private function client()

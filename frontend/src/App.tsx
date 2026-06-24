@@ -29,6 +29,7 @@ const WorkQueue = lazy(() => import('./pages/Workflow/WorkQueue'));
 const ImportOrders = lazy(() => import('./pages/Workflow/ImportOrders'));
 const RejectedOrders = lazy(() => import('./pages/Workflow/RejectedOrders'));
 const OrderAssetLinks = lazy(() => import('./pages/Workflow/OrderAssetLinks'));
+const ClientUpload = lazy(() => import('./pages/Workflow/ClientUpload'));
 const SupervisorAssignment = lazy(() => import('./pages/Workflow/SupervisorAssignment'));
 const PMAssignment = lazy(() => import('./pages/Workflow/PMAssignment'));
 const PMProjectAssignment = lazy(() => import('./pages/Management/PMProjectAssignment'));
@@ -207,6 +208,15 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['drawer', 'checker', 'filler', 'qa', 'designer']}>
                   <OrderAssetLinks />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="client-upload/:orderId"
+              element={
+                <ProtectedRoute allowedRoles={['qa']}>
+                  <ClientUpload />
                 </ProtectedRoute>
               }
             />

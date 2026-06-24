@@ -2207,7 +2207,12 @@ export default function SupervisorAssignment() {
       case '__display_date':
         return (
           <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
-            {fmtOrderDisplayDate(order)}
+            <div>{fmtOrderDisplayDate(order)}</div>
+            {order.received_at && (
+              <div className="text-xs font-semibold text-slate-700">
+                {fmtReceivedTime(order.received_at)}
+              </div>
+            )}
           </td>
         );
 
@@ -2324,7 +2329,18 @@ export default function SupervisorAssignment() {
             {...additionalTimingAndCountCellProps}
             className={`px-3 py-2 text-slate-600 ${column.key === 'received_at' ? 'cursor-context-menu' : ''}`}
           >
-            {fmtProjectDateTime((order as any)[column.key] || null)}
+            {column.key === 'received_at' ? (
+              <>
+                <div>{fmtOrderDisplayDate(order)}</div>
+                {order.received_at && (
+                  <div className="text-xs font-semibold text-slate-700">
+                    {fmtReceivedTime(order.received_at)}
+                  </div>
+                )}
+              </>
+            ) : (
+              fmtProjectDateTime((order as any)[column.key] || null)
+            )}
           </td>
         );
 

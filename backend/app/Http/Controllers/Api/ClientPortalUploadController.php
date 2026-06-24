@@ -24,12 +24,13 @@ class ClientPortalUploadController extends Controller
     {
         $order = $this->qaOrder($request, $orderId);
         $data = $request->validate([
+            'job_order_id' => 'nullable|string|max:120',
             'files' => 'required|array|min:1|max:100',
             'files.*' => 'required|file|max:51200',
         ]);
 
         try {
-            $upload = $this->service->upload($order, $request->user(), $data['files']);
+            $upload = $this->service->upload($order, $request->user(), $data['files'], $data['job_order_id'] ?? null);
         } catch (\Illuminate\Validation\ValidationException $e) {
             throw $e;
         } catch (\Throwable $e) {
