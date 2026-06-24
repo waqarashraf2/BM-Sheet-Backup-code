@@ -7,9 +7,10 @@ import { AnimatedPage, PageHeader, StatCard, PMDashboardSkeleton } from '../../c
 import {
   Package, TrendingUp, Clock, Users, ChevronDown, ChevronRight,
   Pencil, CheckSquare, Eye, Palette, CircleDot, UserCheck, AlertTriangle, Info,
-  Plus, Trash2, X, Timer, Target, Search, CalendarClock,
+  Plus, Trash2, X, Timer, Target, Search, CalendarClock, Image as ImageIcon,
 } from 'lucide-react';
 import TimeWiseCountView from './TimeWiseCountView';
+import ManagerOrderAssetLinksView from './ManagerOrderAssetLinksView';
 
 export default function ProjectManagerDashboard() {
   const [data, setData] = useState<PMDashboardData | null>(null);
@@ -18,7 +19,7 @@ export default function ProjectManagerDashboard() {
   const [expandedStaff, setExpandedStaff] = useState<number | null>(null);
   const [staffRoleFilter, setStaffRoleFilter] = useState<string>('all');
   const [staffSearch, setStaffSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'projects' | 'staff' | 'teams' | 'time-wise'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'staff' | 'teams' | 'time-wise' | 'image-links'>('projects');
   const [showCreateTeam, setShowCreateTeam] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
   const [creatingTeam, setCreatingTeam] = useState(false);
@@ -187,6 +188,7 @@ export default function ProjectManagerDashboard() {
     { key: 'staff' as const, label: 'Staff Report', count: filteredStaff.length },
     { key: 'teams' as const, label: 'Teams', count: (data.team_performance || []).length },
     { key: 'time-wise' as const, label: 'Time-wise Count', count: 0, icon: CalendarClock },
+    { key: 'image-links' as const, label: 'Image Links', count: 0, icon: ImageIcon },
   ];
 
   return (
@@ -238,6 +240,12 @@ export default function ProjectManagerDashboard() {
         {activeTab === 'time-wise' && (
           <TimeWiseCountView
             dashboard="project-manager"
+            projects={(data.projects || []).map((item) => item.project)}
+          />
+        )}
+
+        {activeTab === 'image-links' && (
+          <ManagerOrderAssetLinksView
             projects={(data.projects || []).map((item) => item.project)}
           />
         )}

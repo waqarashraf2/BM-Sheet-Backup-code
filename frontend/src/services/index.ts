@@ -363,6 +363,43 @@ export const dashboardService = {
       params: { ...params, report: 'time-wise-counts' },
     }),
 
+  orderAssetLinks: (params: { search?: string; project_id?: number }) =>
+    api.get<{
+      search: string;
+      project_id: number | null;
+      count: number;
+      orders: Array<{
+        project: {
+          id: number;
+          code: string;
+          name: string;
+          workflow_type: string;
+        };
+        order: {
+          id: number;
+          order_number: string;
+          client_reference: string | null;
+          client_name: string | null;
+          client_portal_id: string | null;
+          clint_order_number: string | null;
+          client_order_number: string | null;
+        };
+        job_order_id: string;
+        count: number;
+        links: Array<{
+          source: string;
+          source_table: string | null;
+          project_id: number;
+          job_order_id: string;
+          id: number | null;
+          name: string;
+          url: string;
+          link_type: string;
+          meta: Record<string, unknown> | null;
+        }>;
+      }>;
+    }>('/dashboard/order-asset-links', { params }),
+
   // Worker personal
   worker: () => api.get<WorkerDashboardData>('/dashboard/worker'),
 
