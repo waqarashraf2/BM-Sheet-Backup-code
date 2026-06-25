@@ -2,6 +2,7 @@
 import { columnService, dashboardService, projectService, workflowService } from '../../services';
 import { useRef } from 'react';
 import { useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import type { RootState } from '../../store/store';
 import { useSmartPolling } from '../../hooks/useSmartPolling';
 import { useNewOrderHighlight } from '../../hooks/useNewOrderHighlight';
@@ -58,6 +59,7 @@ const resolveProjectTimezone = (
 
 export default function SupervisorAssignment() {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const { user } = useSelector((state: RootState) => state.auth);
 
   const getOrderInstructionValue = (order: Partial<AssignmentOrder> & Record<string, any>) =>
@@ -208,6 +210,27 @@ export default function SupervisorAssignment() {
       && !workflowState.includes('PENDING_BY_DRAWER')
       && !workflowState.includes('REJECTED');
   }, []);
+  const isCompletedOrder = useCallback((order: AssignmentOrder) => {
+    const workflowState = (order.workflow_state || '').toUpperCase();
+    return workflowState.includes('COMPLETE') || workflowState.includes('DELIVER');
+  }, []);
+  const canOpenCompletedAssetLinks = useCallback((order: AssignmentOrder) => {
+    return Number(order.project_id) === 1 && isCompletedOrder(order) && !!String(order.order_number || '').trim();
+  }, [isCompletedOrder]);
+  const openCompletedAssetLinks = useCallback((order: AssignmentOrder) => {
+    const jobOrderId = String(order.order_number || '').trim();
+    if (!jobOrderId) return;
+
+    const params = new URLSearchParams({
+      projectId: String(order.project_id),
+      displayOrder: jobOrderId,
+      orderNumber: jobOrderId,
+    });
+    if (order.client_name) params.set('clientName', order.client_name);
+    if (order.client_reference) params.set('clientReference', order.client_reference);
+
+    navigate(`/order-assets/${encodeURIComponent(jobOrderId)}?${params.toString()}`);
+  }, [navigate]);
 
   const displayedOrders = useMemo(() => {
     if (statusFilter === 'cancelled') {
@@ -3425,16 +3448,32 @@ export default function SupervisorAssignment() {
                             })}
                             {/* Status */}
                             <td className="px-2 py-2 text-center">
-                              <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
-                                : o.workflow_state?.includes('HOLD') ? 'bg-red-100 text-red-700'
-                                  : o.workflow_state?.includes('REJECTED') ? 'bg-rose-100 text-rose-700'
-                                    : o.workflow_state?.includes('CHECK') ? 'bg-blue-100 text-blue-700'
-                                      : o.workflow_state?.includes('QA') ? 'bg-purple-100 text-purple-700'
-                                        : o.workflow_state?.includes('DRAW') ? 'bg-brand-100 text-brand-700'
-                                          : 'bg-slate-100 text-slate-600'
-                                }`}>
-                                {getStatusLabel(o.workflow_state)}
-                              </span>
+                              <div className="inline-flex items-center justify-center gap-1">
+                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
+                                  : o.workflow_state?.includes('HOLD') ? 'bg-red-100 text-red-700'
+                                    : o.workflow_state?.includes('REJECTED') ? 'bg-rose-100 text-rose-700'
+                                      : o.workflow_state?.includes('CHECK') ? 'bg-blue-100 text-blue-700'
+                                        : o.workflow_state?.includes('QA') ? 'bg-purple-100 text-purple-700'
+                                          : o.workflow_state?.includes('DRAW') ? 'bg-brand-100 text-brand-700'
+                                            : 'bg-slate-100 text-slate-600'
+                                  }`}>
+                                  {getStatusLabel(o.workflow_state)}
+                                </span>
+                                {canOpenCompletedAssetLinks(o) && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      openCompletedAssetLinks(o);
+                                    }}
+                                    className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-500 hover:text-brand-700 hover:bg-brand-50 transition-colors"
+                                    title="View order images"
+                                    aria-label="View order images"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
                               {o.workflow_state === 'ON_HOLD' && (
                                 <button
                                   onClick={() => handleResume(o.id, o.project_id)}

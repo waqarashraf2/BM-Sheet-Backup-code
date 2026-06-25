@@ -3,12 +3,11 @@ import { dashboardService, projectService } from '../../services';
 import { useSmartPolling } from '../../hooks/useSmartPolling';
 import type { DashboardTeamPerformance, OpsDashboardData, OpsProjectItem } from '../../types';
 import { AnimatedPage, PageHeader, StatCard, StatusBadge, OpsManagerDashboardSkeleton } from '../../components/ui';
-import { Users, AlertTriangle, Package, TrendingUp, ChevronRight, ChevronDown, Pencil, CheckSquare, Eye, Palette, Calendar, Shield, LayoutDashboard, Briefcase, UserCheck, Search, Target, Timer, Info, Plus, Trash2, X, CalendarClock, Image as ImageIcon } from 'lucide-react';
+import { Users, AlertTriangle, Package, TrendingUp, ChevronRight, ChevronDown, Pencil, CheckSquare, Eye, Palette, Calendar, Shield, LayoutDashboard, Briefcase, UserCheck, Search, Target, Timer, Info, Plus, Trash2, X, CalendarClock } from 'lucide-react';
 import DailyOperationsView from './DailyOperationsView';
 import TimeWiseCountView from './TimeWiseCountView';
-import ManagerOrderAssetLinksView from './ManagerOrderAssetLinksView';
 
-type OMTab = 'overview' | 'projects' | 'teams' | 'staff' | 'daily-operations' | 'time-wise' | 'image-links';
+type OMTab = 'overview' | 'projects' | 'teams' | 'staff' | 'daily-operations' | 'time-wise';
 
 export default function OperationsManagerDashboard() {
   const [data, setData] = useState<OpsDashboardData | null>(null);
@@ -149,7 +148,6 @@ export default function OperationsManagerDashboard() {
     { id: 'staff' as OMTab, label: 'Staff Report', icon: Users },
     { id: 'daily-operations' as OMTab, label: 'Daily Operations', icon: Calendar },
     { id: 'time-wise' as OMTab, label: 'Time-wise Count', icon: CalendarClock },
-    { id: 'image-links' as OMTab, label: 'Image Links', icon: ImageIcon },
   ];
 
   if (loading) return (
@@ -218,12 +216,6 @@ export default function OperationsManagerDashboard() {
           {activeTab === 'time-wise' && (
             <TimeWiseCountView
               dashboard="operations"
-              projects={(data.projects || []).map((item) => item.project)}
-            />
-          )}
-
-          {activeTab === 'image-links' && (
-            <ManagerOrderAssetLinksView
               projects={(data.projects || []).map((item) => item.project)}
             />
           )}

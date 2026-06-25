@@ -206,7 +206,7 @@ function App() {
             <Route
               path="order-assets/:jobOrderId"
               element={
-                <ProtectedRoute allowedRoles={['drawer', 'checker', 'filler', 'qa', 'designer']}>
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer']}>
                   <OrderAssetLinks />
                 </ProtectedRoute>
               }
