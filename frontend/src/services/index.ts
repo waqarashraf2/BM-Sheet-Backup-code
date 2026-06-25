@@ -244,16 +244,22 @@ export const workflowService = {
       return formData;
     };
 
+    const config = { headers: { 'Content-Type': 'multipart/form-data' } };
+    const uploadUrl = `/workflow/orders/${orderId}/client-portal/upload`;
+
     return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
       `/workflow/orders/${orderId}/client-portal/upload-files`,
       payload(),
-    ).catch((error: any) => {
-      const status = error?.response?.status;
-      if (status !== 404 && status !== 405) throw error;
+      config,
+    ).catch((error) => {
+      if (error?.response?.status !== 405 && error?.response?.status !== 404) {
+        throw error;
+      }
 
       return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
-        `/workflow/orders/${orderId}/client-portal/upload`,
+        uploadUrl,
         payload(),
+        config,
       );
     });
   },
