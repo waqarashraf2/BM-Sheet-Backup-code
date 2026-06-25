@@ -110,18 +110,18 @@ Schedule::command('scrape:focalpbphoto')
     
     
 // FocalCRM - Project 22 (Photo Jobs - PH_2_LAYER)
-// Schedule::command('focalcrm:import-photo')
-//     ->everyTenMinutes()
-//     ->withoutOverlapping()
-//     ->runInBackground();
+Schedule::command('focalcrm:photo-import')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
     
     
     
 // FocalCRM - Project 25 (Prestige Photography)
-// Schedule::command('focalcrm:import-prestige')
-//     ->everyTenMinutes()
-//     ->withoutOverlapping()
-//     ->runInBackground();
+Schedule::command('focalcrm:import-prestige')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
     
     
     

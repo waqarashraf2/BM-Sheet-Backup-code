@@ -237,13 +237,25 @@ export const workflowService = {
     api.get<ClientPortalUploadStatus>(`/workflow/orders/${orderId}/client-portal/status`),
 
   uploadToClientPortal: (orderId: number, files: File[], jobOrderId?: string) => {
-    const formData = new FormData();
-    files.forEach(file => formData.append('files[]', file, file.name));
-    if (jobOrderId) formData.append('job_order_id', jobOrderId);
+    const payload = () => {
+      const formData = new FormData();
+      files.forEach(file => formData.append('files[]', file, file.name));
+      if (jobOrderId) formData.append('job_order_id', jobOrderId);
+      return formData;
+    };
+
     return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
-      `/workflow/orders/${orderId}/client-portal/upload`,
-      formData,
-    );
+      `/workflow/orders/${orderId}/client-portal/upload-files`,
+      payload(),
+    ).catch((error: any) => {
+      const status = error?.response?.status;
+      if (status !== 404 && status !== 405) throw error;
+
+      return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
+        `/workflow/orders/${orderId}/client-portal/upload`,
+        payload(),
+      );
+    });
   },
 
   submitClientPortalOrder: (orderId: number) =>

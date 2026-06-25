@@ -15,7 +15,7 @@ use Exception;
  *
  * Project: 22 (PB Photo Jobs)
  * API Endpoint: https://api.focalagent.com/supplier-enhancement/v3/jobs
- * Product Filter: Photography, Streetscape, Additional Photo, Photo Enhancement, Elevated Photography, Drone Photography
+ * Product Filter: Photography, Streetscape, Additional Photo, Photo Enhancement, Elevated Photography
  * Workflow Type: PH_2_LAYER
  */
 class FocalCrmPhotoService
@@ -34,7 +34,6 @@ class FocalCrmPhotoService
         'additional photo',
         'photo enhancement',
         'elevated photography',
-        'drone photography',
     ];
 
     public function __construct()
@@ -81,6 +80,20 @@ class FocalCrmPhotoService
             ->get($url);
     }
 
+    protected function ensureImagesTableExists(): void
+    {
+        if (Schema::hasTable($this->imagesTable)) {
+            return;
+        }
+
+        Schema::create($this->imagesTable, function ($table) {
+            $table->increments('id');
+            $table->string('images_url', 500)->nullable();
+            $table->string('file_name', 500)->nullable();
+            $table->string('job_order_id', 500)->nullable()->index();
+        });
+    }
+
     /**
      * Fetch jobs from FocalCRM API and import Photo jobs
      */
@@ -108,6 +121,7 @@ class FocalCrmPhotoService
             if (empty($filteredJobs)) {
                 $diagnostic = $this->buildProductDiagnostic($jobs);
                 Log::info('No Photo jobs found in API response', ['diagnostic' => $diagnostic]);
+                $imageBackfillChecked = $this->backfillMissingImagesForRecentOrders(20);
 
                 return [
                     'success' => false,
@@ -115,10 +129,12 @@ class FocalCrmPhotoService
                     'inserted' => 0,
                     'updated' => 0,
                     'skipped' => 0,
+                    'image_backfill_checked' => $imageBackfillChecked,
                 ];
             }
 
             $result = $this->importJobs($filteredJobs);
+            $result['image_backfill_checked'] = $this->backfillMissingImagesForRecentOrders(20);
 
             Log::info('FocalCRM Photo import completed', $result);
 
@@ -549,11 +565,9 @@ class FocalCrmPhotoService
     }
 
     /**
-     * Store job images and preferences from either:
-     * 1. the job payload itself.
+     * Store job images and preferences from either the job payload or asset detail.
      *
-     * This importer runs in fetch-only mode and does not make follow-up
-     * API calls that could alter upstream job visibility or state.
+     * This importer runs in fetch-only mode and uses GET-only calls.
      */
     protected function storeJobAssets(array $job): void
     {
@@ -563,25 +577,139 @@ class FocalCrmPhotoService
             return;
         }
 
+        $this->ensureImagesTableExists();
         $images = $this->extractImagesFromJob($job);
 
-        DB::table($this->imagesTable)->where('job_order_id', $jobOrderId)->delete();
+        if (empty($images)) {
+            $assetDetail = $this->fetchAssetDetail($jobOrderId);
+            $images = $this->extractImagesFromAssetDetail($assetDetail);
+        }
+
+        if (empty($images)) {
+            Log::info('No photo image URLs found for job', [
+                'job_order_id' => $jobOrderId,
+            ]);
+            return;
+        }
+
+        $images = $this->dedupeImages($images);
+        $existingUrls = DB::table($this->imagesTable)
+            ->where('job_order_id', $jobOrderId)
+            ->whereNotNull('images_url')
+            ->pluck('images_url')
+            ->map(fn ($url) => trim((string) $url))
+            ->filter()
+            ->flip()
+            ->all();
 
         foreach ($images as $image) {
+            $url = trim((string) ($image['url'] ?? ''));
+
+            if ($url === '' || isset($existingUrls[$url])) {
+                continue;
+            }
+
             try {
                 DB::table($this->imagesTable)->insert([
-                    'images_url' => $image['url'] ?? null,
+                    'images_url' => $url,
                     'file_name' => $image['file_name'] ?? null,
                     'job_order_id' => $jobOrderId,
                 ]);
+                $existingUrls[$url] = true;
             } catch (Exception $e) {
                 Log::error('Failed to save job image', [
                     'job_order_id' => $jobOrderId,
-                    'url' => $image['url'] ?? null,
+                    'url' => $url,
                     'error' => $e->getMessage(),
                 ]);
             }
         }
+    }
+
+    /**
+     * Fetch asset detail with GET only. This does not accept or update portal jobs.
+     */
+    protected function fetchAssetDetail(string $jobOrderId): array
+    {
+        $endpoints = [
+            rtrim($this->apiUrl, '/') . '/' . $jobOrderId . '/assetdetail',
+            str_replace('/v3/', '/v2/', rtrim($this->apiUrl, '/')) . '/' . $jobOrderId . '/assetdetail',
+        ];
+
+        foreach ($endpoints as $url) {
+            try {
+                $response = $this->fetchFromFocalApi($url);
+
+                if ($response->successful()) {
+                    return $response->json() ?? [];
+                }
+
+                Log::debug('FocalCRM Photo asset detail endpoint unavailable', [
+                    'job_order_id' => $jobOrderId,
+                    'status' => $response->status(),
+                    'url' => $url,
+                ]);
+            } catch (Exception $e) {
+                Log::warning('FocalCRM Photo asset detail fetch failed', [
+                    'job_order_id' => $jobOrderId,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return [];
+    }
+
+    protected function extractImagesFromAssetDetail(array $assetDetail): array
+    {
+        $images = [];
+
+        foreach (['Images', 'Photos', 'RawPhotoAssets', 'Assets'] as $key) {
+            if (empty($assetDetail[$key]) || !is_array($assetDetail[$key])) {
+                continue;
+            }
+
+            foreach ($assetDetail[$key] as $asset) {
+                if (!is_array($asset)) {
+                    continue;
+                }
+
+                $url = $asset['Url'] ?? $asset['url'] ?? $asset['URL'] ?? null;
+                $name = $asset['FileName'] ?? $asset['file_name'] ?? ($url ? basename($url) : null);
+
+                if ($url) {
+                    $images[] = [
+                        'url' => $url,
+                        'file_name' => $name,
+                    ];
+                }
+            }
+        }
+
+        if (!empty($assetDetail['AdditionalLinks']) && is_array($assetDetail['AdditionalLinks'])) {
+            foreach ($assetDetail['AdditionalLinks'] as $asset) {
+                if (!is_array($asset)) {
+                    continue;
+                }
+
+                $url = $asset['Href'] ?? $asset['href'] ?? $asset['Url'] ?? $asset['url'] ?? null;
+                $name = $asset['Description'] ?? $asset['description'] ?? ($url ? basename($url) : null);
+
+                if ($url) {
+                    $images[] = [
+                        'url' => $url,
+                        'file_name' => $name,
+                    ];
+                }
+            }
+        }
+
+        if (empty($images)) {
+            return $this->extractImagesRecursively($assetDetail);
+        }
+
+        return $images;
     }
 
     /**
@@ -643,6 +771,100 @@ class FocalCrmPhotoService
 
         return [];
     }
+
+    /**
+     * Remove duplicate image URLs from the current payload without touching DB rows.
+     */
+    protected function dedupeImages(array $images): array
+    {
+        $unique = [];
+        $seen = [];
+
+        foreach ($images as $image) {
+            $url = trim((string) ($image['url'] ?? ''));
+
+            if ($url === '' || isset($seen[$url])) {
+                continue;
+            }
+
+            $seen[$url] = true;
+            $unique[] = [
+                'url' => $url,
+                'file_name' => $image['file_name'] ?? basename(parse_url($url, PHP_URL_PATH) ?: $url),
+            ];
+        }
+
+        return $unique;
+    }
+
+    protected function extractImagesRecursively($data): array
+    {
+        $images = [];
+
+        if (!is_array($data)) {
+            return $images;
+        }
+
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $images = array_merge($images, $this->extractImagesRecursively($value));
+                continue;
+            }
+
+            if (!is_string($value)) {
+                continue;
+            }
+
+            $keyLower = strtolower((string) $key);
+            $isUrlKey = in_array($keyLower, ['url', 'href', 'downloadurl', 'download_url', 'imageurl', 'image_url'], true);
+            $isHttpValue = str_starts_with(strtolower($value), 'http://') || str_starts_with(strtolower($value), 'https://');
+
+            if ($isUrlKey && $isHttpValue) {
+                $images[] = [
+                    'url' => $value,
+                    'file_name' => basename(parse_url($value, PHP_URL_PATH) ?: $value),
+                ];
+            }
+        }
+
+        return $images;
+    }
+
+    /**
+     * Check latest existing orders and fetch images only when no image rows exist.
+     */
+    protected function backfillMissingImagesForRecentOrders(int $limit = 20): int
+    {
+        $this->ensureImagesTableExists();
+
+        $orders = DB::table($this->tableName . ' as o')
+            ->leftJoin($this->imagesTable . ' as i', 'i.job_order_id', '=', 'o.client_portal_id')
+            ->whereNotNull('o.client_portal_id')
+            ->whereNull('i.id')
+            ->orderByDesc('o.id')
+            ->limit($limit)
+            ->get(['o.client_portal_id']);
+
+        foreach ($orders as $order) {
+            $jobOrderId = (string) ($order->client_portal_id ?? '');
+
+            if ($jobOrderId === '') {
+                continue;
+            }
+
+            $this->storeJobAssets([
+                'Id' => $jobOrderId,
+            ]);
+        }
+
+        Log::info('FocalCRM Photo image backfill completed', [
+            'checked' => $orders->count(),
+            'limit' => $limit,
+        ]);
+
+        return $orders->count();
+    }
+
     /**
      * Get job by FocalCRM ID
      */

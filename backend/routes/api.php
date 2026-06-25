@@ -76,6 +76,7 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
 
         // QA-only client portal delivery for configured projects (22/23 by default).
         Route::get('/orders/{orderId}/client-portal/status', [ClientPortalUploadController::class, 'status']);
+        Route::post('/orders/{orderId}/client-portal/upload-files', [ClientPortalUploadController::class, 'upload']);
         Route::post('/orders/{orderId}/client-portal/upload', [ClientPortalUploadController::class, 'upload']);
         Route::post('/orders/{orderId}/client-portal/submit', [ClientPortalUploadController::class, 'submit']);
 

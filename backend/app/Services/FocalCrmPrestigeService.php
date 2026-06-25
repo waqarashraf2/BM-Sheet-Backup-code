@@ -11,7 +11,7 @@ use DateTimeZone;
 use Exception;
 
 /**
- * FocalCRM Prestige Service - Fetch and import Prestige Photography jobs
+ * FocalCRM Prestige Service - Fetch and import Prestige jobs
  *
  * Project: 25
  * Product filter: exact "Prestige Photography"
@@ -23,6 +23,7 @@ class FocalCrmPrestigeService
     protected string $subscriptionKey = 'daee797833ca4dbd87fc98b1421c57b1';
     protected int $projectId = 25;
     protected string $tableName = 'project_25_orders';
+    protected string $imagesTable = 'job_detail_25_images';
     protected string $timezone = 'Europe/London';
     protected string $productName = 'prestige photography';
 
@@ -44,16 +45,20 @@ class FocalCrmPrestigeService
 
             $filteredJobs = $this->filterPrestigeJobs($jobs);
             if (empty($filteredJobs)) {
+                $imageBackfillChecked = $this->backfillMissingImagesForRecentOrders(20);
+
                 return [
                     'success' => false,
                     'message' => 'No Prestige Photography jobs found',
                     'inserted' => 0,
                     'updated' => 0,
                     'skipped' => 0,
+                    'image_backfill_checked' => $imageBackfillChecked,
                 ];
             }
 
             $result = $this->importJobs($filteredJobs);
+            $result['image_backfill_checked'] = $this->backfillMissingImagesForRecentOrders(20);
             Log::info('FocalCRM Prestige import completed', $result);
             return $result;
         } catch (Exception $e) {
@@ -71,13 +76,7 @@ class FocalCrmPrestigeService
     public function fetchRaw(): array
     {
         try {
-            $response = Http::timeout(60)
-                ->withHeaders([
-                    'Accept' => '*/*',
-                    'Supplier-Secret' => $this->supplierSecret,
-                    'Ocp-Apim-Subscription-Key' => $this->subscriptionKey,
-                ])
-                ->get($this->apiUrl);
+            $response = $this->fetchFromFocalApi($this->apiUrl);
 
             return $response->json() ?? ['error' => 'Empty response', 'status' => $response->status()];
         } catch (Exception $e) {
@@ -85,16 +84,35 @@ class FocalCrmPrestigeService
         }
     }
 
+    protected function fetchFromFocalApi(string $url)
+    {
+        return Http::timeout(60)
+            ->withHeaders([
+                'Accept' => '*/*',
+                'Supplier-Secret' => $this->supplierSecret,
+                'Ocp-Apim-Subscription-Key' => $this->subscriptionKey,
+            ])
+            ->get($url);
+    }
+
+    protected function ensureImagesTableExists(): void
+    {
+        if (Schema::hasTable($this->imagesTable)) {
+            return;
+        }
+
+        Schema::create($this->imagesTable, function ($table) {
+            $table->increments('id');
+            $table->string('images_url', 500)->nullable();
+            $table->string('file_name', 500)->nullable();
+            $table->string('job_order_id', 500)->nullable()->index();
+        });
+    }
+
     protected function fetchJobsFromApi(): array
     {
         try {
-            $response = Http::timeout(60)
-                ->withHeaders([
-                    'Accept' => '*/*',
-                    'Supplier-Secret' => $this->supplierSecret,
-                    'Ocp-Apim-Subscription-Key' => $this->subscriptionKey,
-                ])
-                ->get($this->apiUrl);
+            $response = $this->fetchFromFocalApi($this->apiUrl);
 
             if (!$response->successful()) {
                 Log::error('FocalCRM API request failed', [
@@ -163,6 +181,21 @@ class FocalCrmPrestigeService
         if (!empty($records)) {
             [$inserted, $updated, $rowSkipped] = $this->batchInsertOrUpdate($records);
             $skipped += $rowSkipped;
+        }
+
+        foreach ($jobs as $job) {
+            try {
+                if (empty($job['Id'])) {
+                    continue;
+                }
+
+                $this->storeJobAssets($job);
+            } catch (Exception $e) {
+                Log::error('Error storing prestige job assets', [
+                    'job_id' => $job['Id'] ?? 'unknown',
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         return [
@@ -366,5 +399,265 @@ class FocalCrmPrestigeService
         }
 
         return $record;
+    }
+
+    /**
+     * Store Prestige image links without deleting existing rows.
+     */
+    protected function storeJobAssets(array $job): void
+    {
+        $jobOrderId = (string) ($job['Id'] ?? '');
+
+        if ($jobOrderId === '') {
+            return;
+        }
+
+        $this->ensureImagesTableExists();
+        $images = $this->extractImagesFromJob($job);
+
+        if (empty($images)) {
+            $assetDetail = $this->fetchAssetDetail($jobOrderId);
+            $images = $this->extractImagesFromAssetDetail($assetDetail);
+        }
+
+        if (empty($images)) {
+            Log::info('No prestige image URLs found for job', [
+                'job_order_id' => $jobOrderId,
+            ]);
+            return;
+        }
+
+        $images = $this->dedupeImages($images);
+        $existingUrls = DB::table($this->imagesTable)
+            ->where('job_order_id', $jobOrderId)
+            ->whereNotNull('images_url')
+            ->pluck('images_url')
+            ->map(fn ($url) => trim((string) $url))
+            ->filter()
+            ->flip()
+            ->all();
+
+        foreach ($images as $image) {
+            $url = trim((string) ($image['url'] ?? ''));
+
+            if ($url === '' || isset($existingUrls[$url])) {
+                continue;
+            }
+
+            try {
+                DB::table($this->imagesTable)->insert([
+                    'images_url' => $url,
+                    'file_name' => $image['file_name'] ?? null,
+                    'job_order_id' => $jobOrderId,
+                ]);
+                $existingUrls[$url] = true;
+            } catch (Exception $e) {
+                Log::error('Failed to save prestige job image', [
+                    'job_order_id' => $jobOrderId,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    protected function fetchAssetDetail(string $jobOrderId): array
+    {
+        $endpoints = [
+            rtrim($this->apiUrl, '/') . '/' . $jobOrderId . '/assetdetail',
+            str_replace('/v3/', '/v2/', rtrim($this->apiUrl, '/')) . '/' . $jobOrderId . '/assetdetail',
+        ];
+
+        foreach ($endpoints as $url) {
+            try {
+                $response = $this->fetchFromFocalApi($url);
+
+                if ($response->successful()) {
+                    return $response->json() ?? [];
+                }
+
+                Log::debug('FocalCRM Prestige asset detail endpoint unavailable', [
+                    'job_order_id' => $jobOrderId,
+                    'status' => $response->status(),
+                    'url' => $url,
+                ]);
+            } catch (Exception $e) {
+                Log::warning('FocalCRM Prestige asset detail fetch failed', [
+                    'job_order_id' => $jobOrderId,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return [];
+    }
+
+    protected function extractImagesFromJob(array $job): array
+    {
+        $images = [];
+
+        foreach (['Images', 'Photos', 'RawPhotoAssets', 'Assets'] as $key) {
+            if (empty($job[$key]) || !is_array($job[$key])) {
+                continue;
+            }
+
+            foreach ($job[$key] as $asset) {
+                if (!is_array($asset)) {
+                    continue;
+                }
+
+                $url = $asset['Url'] ?? $asset['url'] ?? $asset['URL'] ?? null;
+                $name = $asset['FileName'] ?? $asset['file_name'] ?? ($url ? basename($url) : null);
+
+                if ($url) {
+                    $images[] = [
+                        'url' => $url,
+                        'file_name' => $name,
+                    ];
+                }
+            }
+        }
+
+        if (!empty($job['AdditionalLinks']) && is_array($job['AdditionalLinks'])) {
+            foreach ($job['AdditionalLinks'] as $asset) {
+                if (!is_array($asset)) {
+                    continue;
+                }
+
+                $url = $asset['Href'] ?? $asset['href'] ?? $asset['Url'] ?? $asset['url'] ?? null;
+                $name = $asset['Description'] ?? $asset['description'] ?? ($url ? basename($url) : null);
+
+                if ($url) {
+                    $images[] = [
+                        'url' => $url,
+                        'file_name' => $name,
+                    ];
+                }
+            }
+        }
+
+        if (!empty($job['DownloadUrls']) && is_array($job['DownloadUrls'])) {
+            foreach ($job['DownloadUrls'] as $url) {
+                if (is_string($url) && $url !== '') {
+                    $images[] = [
+                        'url' => $url,
+                        'file_name' => basename($url),
+                    ];
+                }
+            }
+        }
+
+        if (!empty($job['DownloadUrl']) && is_string($job['DownloadUrl'])) {
+            $images[] = [
+                'url' => $job['DownloadUrl'],
+                'file_name' => basename($job['DownloadUrl']),
+            ];
+        }
+
+        if (empty($images)) {
+            return $this->extractImagesRecursively($job);
+        }
+
+        return $images;
+    }
+
+    protected function extractImagesFromAssetDetail(array $assetDetail): array
+    {
+        if (empty($assetDetail)) {
+            return [];
+        }
+
+        return $this->extractImagesFromJob($assetDetail);
+    }
+
+    protected function dedupeImages(array $images): array
+    {
+        $unique = [];
+        $seen = [];
+
+        foreach ($images as $image) {
+            $url = trim((string) ($image['url'] ?? ''));
+
+            if ($url === '' || isset($seen[$url])) {
+                continue;
+            }
+
+            $seen[$url] = true;
+            $unique[] = [
+                'url' => $url,
+                'file_name' => $image['file_name'] ?? basename(parse_url($url, PHP_URL_PATH) ?: $url),
+            ];
+        }
+
+        return $unique;
+    }
+
+    protected function extractImagesRecursively($data): array
+    {
+        $images = [];
+
+        if (!is_array($data)) {
+            return $images;
+        }
+
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $images = array_merge($images, $this->extractImagesRecursively($value));
+                continue;
+            }
+
+            if (!is_string($value)) {
+                continue;
+            }
+
+            $keyLower = strtolower((string) $key);
+            $isUrlKey = in_array($keyLower, ['url', 'href', 'downloadurl', 'download_url', 'imageurl', 'image_url'], true);
+            $isHttpValue = str_starts_with(strtolower($value), 'http://') || str_starts_with(strtolower($value), 'https://');
+
+            if ($isUrlKey && $isHttpValue) {
+                $images[] = [
+                    'url' => $value,
+                    'file_name' => basename(parse_url($value, PHP_URL_PATH) ?: $value),
+                ];
+            }
+        }
+
+        return $images;
+    }
+
+    /**
+     * Check latest existing Prestige orders and fetch images only when no image rows exist.
+     */
+    protected function backfillMissingImagesForRecentOrders(int $limit = 20): int
+    {
+        $this->ensureImagesTableExists();
+
+        $orders = DB::table($this->tableName . ' as o')
+            ->leftJoin($this->imagesTable . ' as i', 'i.job_order_id', '=', 'o.client_portal_id')
+            ->whereNotNull('o.client_portal_id')
+            ->whereNull('i.id')
+            ->orderByDesc('o.id')
+            ->limit($limit)
+            ->get(['o.client_portal_id']);
+
+        foreach ($orders as $order) {
+            $jobOrderId = (string) ($order->client_portal_id ?? '');
+
+            if ($jobOrderId === '') {
+                continue;
+            }
+
+            $this->storeJobAssets([
+                'Id' => $jobOrderId,
+            ]);
+        }
+
+        Log::info('FocalCRM Prestige image backfill completed', [
+            'checked' => $orders->count(),
+            'limit' => $limit,
+        ]);
+
+        return $orders->count();
     }
 }
