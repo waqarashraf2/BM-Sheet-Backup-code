@@ -236,7 +236,12 @@ export const workflowService = {
   getClientPortalUploadStatus: (orderId: number) =>
     api.get<ClientPortalUploadStatus>(`/client-portal/orders/${orderId}/status`),
 
-  uploadToClientPortal: (orderId: number, files: File[], jobOrderId?: string) => {
+  uploadToClientPortal: (
+    orderId: number,
+    files: File[],
+    jobOrderId?: string,
+    onUploadProgress?: (progress: number) => void,
+  ) => {
     const payload = () => {
       const formData = new FormData();
       files.forEach(file => formData.append('files[]', file, file.name));
@@ -247,7 +252,13 @@ export const workflowService = {
     return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
       `/client-portal/orders/${orderId}/asset-upload`,
       payload(),
-      { headers: { 'Content-Type': 'multipart/form-data' } },
+      {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (event) => {
+          if (!event.total) return;
+          onUploadProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+        },
+      },
     );
   },
 

@@ -293,11 +293,16 @@ class FocalClientPortalUploadService
 
     private function responseMessage(Response $response, string $fallback): string
     {
-        return (string) (
-            data_get($response->json(), 'Error')
-            ?? data_get($response->json(), 'Errors.0.Error')
-            ?? data_get($response->json(), 'Message')
-            ?? "{$fallback} (HTTP {$response->status()})"
-        );
+        $payload = $response->json();
+        $error = data_get($payload, 'Error');
+        $message = data_get($payload, 'Messages.0.Message')
+            ?? data_get($payload, 'Errors.0.Error')
+            ?? data_get($payload, 'Message');
+
+        if ($error && $message) {
+            return trim((string) $error . ' ' . (string) $message);
+        }
+
+        return (string) ($message ?? $error ?? "{$fallback} (HTTP {$response->status()})");
     }
 }

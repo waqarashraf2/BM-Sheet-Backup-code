@@ -542,4 +542,3 @@ Route::prefix('sync')->group(function () {
     Route::post('/batch', [SyncController::class, 'syncBatch']);
     Route::get('/status', [SyncController::class, 'status']);
 });
-

@@ -21,6 +21,7 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
   const [busy, setBusy] = useState<'status' | 'upload' | 'submit' | null>('status');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const orderId = String(status?.job_order_id || order.client_reference || order.client_portal_id || order.order_number || '').trim();
   const invalidNames = useMemo(
@@ -63,8 +64,9 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
     setBusy('upload');
     setError('');
     setMessage('');
+    setUploadProgress(0);
     try {
-      const response = await workflowService.uploadToClientPortal(order.id, files);
+      const response = await workflowService.uploadToClientPortal(order.id, files, undefined, setUploadProgress);
       setStatus(response.data.status);
       onStatusChange(response.data.status);
       setMessage(response.data.message);
@@ -78,6 +80,7 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
       );
     } finally {
       setBusy(null);
+      setUploadProgress(0);
     }
   };
 
@@ -124,6 +127,24 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
             <p className="text-xs font-medium text-rose-700">
               Filename must include {orderId}. Invalid: {invalidNames.map(file => file.name).join(', ')}
             </p>
+          )}
+
+          {busy === 'upload' && (
+            <div>
+              <div className="flex items-center justify-between text-xs font-medium text-slate-600">
+                <span>{uploadProgress < 100 ? 'Uploading to server' : 'Uploading to client portal'}</span>
+                <span>{uploadProgress}%</span>
+              </div>
+              <div className="mt-1 h-2 overflow-hidden rounded-full bg-blue-100">
+                <div
+                  className="h-full rounded-full bg-blue-500 transition-all"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+              {uploadProgress >= 100 && (
+                <p className="mt-1 text-xs text-slate-600">Waiting for client portal response...</p>
+              )}
+            </div>
           )}
 
           <div className="flex flex-wrap gap-2">

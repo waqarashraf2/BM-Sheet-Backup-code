@@ -60,6 +60,7 @@ export default function ClientUpload() {
     const [busy, setBusy] = useState<'status' | 'upload' | 'submit' | null>('status');
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
+    const [uploadProgress, setUploadProgress] = useState(0);
 
     const numericOrderId = Number(orderId);
     const orderIdValid = Number.isFinite(numericOrderId) && numericOrderId > 0;
@@ -143,9 +144,10 @@ export default function ClientUpload() {
         setBusy('upload');
         setMessage('');
         setError('');
+        setUploadProgress(0);
 
         try {
-            const response = await workflowService.uploadToClientPortal(numericOrderId, files, orderLookup);
+            const response = await workflowService.uploadToClientPortal(numericOrderId, files, orderLookup, setUploadProgress);
             setStatus(response.data.status);
             setMessage(response.data.message || 'Files uploaded successfully.');
         } catch (e: any) {
@@ -158,6 +160,7 @@ export default function ClientUpload() {
             );
         } finally {
             setBusy(null);
+            setUploadProgress(0);
         }
     };
 
@@ -293,6 +296,24 @@ export default function ClientUpload() {
                                 <div className="font-semibold text-rose-800 mb-2">Invalid file names</div>
                                 <div>Files must include the expected order reference before extension.</div>
                                 <div className="mt-2 text-rose-700">{invalidFiles.map((file) => file.name).join(', ')}</div>
+                            </div>
+                        )}
+
+                        {busy === 'upload' && (
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex items-center justify-between text-xs font-medium text-slate-600">
+                                    <span>{uploadProgress < 100 ? 'Uploading to server' : 'Uploading to client portal'}</span>
+                                    <span>{uploadProgress}%</span>
+                                </div>
+                                <div className="mt-2 h-2 rounded-full bg-slate-200 overflow-hidden">
+                                    <div
+                                        className="h-full rounded-full bg-teal-500 transition-all"
+                                        style={{ width: `${uploadProgress}%` }}
+                                    />
+                                </div>
+                                {uploadProgress >= 100 && (
+                                    <p className="mt-2 text-xs text-slate-500">Waiting for client portal response...</p>
+                                )}
                             </div>
                         )}
 
