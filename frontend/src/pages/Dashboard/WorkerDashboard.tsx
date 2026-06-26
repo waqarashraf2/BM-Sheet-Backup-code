@@ -31,7 +31,7 @@ interface PerformanceStats {
 const CLIENT_NAME_PROJECT_IDS = [7, 8, 9, 10, 11, 12, 14, 46, 42,];
 const IMAGE_LINK_PROJECT_IDS = [1, 22, 25, 26];
 const DESIGNER_PH_IMAGE_LINK_PROJECT_IDS = [22, 23, 25, 26];
-const DESIGNER_ORDER_NUMBER_IMAGE_PROJECT_IDS = [22, 23, 25];
+const ORDER_NUMBER_IMAGE_LINK_PROJECT_IDS = [22, 23, 25];
 const CLIENT_PORTAL_UPLOAD_PROJECT_IDS = [22, 23];
 
 const ROLE_CONFIG: Record<string, { label: string; icon: any; description: string }> = {
@@ -313,7 +313,7 @@ export default function WorkerDashboard() {
   const shouldShowOrderAssetsButton = useCallback((order: Order): boolean => {
     if (!order) return false;
 
-    if (isDesigner && DESIGNER_ORDER_NUMBER_IMAGE_PROJECT_IDS.includes(Number(order.project_id))) {
+    if (isDesigner && ORDER_NUMBER_IMAGE_LINK_PROJECT_IDS.includes(Number(order.project_id))) {
       return true;
     }
 
@@ -367,7 +367,7 @@ export default function WorkerDashboard() {
   }, [getDisplayOrderNumber, navigate]);
 
   const getOrderAssetsLookupValue = useCallback((order: Order): string => {
-    if (isDesigner && DESIGNER_ORDER_NUMBER_IMAGE_PROJECT_IDS.includes(Number(order.project_id))) {
+    if ((isDesigner || isQA) && ORDER_NUMBER_IMAGE_LINK_PROJECT_IDS.includes(Number(order.project_id))) {
       return String(order.order_number || '').trim();
     }
 
@@ -377,7 +377,7 @@ export default function WorkerDashboard() {
     }
 
     return String(order.order_number || '').trim();
-  }, [getPhotoEnhancementClientOrderNumber, isDesigner, isPhotoEnhancementOrder]);
+  }, [getPhotoEnhancementClientOrderNumber, isDesigner, isPhotoEnhancementOrder, isQA]);
 
   const getOrderClientReference = useCallback((order: Order): string => {
     const metadata = (order.metadata || {}) as Record<string, string>;
@@ -393,6 +393,18 @@ export default function WorkerDashboard() {
 
     return clientReference || '';
   }, []);
+
+  const shouldShowOrderReference = useCallback((order: Order): boolean => {
+    const projectId = Number(order.project_id);
+
+    return (isDesigner || isQA)
+      && (IMAGE_LINK_PROJECT_IDS.includes(projectId) || ORDER_NUMBER_IMAGE_LINK_PROJECT_IDS.includes(projectId))
+      && getOrderClientReference(order) !== '';
+  }, [getOrderClientReference, isDesigner, isQA]);
+
+  const shouldShowQueueReferenceColumn = roleQueue.some((order) => (
+    shouldShowOrderReference(order)
+  ));
 
   const openOrderAssetsPage = useCallback((order: Order) => {
     const jobOrderId = getOrderAssetsLookupValue(order);
@@ -1276,7 +1288,7 @@ export default function WorkerDashboard() {
                             <StatusBadge status={currentOrder.priority} />
                           </div>
                         )}
-                        {IMAGE_LINK_PROJECT_IDS.includes(currentOrder.project_id) && getOrderClientReference(currentOrder) && (
+                        {shouldShowOrderReference(currentOrder) && (
                           <div>
                             <div className="text-xs text-slate-400 mb-1">Order Reference</div>
                             <div className="text-sm font-semibold text-slate-900">{getOrderClientReference(currentOrder)}</div>
@@ -1420,6 +1432,9 @@ export default function WorkerDashboard() {
                           {queueHasPlanTypeColumn && (
                             <th className="px-4 py-3 text-left font-semibold text-slate-600 text-xs uppercase tracking-wider">{getProjectFieldLabel('plan_type', 'Plan Type')}</th>
                           )}
+                          {shouldShowQueueReferenceColumn && (
+                            <th className="px-4 py-3 text-left font-semibold text-slate-600 text-xs uppercase tracking-wider">Order Reference</th>
+                          )}
                           {isProjectFieldVisible('priority') && (
                             <th className="px-4 py-3 text-left font-semibold text-slate-600 text-xs uppercase tracking-wider">{getProjectFieldLabel('priority', 'Priority')}</th>
                           )}
@@ -1469,6 +1484,11 @@ export default function WorkerDashboard() {
                               )}
                               {queueHasPlanTypeColumn && (
                                 <td className="px-4 py-3 text-slate-600">{getDisplayPlanType(order)}</td>
+                              )}
+                              {shouldShowQueueReferenceColumn && (
+                                <td className="px-4 py-3 text-slate-600 max-w-[180px] truncate" title={getOrderClientReference(order)}>
+                                  {getOrderClientReference(order) || '-'}
+                                </td>
                               )}
                               {isProjectFieldVisible('priority') && (
                                 <td className="px-4 py-3"><StatusBadge status={order.priority} /></td>
@@ -1637,7 +1657,7 @@ export default function WorkerDashboard() {
                         <div className="text-sm font-semibold text-slate-900">{(currentOrder as any).client_name || 'N/A'}</div>
                       </div>
                     )}
-                    {IMAGE_LINK_PROJECT_IDS.includes(currentOrder.project_id) && getOrderClientReference(currentOrder) && (
+                    {shouldShowOrderReference(currentOrder) && (
                       <div>
                         <div className="text-xs text-slate-400 mb-1">Order Reference</div>
                         <div className="text-sm font-semibold text-slate-900">{getOrderClientReference(currentOrder)}</div>

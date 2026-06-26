@@ -34,6 +34,15 @@ type OrderAssetLinksResponse = {
     links: OrderAssetLink[];
 };
 
+type ZipDownloadState = {
+    active: boolean;
+    completed: number;
+    total: number;
+    percent: number;
+    message: string;
+    fallbackAvailable: boolean;
+};
+
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.svg'];
 const ORDER_INFO_FIELD_ALIASES: Record<string, string[]> = {
     order_number: ['order_number'],
@@ -49,23 +58,95 @@ function isImageLike(name: string, url: string): boolean {
     return IMAGE_EXTENSIONS.some((ext) => lowerName.endsWith(ext) || lowerUrl.includes(ext));
 }
 
-function isAutoPreviewFloorplan(url: string): boolean {
-    try {
-        const parsed = new URL(url);
-        const pathParts = parsed.pathname.toLowerCase().split('/');
-        const fileName = pathParts[pathParts.length - 1] || '';
-
-        return pathParts.includes('floorplansraw') && fileName.startsWith('image_picker_');
-    } catch {
-        const lowerUrl = url.toLowerCase();
-        const fileName = lowerUrl.split('/').pop() || '';
-
-        return lowerUrl.includes('/floorplansraw/') && fileName.startsWith('image_picker_');
-    }
-}
-
 function getLinkKey(link: OrderAssetLink): string {
     return `${link.source_table}-${link.id}`;
+}
+
+function zipSafeFileName(name: string, fallback: string): string {
+    const cleaned = (name || fallback).trim().replace(/[\\/:*?"<>|]/g, '_');
+    return cleaned || fallback;
+}
+
+function uniqueZipFileName(name: string, usedNames: Set<string>): string {
+    if (!usedNames.has(name)) {
+        usedNames.add(name);
+        return name;
+    }
+
+    const dotIndex = name.lastIndexOf('.');
+    const base = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+    const ext = dotIndex > 0 ? name.slice(dotIndex) : '';
+    let counter = 2;
+    let candidate = `${base} (${counter})${ext}`;
+
+    while (usedNames.has(candidate)) {
+        counter += 1;
+        candidate = `${base} (${counter})${ext}`;
+    }
+
+    usedNames.add(candidate);
+    return candidate;
+}
+
+async function fetchImageBytes(url: string, onProgress?: (receivedBytes: number, totalBytes: number | null) => void): Promise<Uint8Array> {
+    const response = await fetch(url, {
+        mode: 'cors',
+        cache: 'no-store',
+        credentials: 'omit',
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+
+    const totalHeader = response.headers.get('content-length');
+    const totalBytes = totalHeader ? Number(totalHeader) : null;
+
+    if (!response.body) {
+        const buffer = await response.arrayBuffer();
+        onProgress?.(buffer.byteLength, Number.isFinite(totalBytes || NaN) ? totalBytes : null);
+        return new Uint8Array(buffer);
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let receivedBytes = 0;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+
+        chunks.push(value);
+        receivedBytes += value.byteLength;
+        onProgress?.(receivedBytes, Number.isFinite(totalBytes || NaN) ? totalBytes : null);
+    }
+
+    const merged = new Uint8Array(receivedBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+
+    return merged;
+}
+
+async function fetchImageBytesWithRetry(url: string, onProgress?: (receivedBytes: number, totalBytes: number | null) => void): Promise<Uint8Array> {
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+            return await fetchImageBytes(url, onProgress);
+        } catch (error) {
+            lastError = error;
+            if (attempt < 2) {
+                await new Promise((resolve) => window.setTimeout(resolve, 500));
+            }
+        }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error('Download failed');
 }
 
 export default function OrderAssetLinks() {
@@ -86,6 +167,16 @@ export default function OrderAssetLinks() {
     const [data, setData] = useState<OrderAssetLinksResponse | null>(null);
     const [brokenImageIds, setBrokenImageIds] = useState<Record<number, boolean>>({});
     const [previewedImageKeys, setPreviewedImageKeys] = useState<Record<string, boolean>>({});
+    const [showAllPreviews, setShowAllPreviews] = useState(false);
+    const [downloadingAll, setDownloadingAll] = useState(false);
+    const [zipDownload, setZipDownload] = useState<ZipDownloadState>({
+        active: false,
+        completed: 0,
+        total: 0,
+        percent: 0,
+        message: '',
+        fallbackAvailable: false,
+    });
     const [projectColumns, setProjectColumns] = useState<Array<{ field: string; visible: boolean; label?: string; name?: string }>>([]);
 
     const loadLinks = async () => {
@@ -107,12 +198,14 @@ export default function OrderAssetLinks() {
             setData(primary.data);
             setBrokenImageIds({});
             setPreviewedImageKeys({});
+            setShowAllPreviews(false);
         } catch (primaryError) {
             try {
                 const fallback = await workflowService.orderImageLinks(jobOrderId, requestedProjectId);
                 setData(fallback.data);
                 setBrokenImageIds({});
                 setPreviewedImageKeys({});
+                setShowAllPreviews(false);
             } catch {
                 console.error('Failed to fetch order asset links:', primaryError);
                 setData(null);
@@ -168,11 +261,6 @@ export default function OrderAssetLinks() {
         return sortedLinks.filter((link) => isImageLike(link.name, link.url));
     }, [sortedLinks]);
 
-    const autoPreviewImageKey = useMemo(() => {
-        const floorplanLink = imageLinks.find((link) => isAutoPreviewFloorplan(link.url));
-        return floorplanLink ? getLinkKey(floorplanLink) : null;
-    }, [imageLinks]);
-
     const visibleFieldSet = useMemo(() => {
         const set = new Set<string>();
         projectColumns.filter((col) => col.visible).forEach((col) => set.add(String(col.field || '').toLowerCase()));
@@ -208,6 +296,210 @@ export default function OrderAssetLinks() {
         }
     };
 
+    const directDownloadImageLinks = async () => {
+        if (!imageLinks.length) return;
+
+        setZipDownload({
+            active: true,
+            completed: 0,
+            total: imageLinks.length,
+            percent: 0,
+            message: 'Starting direct browser downloads one by one...',
+            fallbackAvailable: false,
+        });
+
+        for (let index = 0; index < imageLinks.length; index += 1) {
+            const link = imageLinks[index];
+            const anchor = document.createElement('a');
+            anchor.href = link.url;
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+            anchor.download = zipSafeFileName(link.name, `image-${index + 1}`);
+            anchor.style.display = 'none';
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+
+            const completed = index + 1;
+            setZipDownload({
+                active: true,
+                completed,
+                total: imageLinks.length,
+                percent: Math.round((completed / imageLinks.length) * 100),
+                message: `Started ${completed} of ${imageLinks.length} direct downloads`,
+                fallbackAvailable: false,
+            });
+
+            await new Promise((resolve) => window.setTimeout(resolve, 350));
+        }
+
+        window.setTimeout(() => {
+            setZipDownload((current) => current.percent === 100
+                ? { active: false, completed: 0, total: 0, percent: 0, message: '', fallbackAvailable: false }
+                : current
+            );
+        }, 2500);
+    };
+
+    const downloadAllImages = async () => {
+        if (!imageLinks.length || downloadingAll) return;
+
+        setDownloadingAll(true);
+        setZipDownload({
+            active: true,
+            completed: 0,
+            total: imageLinks.length,
+            percent: 0,
+            message: 'Preparing image download...',
+            fallbackAvailable: false,
+        });
+
+        try {
+            const { zipSync } = await import('fflate');
+            const zipFiles: Record<string, Uint8Array> = {};
+            const usedNames = new Set<string>();
+            const failedLinks: Array<{ name: string; url: string; error: string }> = [];
+            let completed = 0;
+
+            for (let index = 0; index < imageLinks.length; index += 1) {
+                const link = imageLinks[index];
+                const displayName = link.name || `image-${index + 1}`;
+                const basePercent = (completed / imageLinks.length) * 90;
+                const perImagePercent = 90 / imageLinks.length;
+
+                setZipDownload({
+                    active: true,
+                    completed,
+                    total: imageLinks.length,
+                    percent: Math.round(basePercent),
+                    message: `Downloading ${index + 1} of ${imageLinks.length}: ${displayName}`,
+                    fallbackAvailable: false,
+                });
+
+                try {
+                    const bytes = await fetchImageBytesWithRetry(link.url, (receivedBytes, totalBytes) => {
+                        const imageProgress = totalBytes && totalBytes > 0
+                            ? Math.min(1, receivedBytes / totalBytes)
+                            : 0;
+                        const percent = Math.round(basePercent + (imageProgress * perImagePercent));
+                        const sizeLabel = totalBytes && totalBytes > 0
+                            ? `${Math.round(receivedBytes / 1024 / 1024)} MB / ${Math.round(totalBytes / 1024 / 1024)} MB`
+                            : `${Math.round(receivedBytes / 1024 / 1024)} MB`;
+
+                        setZipDownload({
+                            active: true,
+                            completed,
+                            total: imageLinks.length,
+                            percent,
+                            message: `Downloading ${index + 1} of ${imageLinks.length}: ${displayName} (${sizeLabel})`,
+                            fallbackAvailable: false,
+                        });
+                    });
+                    const safeName = zipSafeFileName(displayName, `image-${index + 1}`);
+                    const fileName = uniqueZipFileName(safeName, usedNames);
+                    zipFiles[fileName] = bytes;
+                } catch (error) {
+                    failedLinks.push({
+                        name: displayName,
+                        url: link.url,
+                        error: error instanceof Error ? error.message : 'Download failed',
+                    });
+                }
+
+                completed += 1;
+                const percent = Math.round((completed / imageLinks.length) * 90);
+                setZipDownload({
+                    active: true,
+                    completed,
+                    total: imageLinks.length,
+                    percent,
+                    message: `Processed ${completed} of ${imageLinks.length} images`,
+                    fallbackAvailable: false,
+                });
+
+                await new Promise((resolve) => window.setTimeout(resolve, 50));
+            }
+
+            if (failedLinks.length > 0) {
+                const failedManifest = [
+                    'Some image links could not be added to this ZIP by the browser.',
+                    'These links may block browser fetch/CORS or may have expired.',
+                    '',
+                    ...failedLinks.map((link, index) => `${index + 1}. ${link.name}\n${link.url}\n${link.error}`),
+                ].join('\n\n');
+                zipFiles['failed-downloads.txt'] = new TextEncoder().encode(failedManifest);
+            }
+
+            const downloadedCount = Object.keys(zipFiles).filter((name) => name !== 'failed-downloads.txt').length;
+
+            if (downloadedCount === 0) {
+                setZipDownload({
+                    active: true,
+                    completed,
+                    total: imageLinks.length,
+                    percent: 0,
+                    message: 'Browser cannot read these links for ZIP because the image host blocks fetch/CORS. Use direct downloads.',
+                    fallbackAvailable: true,
+                });
+                return;
+            }
+
+            setZipDownload({
+                active: true,
+                completed,
+                total: imageLinks.length,
+                percent: 94,
+                message: failedLinks.length > 0
+                    ? `Creating ZIP with ${downloadedCount} images; ${failedLinks.length} links failed`
+                    : 'Creating ZIP file...',
+                fallbackAvailable: failedLinks.length > 0,
+            });
+
+            const zipped = zipSync(zipFiles, { level: 0 });
+            const zipBuffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer;
+            const blobUrl = window.URL.createObjectURL(new Blob([zipBuffer], { type: 'application/zip' }));
+            const anchor = document.createElement('a');
+            const zipBaseName = zipSafeFileName(orderNumberFromQuery || displayOrder || jobOrderId || 'order-images', 'order-images');
+            anchor.href = blobUrl;
+            anchor.download = `${zipBaseName}-images.zip`;
+            anchor.style.display = 'none';
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            window.URL.revokeObjectURL(blobUrl);
+
+            setZipDownload({
+                active: true,
+                completed,
+                total: imageLinks.length,
+                percent: 100,
+                message: failedLinks.length > 0
+                    ? `ZIP ready with ${downloadedCount} images; ${failedLinks.length} failed links noted`
+                    : `ZIP ready with ${imageLinks.length} images`,
+                fallbackAvailable: failedLinks.length > 0,
+            });
+
+            window.setTimeout(() => {
+                setZipDownload((current) => current.percent === 100
+                    ? { active: false, completed: 0, total: 0, percent: 0, message: '', fallbackAvailable: false }
+                    : current
+                );
+            }, 2500);
+        } catch (zipError) {
+            console.error('ZIP download failed:', zipError);
+            setZipDownload({
+                active: true,
+                completed: 0,
+                total: imageLinks.length,
+                percent: 0,
+                message: zipError instanceof Error ? zipError.message : 'ZIP download failed.',
+                fallbackAvailable: true,
+            });
+        } finally {
+            setDownloadingAll(false);
+        }
+    };
+
     const matchedProjectIds = Array.isArray(data?.matched_project_ids)
         ? data?.matched_project_ids
         : [];
@@ -220,6 +512,27 @@ export default function OrderAssetLinks() {
                 subtitle="Preview and download project images fetched from linked asset tables"
                 actions={
                     <div className="flex items-center gap-2">
+                        {imageLinks.length > 0 && (
+                            <>
+                                <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    icon={<ImageIcon className="w-4 h-4" />}
+                                    onClick={() => setShowAllPreviews((value) => !value)}
+                                >
+                                    {showAllPreviews ? 'Hide Images' : 'Show Images'}
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    icon={<Download className="w-4 h-4" />}
+                                    onClick={() => void downloadAllImages()}
+                                    loading={downloadingAll}
+                                >
+                                    Download All
+                                </Button>
+                            </>
+                        )}
                         <Button variant="secondary" size="sm" icon={<ArrowLeft className="w-4 h-4" />} onClick={() => navigate(-1)}>
                             Back
                         </Button>
@@ -291,6 +604,44 @@ export default function OrderAssetLinks() {
                 </div>
             )}
 
+            {zipDownload.active && (
+                <div className="bg-white rounded-xl ring-1 ring-black/[0.05] p-4 mb-5">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                        <div>
+                            <div className="text-sm font-semibold text-slate-900">Preparing ZIP Download</div>
+                            <div className="text-xs text-slate-500 mt-0.5">{zipDownload.message}</div>
+                        </div>
+                        <div className="text-sm font-semibold text-slate-700">{zipDownload.percent}%</div>
+                    </div>
+                    <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                            className={`h-full rounded-full transition-all duration-300 ${zipDownload.percent === 0 && !downloadingAll ? 'bg-rose-500' : 'bg-brand-500'}`}
+                            style={{ width: `${Math.max(3, zipDownload.percent)}%` }}
+                        />
+                    </div>
+                    {zipDownload.total > 0 && (
+                        <div className="text-xs text-slate-500 mt-2">
+                            {zipDownload.completed} / {zipDownload.total} images processed
+                        </div>
+                    )}
+                    {zipDownload.fallbackAvailable && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => void directDownloadImageLinks()}
+                                className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
+                            >
+                                <Download className="w-3.5 h-3.5" />
+                                Download Links One by One
+                            </button>
+                            <span className="text-xs text-slate-500">
+                                ZIP needs browser-readable image bytes. Direct downloads use the original links.
+                            </span>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {portalStatus?.required && (
                 <div className={`rounded-xl border p-4 mb-5 ${
                     portalStatus.uploaded
@@ -339,7 +690,7 @@ export default function OrderAssetLinks() {
                                 {imageLinks.map((link) => {
                                     const linkKey = getLinkKey(link);
                                     const broken = !!brokenImageIds[link.id];
-                                    const shouldLoadPreview = linkKey === autoPreviewImageKey || !!previewedImageKeys[linkKey];
+                                    const shouldLoadPreview = showAllPreviews || !!previewedImageKeys[linkKey];
 
                                     return (
                                         <div key={linkKey} className="bg-white rounded-xl ring-1 ring-black/[0.05] overflow-hidden">

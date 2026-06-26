@@ -15,6 +15,8 @@ type UploadOrderInfo = {
     clientReference: string;
 };
 
+const ORDER_NUMBER_ASSET_PROJECT_IDS = [22, 23, 25];
+
 function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
     const raw = (order || {}) as Order & Record<string, unknown>;
     const metadata = (raw.metadata || {}) as Record<string, unknown>;
@@ -114,6 +116,16 @@ export default function ClientUpload() {
     }, [numericOrderId, orderIdValid, queryJobOrderId]);
 
     const orderLookup = useMemo(() => String(status?.job_order_id || status?.order_number || queryJobOrderId || orderInfo?.jobOrderId || '').trim(), [orderInfo, queryJobOrderId, status]);
+    const imageLookup = useMemo(() => {
+        const projectId = Number(status?.project_id || queryProjectId || orderInfo?.projectId || 0);
+        const orderNumber = String(status?.order_number || queryOrderNumber || orderInfo?.orderNumber || '').trim();
+
+        if (ORDER_NUMBER_ASSET_PROJECT_IDS.includes(projectId) && orderNumber) {
+            return orderNumber;
+        }
+
+        return orderLookup;
+    }, [orderInfo, orderLookup, queryOrderNumber, queryProjectId, status]);
     const uploadedFileNames = useMemo(() => Array.isArray(status?.file_names) ? status.file_names : [], [status]);
     const canUpload = !!orderLookup && status?.can_upload !== false;
     const uploadStatusLabel = canUpload && (!status?.status || status.status === 'not_required')
@@ -186,8 +198,8 @@ export default function ClientUpload() {
     };
 
     const openImageLinks = () => {
-        if (!orderLookup) return;
-        navigate(`/order-assets/${encodeURIComponent(orderLookup)}${imageLinkParams ? `?${imageLinkParams}` : ''}`);
+        if (!imageLookup) return;
+        navigate(`/order-assets/${encodeURIComponent(imageLookup)}${imageLinkParams ? `?${imageLinkParams}` : ''}`);
     };
 
     return (
