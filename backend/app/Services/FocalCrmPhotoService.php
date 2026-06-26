@@ -421,7 +421,7 @@ class FocalCrmPhotoService
      */
     protected function generateOrderNumber(string $clientPortalId): string
     {
-        return 'PHOTO-' . $clientPortalId;
+        return $clientPortalId;
     }
 
     /**

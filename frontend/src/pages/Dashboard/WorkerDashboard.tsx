@@ -31,6 +31,7 @@ interface PerformanceStats {
 const CLIENT_NAME_PROJECT_IDS = [7, 8, 9, 10, 11, 12, 14, 46, 42,];
 const IMAGE_LINK_PROJECT_IDS = [1, 22, 25, 26];
 const DESIGNER_PH_IMAGE_LINK_PROJECT_IDS = [22, 23, 25, 26];
+const DESIGNER_ORDER_NUMBER_IMAGE_PROJECT_IDS = [22, 23, 25];
 const CLIENT_PORTAL_UPLOAD_PROJECT_IDS = [22, 23];
 
 const ROLE_CONFIG: Record<string, { label: string; icon: any; description: string }> = {
@@ -312,6 +313,10 @@ export default function WorkerDashboard() {
   const shouldShowOrderAssetsButton = useCallback((order: Order): boolean => {
     if (!order) return false;
 
+    if (isDesigner && DESIGNER_ORDER_NUMBER_IMAGE_PROJECT_IDS.includes(Number(order.project_id))) {
+      return true;
+    }
+
     const workflowType = String(order.workflow_type || '').toUpperCase();
 
     if (workflowType === 'PH_2_LAYER') {
@@ -362,13 +367,17 @@ export default function WorkerDashboard() {
   }, [getDisplayOrderNumber, navigate]);
 
   const getOrderAssetsLookupValue = useCallback((order: Order): string => {
+    if (isDesigner && DESIGNER_ORDER_NUMBER_IMAGE_PROJECT_IDS.includes(Number(order.project_id))) {
+      return String(order.order_number || '').trim();
+    }
+
     if (isPhotoEnhancementOrder(order)) {
       const clientOrderNumber = getPhotoEnhancementClientOrderNumber(order);
       if (clientOrderNumber) return clientOrderNumber;
     }
 
     return String(order.order_number || '').trim();
-  }, [getPhotoEnhancementClientOrderNumber, isPhotoEnhancementOrder]);
+  }, [getPhotoEnhancementClientOrderNumber, isDesigner, isPhotoEnhancementOrder]);
 
   const getOrderClientReference = useCallback((order: Order): string => {
     const metadata = (order.metadata || {}) as Record<string, string>;

@@ -256,7 +256,7 @@ export default function ClientUpload() {
                                 <div className="font-semibold text-slate-900 mb-2">Order Reference</div>
                                 <div>Internal Order ID #{status.order_id || numericOrderId}</div>
                                 <div>Upload Order Reference: {orderLookup || 'Not available'}</div>
-                                <div>Client Portal ID: {status.order_number || queryOrderNumber || 'Not available'}</div>
+                                <div>Client Portal Job ID: {status.client_portal_job_id || status.order_number || queryOrderNumber || 'Not available'}</div>
                             </div>
                         )}
                     </div>
