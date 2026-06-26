@@ -54,6 +54,14 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
     Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
     Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
 
+    // Dedicated QA client-portal upload routes. Kept outside /workflow so generic
+    // workflow order routes cannot interfere with upload method matching.
+    Route::prefix('client-portal')->group(function () {
+        Route::get('/orders/{orderId}/status', [ClientPortalUploadController::class, 'status']);
+        Route::post('/orders/{orderId}/asset-upload', [ClientPortalUploadController::class, 'upload']);
+        Route::post('/orders/{orderId}/submit', [ClientPortalUploadController::class, 'submit']);
+    });
+
     // ═══════════════════════════════════════════
     // PRODUCTION WORKER ROUTES
     // (drawer, checker, qa, designer)
@@ -76,6 +84,7 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
 
         // QA-only client portal delivery for configured projects (22/23 by default).
         Route::get('/orders/{orderId}/client-portal/status', [ClientPortalUploadController::class, 'status']);
+        Route::post('/orders/{orderId}/client-portal/asset-upload', [ClientPortalUploadController::class, 'upload']);
         Route::post('/orders/{orderId}/client-portal/upload-files', [ClientPortalUploadController::class, 'upload']);
         Route::post('/orders/{orderId}/client-portal/upload', [ClientPortalUploadController::class, 'upload']);
         Route::post('/orders/{orderId}/client-portal/submit', [ClientPortalUploadController::class, 'submit']);

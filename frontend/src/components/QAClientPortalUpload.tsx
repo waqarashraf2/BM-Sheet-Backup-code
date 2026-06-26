@@ -9,6 +9,12 @@ interface QAClientPortalUploadProps {
   onStatusChange: (status: ClientPortalUploadStatus) => void;
 }
 
+function fileNameContainsOrderReference(fileName: string, orderReference: string): boolean {
+  const baseName = fileName.replace(/\.[^.]+$/, '');
+  const escaped = orderReference.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, 'i').test(baseName);
+}
+
 export default function QAClientPortalUpload({ order, onStatusChange }: QAClientPortalUploadProps) {
   const [status, setStatus] = useState<ClientPortalUploadStatus | null>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -16,9 +22,9 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const orderId = String(order.client_portal_id || order.order_number || '').trim();
+  const orderId = String(status?.job_order_id || order.client_reference || order.client_portal_id || order.order_number || '').trim();
   const invalidNames = useMemo(
-    () => files.filter(file => file.name.replace(/\.[^.]+$/, '').toLowerCase() !== orderId.toLowerCase()),
+    () => files.filter(file => !fileNameContainsOrderReference(file.name, orderId)),
     [files, orderId],
   );
 
@@ -96,7 +102,7 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
       <div>
         <h3 className="text-sm font-semibold text-slate-900">Client Portal Upload</h3>
         <p className="mt-1 text-xs text-slate-600">
-          Original filename is preserved. The filename before extension must be exactly <b>{orderId}</b>.
+          Original filename is preserved. The filename before extension must include <b>{orderId}</b>.
         </p>
       </div>
 
@@ -109,13 +115,14 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
           <input
             type="file"
             multiple
+            accept="image/*,.zip,application/zip,application/x-zip-compressed"
             onChange={event => setFiles(Array.from(event.target.files || []))}
             className="block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-2 file:text-xs file:font-semibold file:text-blue-700"
           />
 
           {invalidNames.length > 0 && (
             <p className="text-xs font-medium text-rose-700">
-              Invalid filename: {invalidNames.map(file => file.name).join(', ')}
+              Filename must include {orderId}. Invalid: {invalidNames.map(file => file.name).join(', ')}
             </p>
           )}
 

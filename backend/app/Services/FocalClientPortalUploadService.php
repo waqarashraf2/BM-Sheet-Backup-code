@@ -111,7 +111,9 @@ class FocalClientPortalUploadService
                         ->attach('files', $stream, $file->getClientOriginalName())
                         ->post($this->uploadUrl($jobOrderId));
                 } finally {
-                    fclose($stream);
+                    if (is_resource($stream)) {
+                        fclose($stream);
+                    }
                 }
 
                 if (!$lastResponse->successful()) {
@@ -196,15 +198,23 @@ class FocalClientPortalUploadService
         }
 
         $invalid = $fileNames->filter(function (string $fileName) use ($jobOrderId) {
-            return strcasecmp(pathinfo($fileName, PATHINFO_FILENAME), $jobOrderId) !== 0;
+            return !$this->fileNameContainsOrderReference($fileName, $jobOrderId);
         })->values();
 
         if ($invalid->isNotEmpty()) {
             throw ValidationException::withMessages([
-                'files' => 'Each file name (before its extension) must exactly match order ID '
+                'files' => 'Each file name must include order reference '
                     . $jobOrderId . '. Invalid: ' . $invalid->implode(', '),
             ]);
         }
+    }
+
+    private function fileNameContainsOrderReference(string $fileName, string $jobOrderId): bool
+    {
+        $baseName = pathinfo($fileName, PATHINFO_FILENAME);
+        $pattern = '/(^|[^A-Za-z0-9])' . preg_quote($jobOrderId, '/') . '([^A-Za-z0-9]|$)/i';
+
+        return (bool) preg_match($pattern, $baseName);
     }
 
     private function jobOrderId(Order $order, ?string $requestedJobOrderId = null): string
@@ -221,7 +231,13 @@ class FocalClientPortalUploadService
 
     private function rawJobOrderId(Order $order, ?string $requestedJobOrderId = null): string
     {
-        $storedJobOrderId = trim((string) ($order->client_portal_id ?: $order->order_number));
+        // The legacy client portal accepts uploads by the customer's order
+        // reference, not our imported portal UUID/internal order number.
+        $storedJobOrderId = trim((string) (
+            $order->client_reference
+            ?: $order->client_portal_id
+            ?: $order->order_number
+        ));
         $requestedJobOrderId = trim((string) $requestedJobOrderId);
 
         if ($storedJobOrderId !== '') {

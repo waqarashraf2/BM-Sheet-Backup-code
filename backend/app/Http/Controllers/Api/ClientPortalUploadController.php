@@ -36,10 +36,12 @@ class ClientPortalUploadController extends Controller
         } catch (\Throwable $e) {
             report($e);
 
+            $statusCode = str_contains($e->getMessage(), 'Job Status - Completed') ? 422 : 502;
+
             return response()->json([
                 'message' => $e->getMessage(),
                 'status' => 'failed',
-            ], 502);
+            ], $statusCode);
         }
 
         return response()->json([

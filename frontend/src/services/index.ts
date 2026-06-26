@@ -234,7 +234,7 @@ export const workflowService = {
     }>(`/workflow/orders/${encodeURIComponent(jobOrderId)}/client-portal-submit`, orderId ? { order_id: orderId } : {}),
 
   getClientPortalUploadStatus: (orderId: number) =>
-    api.get<ClientPortalUploadStatus>(`/workflow/orders/${orderId}/client-portal/status`),
+    api.get<ClientPortalUploadStatus>(`/client-portal/orders/${orderId}/status`),
 
   uploadToClientPortal: (orderId: number, files: File[], jobOrderId?: string) => {
     const payload = () => {
@@ -244,29 +244,16 @@ export const workflowService = {
       return formData;
     };
 
-    const config = { headers: { 'Content-Type': 'multipart/form-data' } };
-    const uploadUrl = `/workflow/orders/${orderId}/client-portal/upload`;
-
     return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
-      `/workflow/orders/${orderId}/client-portal/upload-files`,
+      `/client-portal/orders/${orderId}/asset-upload`,
       payload(),
-      config,
-    ).catch((error) => {
-      if (error?.response?.status !== 405 && error?.response?.status !== 404) {
-        throw error;
-      }
-
-      return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
-        uploadUrl,
-        payload(),
-        config,
-      );
-    });
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
   },
 
   submitClientPortalOrder: (orderId: number) =>
     api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
-      `/workflow/orders/${orderId}/client-portal/submit`,
+      `/client-portal/orders/${orderId}/submit`,
     ),
 
   // Management: Receive new order

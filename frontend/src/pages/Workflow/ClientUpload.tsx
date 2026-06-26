@@ -18,8 +18,10 @@ type UploadOrderInfo = {
 function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
     const raw = (order || {}) as Order & Record<string, unknown>;
     const metadata = (raw.metadata || {}) as Record<string, unknown>;
+    const clientReference = String(raw.client_reference || metadata.client_reference || '').trim();
     const jobOrderId = String(
-        raw.client_portal_id
+        clientReference
+        || raw.client_portal_id
         || raw.client_order_number
         || raw.clint_order_number
         || raw.client_order_no
@@ -30,7 +32,6 @@ function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
         || ''
     ).trim();
     const orderNumber = String(raw.order_number || '').trim();
-    const clientReference = String(raw.client_reference || metadata.client_reference || '').trim();
     const clientName = String(raw.client_name || metadata.client_name || '').trim();
 
     return {
@@ -41,6 +42,12 @@ function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
         clientName,
         clientReference,
     };
+}
+
+function fileNameContainsOrderReference(fileName: string, orderReference: string): boolean {
+    const baseName = fileName.replace(/\.[^.]+$/, '');
+    const escaped = orderReference.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, 'i').test(baseName);
 }
 
 export default function ClientUpload() {
@@ -128,7 +135,7 @@ export default function ClientUpload() {
 
     const invalidFiles = useMemo(() => {
         if (!status || !orderLookup) return [];
-        return files.filter((file) => file.name.replace(/\.[^.]+$/, '').toLowerCase() !== orderLookup.toLowerCase());
+        return files.filter((file) => !fileNameContainsOrderReference(file.name, orderLookup));
     }, [files, orderLookup, status]);
 
     const uploadFiles = async () => {
@@ -245,8 +252,8 @@ export default function ClientUpload() {
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
                                 <div className="font-semibold text-slate-900 mb-2">Order Reference</div>
                                 <div>Internal Order ID #{status.order_id || numericOrderId}</div>
-                                <div>Client Portal ID: {orderLookup || 'Not available'}</div>
-                                <div>{status.client_reference || queryClientReference || 'No client reference'}</div>
+                                <div>Upload Order Reference: {orderLookup || 'Not available'}</div>
+                                <div>Client Portal ID: {status.order_number || queryOrderNumber || 'Not available'}</div>
                             </div>
                         )}
                     </div>
@@ -259,13 +266,13 @@ export default function ClientUpload() {
                             <input
                                 type="file"
                                 multiple
-                                accept="image/*"
+                                accept="image/*,.zip,application/zip,application/x-zip-compressed"
                                 onChange={selectFiles}
                                 className="mt-2 block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-slate-700"
                             />
                             {orderLookup && (
                                 <p className="mt-2 text-xs text-slate-500">
-                                    File names should match <span className="font-semibold text-slate-900">{orderLookup}</span> before the extension.
+                                    File names should include <span className="font-semibold text-slate-900">{orderLookup}</span> before the extension.
                                 </p>
                             )}
                         </div>
@@ -284,7 +291,7 @@ export default function ClientUpload() {
                         {invalidFiles.length > 0 && (
                             <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
                                 <div className="font-semibold text-rose-800 mb-2">Invalid file names</div>
-                                <div>Files must match the expected order lookup value before extension.</div>
+                                <div>Files must include the expected order reference before extension.</div>
                                 <div className="mt-2 text-rose-700">{invalidFiles.map((file) => file.name).join(', ')}</div>
                             </div>
                         )}
