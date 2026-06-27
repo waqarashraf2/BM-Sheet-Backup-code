@@ -12,6 +12,7 @@ type UploadOrderInfo = {
     orderNumber: string;
     displayOrder: string;
     clientName: string;
+    customerParentCompany: string;
     clientReference: string;
 };
 
@@ -35,6 +36,15 @@ function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
     ).trim();
     const orderNumber = String(raw.order_number || '').trim();
     const clientName = String(raw.client_name || metadata.client_name || '').trim();
+    const customerParentCompany = String(
+        raw.CustomerParentCompany
+        || raw.customer_parent_company
+        || raw.parent_company
+        || metadata.customer_parent_company
+        || metadata.CustomerParentCompany
+        || ((metadata.raw_api_response || {}) as Record<string, unknown>).CustomerParentCompany
+        || ''
+    ).trim();
 
     return {
         jobOrderId,
@@ -42,6 +52,7 @@ function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
         orderNumber,
         displayOrder: jobOrderId || orderNumber,
         clientName,
+        customerParentCompany,
         clientReference,
     };
 }
@@ -71,6 +82,12 @@ export default function ClientUpload() {
     const queryOrderNumber = (searchParams.get('orderNumber') || '').trim();
     const queryDisplayOrder = (searchParams.get('displayOrder') || '').trim();
     const queryClientName = (searchParams.get('clientName') || '').trim();
+    const queryCustomerParentCompany = (
+        searchParams.get('CustomerParentCompany')
+        || searchParams.get('customerParentCompany')
+        || searchParams.get('customer_parent_company')
+        || ''
+    ).trim();
     const queryClientReference = (searchParams.get('clientReference') || '').trim();
 
     useEffect(() => {
@@ -131,6 +148,16 @@ export default function ClientUpload() {
         () => String(status?.client_name || queryClientName || orderInfo?.clientName || '').trim(),
         [orderInfo, queryClientName, status]
     );
+    const displayCustomerParentCompany = useMemo(
+        () => String(
+            status?.CustomerParentCompany
+            || status?.customer_parent_company
+            || queryCustomerParentCompany
+            || orderInfo?.customerParentCompany
+            || ''
+        ).trim(),
+        [orderInfo, queryCustomerParentCompany, status]
+    );
     const canUpload = !!orderLookup && status?.can_upload !== false;
     const uploadStatusLabel = canUpload && (!status?.status || status.status === 'not_required')
         ? 'not_uploaded'
@@ -145,10 +172,11 @@ export default function ClientUpload() {
         if (displayOrder) params.set('displayOrder', displayOrder);
         if (orderNumber) params.set('orderNumber', orderNumber);
         if (displayClientName) params.set('clientName', displayClientName);
+        if (displayCustomerParentCompany) params.set('CustomerParentCompany', displayCustomerParentCompany);
         if (clientReference) params.set('clientReference', clientReference);
         if (orderLookup) params.set('clientOrderNumber', orderLookup);
         return params.toString();
-    }, [displayClientName, orderInfo, orderLookup, queryClientReference, queryDisplayOrder, queryOrderNumber, queryProjectId, status]);
+    }, [displayClientName, displayCustomerParentCompany, orderInfo, orderLookup, queryClientReference, queryDisplayOrder, queryOrderNumber, queryProjectId, status]);
 
     const invalidFiles = useMemo(() => {
         if (!status || !orderLookup) return [];
@@ -272,6 +300,7 @@ export default function ClientUpload() {
                                 <div className="font-semibold text-slate-900 mb-2">Order Reference</div>
                                 <div>Internal Order ID #{status.order_id || numericOrderId}</div>
                                 <div>Client Name: {displayClientName || 'Not available'}</div>
+                                <div>Customer Parent Company: {displayCustomerParentCompany || 'Not available'}</div>
                                 <div>Upload Order Reference: {orderLookup || 'Not available'}</div>
                                 <div>Client Portal Job ID: {status.client_portal_job_id || status.order_number || queryOrderNumber || 'Not available'}</div>
                             </div>

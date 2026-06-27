@@ -353,12 +353,22 @@ export default function WorkerDashboard() {
     ).trim();
     const clientReference = String((order as any).client_reference || metadata.client_reference || '').trim();
     const clientName = String((order as any).client_name || metadata.client_name || '').trim();
+    const customerParentCompany = String(
+      (order as any).CustomerParentCompany
+      || (order as any).customer_parent_company
+      || (order as any).parent_company
+      || metadata.customer_parent_company
+      || metadata.CustomerParentCompany
+      || ((metadata.raw_api_response || {}) as Record<string, unknown>).CustomerParentCompany
+      || ''
+    ).trim();
 
     const params = new URLSearchParams({
       projectId: String(order.project_id),
       displayOrder: getDisplayOrderNumber(order),
       orderNumber: String(order.order_number || ''),
       clientName,
+      CustomerParentCompany: customerParentCompany,
       clientReference,
       jobOrderId,
     });

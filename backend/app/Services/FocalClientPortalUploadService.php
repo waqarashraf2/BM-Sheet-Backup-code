@@ -44,6 +44,7 @@ class FocalClientPortalUploadService
         $canUpload = $this->canUploadForOrder($order);
         $jobOrderId = $this->fileReference($order);
         $clientPortalJobId = $this->uploadJobId($order);
+        $customerParentCompany = $this->customerParentCompany($order);
         $upload = $canUpload && Schema::hasTable('client_portal_uploads')
             ? ClientPortalUpload::query()
                 ->where('project_id', $order->project_id)
@@ -64,6 +65,8 @@ class FocalClientPortalUploadService
             'client_portal_job_id' => $clientPortalJobId !== '' ? $clientPortalJobId : null,
             'order_number' => $order->order_number,
             'client_name' => $order->client_name,
+            'CustomerParentCompany' => $customerParentCompany,
+            'customer_parent_company' => $customerParentCompany,
             'client_reference' => $order->client_reference,
             'file_names' => $upload?->file_names ?? [],
             'uploaded_at' => $upload?->uploaded_at?->toIso8601String(),
@@ -236,6 +239,35 @@ class FocalClientPortalUploadService
         }
 
         return trim((string) (DB::table($table)->where('id', $order->id)->value('clint_order_number') ?? ''));
+    }
+
+    private function customerParentCompany(Order $order): ?string
+    {
+        $value = trim((string) (
+            $order->getAttribute('CustomerParentCompany')
+            ?? $order->getAttribute('parent_company')
+            ?? ''
+        ));
+
+        if ($value !== '') {
+            return $value;
+        }
+
+        $metadata = $order->getAttribute('metadata');
+        if (is_string($metadata)) {
+            $metadata = json_decode($metadata, true) ?: [];
+        }
+
+        if (is_array($metadata)) {
+            $value = trim((string) (
+                $metadata['customer_parent_company']
+                ?? $metadata['CustomerParentCompany']
+                ?? data_get($metadata, 'raw_api_response.CustomerParentCompany')
+                ?? ''
+            ));
+        }
+
+        return $value !== '' ? $value : null;
     }
 
     private function fileReference(Order $order): string
