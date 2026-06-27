@@ -51,7 +51,7 @@ interface ManagerOrderAssetLinksViewProps {
   }>;
 }
 
-const IMAGE_EXTENSIONS = [
+const BROWSER_PREVIEW_EXTENSIONS = [
   '.jpg',
   '.jpeg',
   '.png',
@@ -61,34 +61,12 @@ const IMAGE_EXTENSIONS = [
   '.tif',
   '.tiff',
   '.svg',
-  '.heic',
-  '.heif',
-  '.raw',
-  '.dng',
-  '.cr2',
-  '.cr3',
-  '.nef',
-  '.nrw',
-  '.arw',
-  '.srf',
-  '.sr2',
-  '.orf',
-  '.rw2',
-  '.raf',
-  '.pef',
-  '.srw',
-  '.x3f',
-  '.erf',
-  '.kdc',
-  '.mrw',
-  '.mos',
-  '.rwl',
 ];
 
-function isImageLike(name: string, url: string): boolean {
+function canPreviewInBrowser(name: string, url: string): boolean {
   const lowerName = String(name || '').toLowerCase();
   const lowerUrl = String(url || '').toLowerCase();
-  return IMAGE_EXTENSIONS.some((ext) => lowerName.endsWith(ext) || lowerUrl.includes(ext));
+  return BROWSER_PREVIEW_EXTENSIONS.some((ext) => lowerName.endsWith(ext) || lowerUrl.includes(ext));
 }
 
 function linkKey(link: AssetLink): string {
@@ -232,8 +210,8 @@ export default function ManagerOrderAssetLinksView({ projects }: ManagerOrderAss
       {data && data.orders.length > 0 && (
         <div className="space-y-5">
           {data.orders.map((result) => {
-            const imageLinks = result.links.filter((link) => isImageLike(link.name, link.url));
-            const otherLinks = result.links.filter((link) => !isImageLike(link.name, link.url));
+            const imageLinks = result.links;
+            const otherLinks: AssetLink[] = [];
 
             return (
               <div key={`${result.project.id}-${result.order.id}`} className="bg-white rounded-xl ring-1 ring-black/[0.04] overflow-hidden">
@@ -282,20 +260,32 @@ export default function ManagerOrderAssetLinksView({ projects }: ManagerOrderAss
                             const key = linkKey(link);
                             const previewed = !!previewedImages[key];
                             const broken = !!brokenImages[key];
+                            const canPreview = canPreviewInBrowser(link.name, link.url);
 
                             return (
                               <div key={key} className="rounded-xl ring-1 ring-black/[0.05] overflow-hidden">
-                                <div className="h-52 bg-slate-100 flex items-center justify-center">
-                                  {broken ? (
+                                <div className="relative h-52 bg-slate-100 flex items-center justify-center overflow-hidden">
+                                  <img
+                                    src={link.url}
+                                    alt={link.name}
+                                    className={canPreview && previewed && !broken
+                                      ? 'w-full h-full object-cover'
+                                      : 'absolute inset-0 w-full h-full object-cover opacity-[0.01]'
+                                    }
+                                    loading="eager"
+                                    data-asset-image-url={link.url}
+                                    onError={() => setBrokenImages((prev) => ({ ...prev, [key]: true }))}
+                                  />
+                                  {!canPreview ? (
+                                    <div className="px-4 text-center">
+                                      <ImageIcon className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                                      <div className="text-sm font-medium text-slate-600">Raw image file</div>
+                                      <div className="text-xs text-slate-500 mt-1">Open or download to view</div>
+                                    </div>
+                                  ) : broken ? (
                                     <div className="text-slate-500 text-sm">Preview unavailable</div>
                                   ) : previewed ? (
-                                    <img
-                                      src={link.url}
-                                      alt={link.name}
-                                      className="w-full h-full object-cover"
-                                      loading="lazy"
-                                      onError={() => setBrokenImages((prev) => ({ ...prev, [key]: true }))}
-                                    />
+                                    null
                                   ) : (
                                     <button
                                       type="button"

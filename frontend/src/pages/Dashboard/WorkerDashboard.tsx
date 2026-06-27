@@ -32,7 +32,7 @@ const CLIENT_NAME_PROJECT_IDS = [7, 8, 9, 10, 11, 12, 14, 46, 42,];
 const IMAGE_LINK_PROJECT_IDS = [1, 22, 25, 26];
 const DESIGNER_PH_IMAGE_LINK_PROJECT_IDS = [22, 23, 25, 26];
 const ORDER_NUMBER_IMAGE_LINK_PROJECT_IDS = [22, 23, 25];
-const CLIENT_PORTAL_UPLOAD_PROJECT_IDS = [22, 23];
+const CLIENT_PORTAL_UPLOAD_PROJECT_IDS = [22, 23, 25];
 
 const ROLE_CONFIG: Record<string, { label: string; icon: any; description: string }> = {
   drawer: {

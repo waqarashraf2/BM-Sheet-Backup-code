@@ -15,14 +15,23 @@ use Illuminate\Validation\ValidationException;
 
 class FocalClientPortalUploadService
 {
+    private const DEFAULT_ENABLED_PROJECT_IDS = [22, 23, 25];
+
     public function isRequiredForProject(int $projectId): bool
     {
-        return Schema::hasTable('client_portal_upload_projects')
-            && DB::table('client_portal_upload_projects')
-                ->where('project_id', $projectId)
-                ->where('is_active', true)
-                ->where('qa_upload_required', true)
-                ->exists();
+        if (!Schema::hasTable('client_portal_upload_projects')) {
+            return in_array($projectId, self::DEFAULT_ENABLED_PROJECT_IDS, true);
+        }
+
+        $row = DB::table('client_portal_upload_projects')
+            ->where('project_id', $projectId)
+            ->first(['is_active', 'qa_upload_required']);
+
+        if ($row) {
+            return (bool) $row->is_active && (bool) $row->qa_upload_required;
+        }
+
+        return in_array($projectId, self::DEFAULT_ENABLED_PROJECT_IDS, true);
     }
 
     public function isRequiredForOrder(Order $order): bool
@@ -197,11 +206,7 @@ class FocalClientPortalUploadService
 
     private function validateFileNames(int $projectId, string $jobOrderId, Collection $fileNames): void
     {
-        $enforce = DB::table('client_portal_upload_projects')
-            ->where('project_id', $projectId)
-            ->value('enforce_order_filename');
-
-        if (!$enforce) {
+        if (!$this->shouldEnforceOrderFilename($projectId)) {
             return;
         }
 
@@ -215,6 +220,23 @@ class FocalClientPortalUploadService
                     . $jobOrderId . '. Invalid: ' . $invalid->implode(', '),
             ]);
         }
+    }
+
+    private function shouldEnforceOrderFilename(int $projectId): bool
+    {
+        if (!Schema::hasTable('client_portal_upload_projects')) {
+            return in_array($projectId, self::DEFAULT_ENABLED_PROJECT_IDS, true);
+        }
+
+        $enforce = DB::table('client_portal_upload_projects')
+            ->where('project_id', $projectId)
+            ->value('enforce_order_filename');
+
+        if ($enforce !== null) {
+            return (bool) $enforce;
+        }
+
+        return in_array($projectId, self::DEFAULT_ENABLED_PROJECT_IDS, true);
     }
 
     private function fileNameContainsOrderReference(string $fileName, string $jobOrderId): bool

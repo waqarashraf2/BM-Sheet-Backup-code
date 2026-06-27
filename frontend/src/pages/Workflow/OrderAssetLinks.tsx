@@ -43,7 +43,7 @@ type ZipDownloadState = {
     fallbackAvailable: boolean;
 };
 
-const IMAGE_EXTENSIONS = [
+const BROWSER_PREVIEW_EXTENSIONS = [
     '.jpg',
     '.jpeg',
     '.png',
@@ -53,28 +53,6 @@ const IMAGE_EXTENSIONS = [
     '.tif',
     '.tiff',
     '.svg',
-    '.heic',
-    '.heif',
-    '.raw',
-    '.dng',
-    '.cr2',
-    '.cr3',
-    '.nef',
-    '.nrw',
-    '.arw',
-    '.srf',
-    '.sr2',
-    '.orf',
-    '.rw2',
-    '.raf',
-    '.pef',
-    '.srw',
-    '.x3f',
-    '.erf',
-    '.kdc',
-    '.mrw',
-    '.mos',
-    '.rwl',
 ];
 const ZIP_CHUNK_SIZE = 150;
 const ORDER_INFO_FIELD_ALIASES: Record<string, string[]> = {
@@ -84,11 +62,11 @@ const ORDER_INFO_FIELD_ALIASES: Record<string, string[]> = {
     client_order_number: ['client_order_number', 'clint_order_number', 'client_order_no'],
 };
 
-function isImageLike(name: string, url: string): boolean {
+function canPreviewInBrowser(name: string, url: string): boolean {
     const lowerName = name.toLowerCase();
     const lowerUrl = url.toLowerCase();
 
-    return IMAGE_EXTENSIONS.some((ext) => lowerName.endsWith(ext) || lowerUrl.includes(ext));
+    return BROWSER_PREVIEW_EXTENSIONS.some((ext) => lowerName.endsWith(ext) || lowerUrl.includes(ext));
 }
 
 function getLinkKey(link: OrderAssetLink): string {
@@ -232,9 +210,7 @@ export default function OrderAssetLinks() {
         });
     }, [links]);
 
-    const imageLinks = useMemo(() => {
-        return sortedLinks.filter((link) => isImageLike(link.name, link.url));
-    }, [sortedLinks]);
+    const imageLinks = sortedLinks;
 
     const visibleFieldSet = useMemo(() => {
         const set = new Set<string>();
@@ -626,20 +602,32 @@ export default function OrderAssetLinks() {
                                     const linkKey = getLinkKey(link);
                                     const broken = !!brokenImageIds[link.id];
                                     const shouldLoadPreview = showAllPreviews || !!previewedImageKeys[linkKey];
+                                    const canPreview = canPreviewInBrowser(link.name, link.url);
 
                                     return (
                                         <div key={linkKey} className="bg-white rounded-xl ring-1 ring-black/[0.05] overflow-hidden">
-                                            <div className="h-52 bg-slate-100 flex items-center justify-center">
-                                                {broken ? (
+                                            <div className="relative h-52 bg-slate-100 flex items-center justify-center overflow-hidden">
+                                                <img
+                                                    src={link.url}
+                                                    alt={link.name}
+                                                    className={canPreview && shouldLoadPreview && !broken
+                                                        ? 'w-full h-full object-cover'
+                                                        : 'absolute inset-0 w-full h-full object-cover opacity-[0.01]'
+                                                    }
+                                                    loading="eager"
+                                                    data-asset-image-url={link.url}
+                                                    onError={() => setBrokenImageIds((prev) => ({ ...prev, [link.id]: true }))}
+                                                />
+                                                {!canPreview ? (
+                                                    <div className="px-4 text-center">
+                                                        <ImageIcon className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                                                        <div className="text-sm font-medium text-slate-600">Raw image file</div>
+                                                        <div className="text-xs text-slate-500 mt-1">Open or download to view</div>
+                                                    </div>
+                                                ) : broken ? (
                                                     <div className="text-slate-500 text-sm">Preview unavailable</div>
                                                 ) : shouldLoadPreview ? (
-                                                    <img
-                                                        src={link.url}
-                                                        alt={link.name}
-                                                        className="w-full h-full object-cover"
-                                                        loading="lazy"
-                                                        onError={() => setBrokenImageIds((prev) => ({ ...prev, [link.id]: true }))}
-                                                    />
+                                                    null
                                                 ) : (
                                                     <button
                                                         type="button"
@@ -687,7 +675,7 @@ export default function OrderAssetLinks() {
                             <h2 className="text-sm font-semibold text-slate-700 mb-3">Other Asset Links</h2>
                             <div className="bg-white rounded-xl ring-1 ring-black/[0.05] divide-y divide-slate-100 overflow-hidden">
                                 {sortedLinks
-                                    .filter((link) => !isImageLike(link.name, link.url))
+                                    .filter((link) => !imageLinks.includes(link))
                                     .map((link) => (
                                         <div key={`${link.source_table}-${link.id}`} className="p-3 flex items-center justify-between gap-3">
                                             <div className="min-w-0">
