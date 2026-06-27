@@ -23,7 +23,7 @@ class ClientPortalUploadController extends Controller
     public function upload(Request $request, int $orderId)
     {
         $order = $this->qaOrder($request, $orderId);
-        $maxFileKb = (int) config('services.focal_client_portal.max_file_kb', 512000);
+        $maxFileKb = (int) config('services.focal_client_portal.max_file_kb', 614400);
         $data = $request->validate([
             'job_order_id' => 'nullable|string|max:120',
             'files' => 'required|array|min:1|max:100',

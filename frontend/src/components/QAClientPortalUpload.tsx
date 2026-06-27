@@ -4,6 +4,8 @@ import { workflowService, type ClientPortalUploadStatus } from '../services';
 import { Button } from './ui';
 import { CheckCircle2, Loader2, Send, UploadCloud } from 'lucide-react';
 
+const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 600 * 1024 * 1024;
+
 interface QAClientPortalUploadProps {
   order: Order;
   onStatusChange: (status: ClientPortalUploadStatus) => void;
@@ -13,6 +15,10 @@ function fileNameContainsOrderReference(fileName: string, orderReference: string
   const baseName = fileName.replace(/\.[^.]+$/, '');
   const escaped = orderReference.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, 'i').test(baseName);
+}
+
+function formatFileSize(bytes: number): string {
+  return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
 }
 
 export default function QAClientPortalUpload({ order, onStatusChange }: QAClientPortalUploadProps) {
@@ -27,6 +33,10 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
   const invalidNames = useMemo(
     () => files.filter(file => !fileNameContainsOrderReference(file.name, orderId)),
     [files, orderId],
+  );
+  const oversizedFiles = useMemo(
+    () => files.filter(file => file.size > MAX_CLIENT_PORTAL_UPLOAD_BYTES),
+    [files],
   );
 
   useEffect(() => {
@@ -60,7 +70,7 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
   if (!status?.required) return null;
 
   const uploadFiles = async () => {
-    if (!files.length || invalidNames.length) return;
+    if (!files.length || invalidNames.length || oversizedFiles.length) return;
     setBusy('upload');
     setError('');
     setMessage('');
@@ -129,6 +139,12 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
             </p>
           )}
 
+          {oversizedFiles.length > 0 && (
+            <p className="text-xs font-medium text-rose-700">
+              Each file must be 600 MB or less. Oversized: {oversizedFiles.map(file => `${file.name} (${formatFileSize(file.size)})`).join(', ')}
+            </p>
+          )}
+
           {busy === 'upload' && (
             <div>
               <div className="flex items-center justify-between text-xs font-medium text-slate-600">
@@ -152,7 +168,7 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
               size="sm"
               onClick={uploadFiles}
               loading={busy === 'upload'}
-              disabled={!files.length || invalidNames.length > 0 || busy !== null}
+              disabled={!files.length || invalidNames.length > 0 || oversizedFiles.length > 0 || busy !== null}
               icon={<UploadCloud className="h-4 w-4" />}
             >
               Upload Files

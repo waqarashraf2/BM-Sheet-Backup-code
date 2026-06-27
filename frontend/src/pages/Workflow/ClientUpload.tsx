@@ -17,6 +17,7 @@ type UploadOrderInfo = {
 };
 
 const ORDER_NUMBER_ASSET_PROJECT_IDS = [22, 23, 25];
+const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 600 * 1024 * 1024;
 
 function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
     const raw = (order || {}) as Order & Record<string, unknown>;
@@ -61,6 +62,10 @@ function fileNameContainsOrderReference(fileName: string, orderReference: string
     const baseName = fileName.replace(/\.[^.]+$/, '');
     const escaped = orderReference.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, 'i').test(baseName);
+}
+
+function formatFileSize(bytes: number): string {
+    return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
 }
 
 export default function ClientUpload() {
@@ -182,9 +187,13 @@ export default function ClientUpload() {
         if (!status || !orderLookup) return [];
         return files.filter((file) => !fileNameContainsOrderReference(file.name, orderLookup));
     }, [files, orderLookup, status]);
+    const oversizedFiles = useMemo(
+        () => files.filter((file) => file.size > MAX_CLIENT_PORTAL_UPLOAD_BYTES),
+        [files],
+    );
 
     const uploadFiles = async () => {
-        if (!orderIdValid || !files.length || invalidFiles.length || busy) return;
+        if (!orderIdValid || !files.length || invalidFiles.length || oversizedFiles.length || busy) return;
         setBusy('upload');
         setMessage('');
         setError('');
@@ -349,6 +358,16 @@ export default function ClientUpload() {
                             </div>
                         )}
 
+                        {oversizedFiles.length > 0 && (
+                            <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                                <div className="font-semibold text-rose-800 mb-2">File size too large</div>
+                                <div>Each file must be 600 MB or less.</div>
+                                <div className="mt-2 text-rose-700">
+                                    {oversizedFiles.map((file) => `${file.name} (${formatFileSize(file.size)})`).join(', ')}
+                                </div>
+                            </div>
+                        )}
+
                         {busy === 'upload' && (
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                                 <div className="flex items-center justify-between text-xs font-medium text-slate-600">
@@ -382,7 +401,7 @@ export default function ClientUpload() {
                                 icon={<UploadCloud className="h-4 w-4" />}
                                 onClick={uploadFiles}
                                 loading={busy === 'upload'}
-                                disabled={!files.length || !!invalidFiles.length || !canUpload || busy !== null}
+                                disabled={!files.length || !!invalidFiles.length || !!oversizedFiles.length || !canUpload || busy !== null}
                             >
                                 Upload Files
                             </Button>

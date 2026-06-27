@@ -75,8 +75,8 @@ return [
             'FOCAL_CLIENT_PORTAL_SUBSCRIPTION_KEY',
             env('FOCAL_CRM_PHOTO_SUBSCRIPTION_KEY', env('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1'))
         ),
-        'timeout' => env('FOCAL_CLIENT_PORTAL_TIMEOUT', 120),
-        'max_file_kb' => env('FOCAL_CLIENT_PORTAL_MAX_FILE_KB', 512000),
+        'timeout' => env('FOCAL_CLIENT_PORTAL_TIMEOUT', 600),
+        'max_file_kb' => env('FOCAL_CLIENT_PORTAL_MAX_FILE_KB', 614400),
     ],
 
 ];
