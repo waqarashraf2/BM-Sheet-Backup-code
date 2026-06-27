@@ -123,7 +123,14 @@ Schedule::command('focalcrm:import-prestige')
     ->withoutOverlapping()
     ->runInBackground();
     
+
     
+// FocalAI - Project 52
+Schedule::command('focalai:import')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
     
 // Focal RTV - Project 26 (Photography)
 // Schedule::command('focalrtv:import')
