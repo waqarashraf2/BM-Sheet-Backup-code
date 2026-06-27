@@ -339,6 +339,9 @@ class FocalCrmPhotoService
 
         $receivedAt = $this->parseDateAssigned($job['DateAssigned'] ?? null, $now);
         $dueDate = (clone $receivedAt)->modify('+1 days');
+        $imageCount = max(0, (int) ($job['Quantity'] ?? 0));
+        $dueInHours = $imageCount > 20 ? 6 : 3;
+        $dueIn = (clone $receivedAt)->modify("+{$dueInHours} hours");
 
         return [
             'order_number' => $orderNumber,
@@ -357,16 +360,18 @@ class FocalCrmPhotoService
             'workflow_state' => 'RECEIVED',
             'workflow_type' => 'PH_2_LAYER',
             'received_at' => $receivedAt->format('Y-m-d H:i:s'),
+            'due_in' => $dueIn->format('Y-m-d H:i:s'),
             'due_date' => $dueDate->format('Y-m-d'),
             'priority' => 'normal',
             'import_source' => 'api',
             'quantity' => $job['Quantity'] ?? null,
-            'images' => (int) ($job['Quantity'] ?? 0),
+            'images' => $imageCount,
             'parent_company' => $job['CustomerParentCompany'] ?? null,
             'CustomerParentCompany' => $job['CustomerParentCompany'] ?? null,
             'metadata' => json_encode([
                 'focalcrm_id' => $job['Id'],
                 'customer_parent_company' => $job['CustomerParentCompany'] ?? null,
+                'due_in_hours' => $dueInHours,
                 'product' => $job['Product'] ?? null,
                 'property_reference' => $job['Property']['Reference'] ?? null,
                 'property_address' => $job['Property']['Address'] ?? null,
@@ -454,7 +459,7 @@ class FocalCrmPhotoService
 
                 if ($existing) {
                     $updateData = [];
-                    foreach (['client_reference', 'quantity', 'parent_company', 'CustomerParentCompany', 'metadata', 'updated_at'] as $field) {
+                    foreach (['client_reference', 'quantity', 'images', 'due_in', 'parent_company', 'CustomerParentCompany', 'metadata', 'updated_at'] as $field) {
                         if (array_key_exists($field, $record)) {
                             $updateData[$field] = $record[$field];
                         }

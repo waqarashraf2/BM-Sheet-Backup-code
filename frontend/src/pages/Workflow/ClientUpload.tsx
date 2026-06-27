@@ -197,10 +197,14 @@ export default function ClientUpload() {
         } catch (e: any) {
             const statusCode = e.response?.status;
             const serverMessage = e.response?.data?.message || e.response?.data?.errors?.files?.[0];
+            const fileSizeMessage = e.response?.data?.errors
+                ? Object.entries(e.response.data.errors as Record<string, string[]>)
+                    .find(([field]) => field.startsWith('files.'))?.[1]?.[0]
+                : '';
             setError(
                 statusCode === 404 || statusCode === 405
                     ? 'Upload route is not available on the backend server yet. Please deploy the latest backend routes and clear the Laravel route cache.'
-                    : serverMessage || 'Upload failed.'
+                    : fileSizeMessage || serverMessage || 'Upload failed.'
             );
         } finally {
             setBusy(null);

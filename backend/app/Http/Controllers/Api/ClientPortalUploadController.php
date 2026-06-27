@@ -23,10 +23,13 @@ class ClientPortalUploadController extends Controller
     public function upload(Request $request, int $orderId)
     {
         $order = $this->qaOrder($request, $orderId);
+        $maxFileKb = (int) config('services.focal_client_portal.max_file_kb', 512000);
         $data = $request->validate([
             'job_order_id' => 'nullable|string|max:120',
             'files' => 'required|array|min:1|max:100',
-            'files.*' => 'required|file|max:51200',
+            'files.*' => "required|file|max:{$maxFileKb}",
+        ], [
+            'files.*.max' => 'Each upload file must not be greater than ' . $this->formatFileSize($maxFileKb) . '.',
         ]);
 
         try {
@@ -88,5 +91,16 @@ class ClientPortalUploadController extends Controller
         abort_unless($qaId === (int) $user->id, 403, 'This QA stage is not assigned to you.');
 
         return $order;
+    }
+
+    private function formatFileSize(int $kilobytes): string
+    {
+        if ($kilobytes >= 1024) {
+            $megabytes = $kilobytes / 1024;
+
+            return rtrim(rtrim(number_format($megabytes, 1), '0'), '.') . ' MB';
+        }
+
+        return $kilobytes . ' KB';
     }
 }
