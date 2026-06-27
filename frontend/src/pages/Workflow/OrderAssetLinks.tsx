@@ -44,6 +44,7 @@ type ZipDownloadState = {
 };
 
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.svg'];
+const ZIP_CHUNK_SIZE = 150;
 const ORDER_INFO_FIELD_ALIASES: Record<string, string[]> = {
     order_number: ['order_number'],
     client_name: ['client_name'],
@@ -67,86 +68,28 @@ function zipSafeFileName(name: string, fallback: string): string {
     return cleaned || fallback;
 }
 
-function uniqueZipFileName(name: string, usedNames: Set<string>): string {
-    if (!usedNames.has(name)) {
-        usedNames.add(name);
-        return name;
-    }
-
-    const dotIndex = name.lastIndexOf('.');
-    const base = dotIndex > 0 ? name.slice(0, dotIndex) : name;
-    const ext = dotIndex > 0 ? name.slice(dotIndex) : '';
-    let counter = 2;
-    let candidate = `${base} (${counter})${ext}`;
-
-    while (usedNames.has(candidate)) {
-        counter += 1;
-        candidate = `${base} (${counter})${ext}`;
-    }
-
-    usedNames.add(candidate);
-    return candidate;
+function downloadBlob(blob: Blob, fileName: string) {
+    const blobUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = fileName;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(blobUrl);
 }
 
-async function fetchImageBytes(url: string, onProgress?: (receivedBytes: number, totalBytes: number | null) => void): Promise<Uint8Array> {
-    const response = await fetch(url, {
-        mode: 'cors',
-        cache: 'no-store',
-        credentials: 'omit',
-    });
+function fileNameFromDisposition(disposition: unknown): string | null {
+    if (typeof disposition !== 'string') return null;
 
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+    const utfMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utfMatch?.[1]) {
+        return decodeURIComponent(utfMatch[1].replace(/["']/g, ''));
     }
 
-    const totalHeader = response.headers.get('content-length');
-    const totalBytes = totalHeader ? Number(totalHeader) : null;
-
-    if (!response.body) {
-        const buffer = await response.arrayBuffer();
-        onProgress?.(buffer.byteLength, Number.isFinite(totalBytes || NaN) ? totalBytes : null);
-        return new Uint8Array(buffer);
-    }
-
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let receivedBytes = 0;
-
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!value) continue;
-
-        chunks.push(value);
-        receivedBytes += value.byteLength;
-        onProgress?.(receivedBytes, Number.isFinite(totalBytes || NaN) ? totalBytes : null);
-    }
-
-    const merged = new Uint8Array(receivedBytes);
-    let offset = 0;
-    for (const chunk of chunks) {
-        merged.set(chunk, offset);
-        offset += chunk.byteLength;
-    }
-
-    return merged;
-}
-
-async function fetchImageBytesWithRetry(url: string, onProgress?: (receivedBytes: number, totalBytes: number | null) => void): Promise<Uint8Array> {
-    let lastError: unknown = null;
-
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-        try {
-            return await fetchImageBytes(url, onProgress);
-        } catch (error) {
-            lastError = error;
-            if (attempt < 2) {
-                await new Promise((resolve) => window.setTimeout(resolve, 500));
-            }
-        }
-    }
-
-    throw lastError instanceof Error ? lastError : new Error('Download failed');
+    const simpleMatch = disposition.match(/filename="?([^";]+)"?/i);
+    return simpleMatch?.[1] || null;
 }
 
 export default function OrderAssetLinks() {
@@ -345,138 +288,98 @@ export default function OrderAssetLinks() {
         if (!imageLinks.length || downloadingAll) return;
 
         setDownloadingAll(true);
+        const parsedProjectId = Number(projectIdFromQuery);
+        const requestedProjectId = Number.isFinite(parsedProjectId) && parsedProjectId > 0
+            ? parsedProjectId
+            : undefined;
+        const totalChunks = Math.ceil(imageLinks.length / ZIP_CHUNK_SIZE);
+        const zipBaseName = zipSafeFileName(orderNumberFromQuery || displayOrder || jobOrderId || 'order-images', 'order-images');
+
         setZipDownload({
             active: true,
             completed: 0,
             total: imageLinks.length,
             percent: 0,
-            message: 'Preparing image download...',
+            message: totalChunks > 1
+                ? `Preparing ZIP part 1 of ${totalChunks}...`
+                : 'Preparing ZIP download...',
             fallbackAvailable: false,
         });
 
         try {
-            const { zipSync } = await import('fflate');
-            const zipFiles: Record<string, Uint8Array> = {};
-            const usedNames = new Set<string>();
-            const failedLinks: Array<{ name: string; url: string; error: string }> = [];
-            let completed = 0;
-
-            for (let index = 0; index < imageLinks.length; index += 1) {
-                const link = imageLinks[index];
-                const displayName = link.name || `image-${index + 1}`;
-                const basePercent = (completed / imageLinks.length) * 90;
-                const perImagePercent = 90 / imageLinks.length;
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+                const offset = chunkIndex * ZIP_CHUNK_SIZE;
+                const chunkStartPercent = Math.round((offset / imageLinks.length) * 100);
 
                 setZipDownload({
                     active: true,
-                    completed,
+                    completed: offset,
                     total: imageLinks.length,
-                    percent: Math.round(basePercent),
-                    message: `Downloading ${index + 1} of ${imageLinks.length}: ${displayName}`,
+                    percent: chunkStartPercent,
+                    message: totalChunks > 1
+                        ? `Preparing ZIP part ${chunkIndex + 1} of ${totalChunks}...`
+                        : 'Preparing ZIP download...',
                     fallbackAvailable: false,
                 });
 
-                try {
-                    const bytes = await fetchImageBytesWithRetry(link.url, (receivedBytes, totalBytes) => {
-                        const imageProgress = totalBytes && totalBytes > 0
-                            ? Math.min(1, receivedBytes / totalBytes)
-                            : 0;
-                        const percent = Math.round(basePercent + (imageProgress * perImagePercent));
-                        const sizeLabel = totalBytes && totalBytes > 0
-                            ? `${Math.round(receivedBytes / 1024 / 1024)} MB / ${Math.round(totalBytes / 1024 / 1024)} MB`
-                            : `${Math.round(receivedBytes / 1024 / 1024)} MB`;
+                const response = await workflowService.orderAssetZip(
+                    jobOrderId,
+                    {
+                        projectId: requestedProjectId,
+                        offset,
+                        limit: ZIP_CHUNK_SIZE,
+                        displayOrder: zipBaseName,
+                    },
+                    (downloadPercent) => {
+                        const weightedPercent = Math.round(
+                            ((offset + ((downloadPercent / 100) * Math.min(ZIP_CHUNK_SIZE, imageLinks.length - offset))) / imageLinks.length) * 100
+                        );
 
                         setZipDownload({
                             active: true,
-                            completed,
+                            completed: offset,
                             total: imageLinks.length,
-                            percent,
-                            message: `Downloading ${index + 1} of ${imageLinks.length}: ${displayName} (${sizeLabel})`,
+                            percent: Math.max(chunkStartPercent, weightedPercent),
+                            message: totalChunks > 1
+                                ? `Downloading ZIP part ${chunkIndex + 1} of ${totalChunks}...`
+                                : 'Downloading ZIP file...',
                             fallbackAvailable: false,
                         });
-                    });
-                    const safeName = zipSafeFileName(displayName, `image-${index + 1}`);
-                    const fileName = uniqueZipFileName(safeName, usedNames);
-                    zipFiles[fileName] = bytes;
-                } catch (error) {
-                    failedLinks.push({
-                        name: displayName,
-                        url: link.url,
-                        error: error instanceof Error ? error.message : 'Download failed',
-                    });
-                }
+                    },
+                );
 
-                completed += 1;
-                const percent = Math.round((completed / imageLinks.length) * 90);
+                const completed = Math.min(offset + ZIP_CHUNK_SIZE, imageLinks.length);
+                const headerName = fileNameFromDisposition(response.headers['content-disposition']);
+                const fallbackName = totalChunks > 1
+                    ? `${zipBaseName}-images-part-${chunkIndex + 1}.zip`
+                    : `${zipBaseName}-images.zip`;
+                downloadBlob(response.data, headerName || fallbackName);
+
                 setZipDownload({
                     active: true,
                     completed,
                     total: imageLinks.length,
-                    percent,
-                    message: `Processed ${completed} of ${imageLinks.length} images`,
+                    percent: Math.round((completed / imageLinks.length) * 100),
+                    message: totalChunks > 1
+                        ? `Downloaded ZIP part ${chunkIndex + 1} of ${totalChunks}`
+                        : `ZIP ready with ${imageLinks.length} images`,
                     fallbackAvailable: false,
                 });
 
-                await new Promise((resolve) => window.setTimeout(resolve, 50));
-            }
-
-            if (failedLinks.length > 0) {
-                const failedManifest = [
-                    'Some image links could not be added to this ZIP by the browser.',
-                    'These links may block browser fetch/CORS or may have expired.',
-                    '',
-                    ...failedLinks.map((link, index) => `${index + 1}. ${link.name}\n${link.url}\n${link.error}`),
-                ].join('\n\n');
-                zipFiles['failed-downloads.txt'] = new TextEncoder().encode(failedManifest);
-            }
-
-            const downloadedCount = Object.keys(zipFiles).filter((name) => name !== 'failed-downloads.txt').length;
-
-            if (downloadedCount === 0) {
-                setZipDownload({
-                    active: true,
-                    completed,
-                    total: imageLinks.length,
-                    percent: 0,
-                    message: 'Browser cannot read these links for ZIP because the image host blocks fetch/CORS. Use direct downloads.',
-                    fallbackAvailable: true,
-                });
-                return;
+                if (chunkIndex < totalChunks - 1) {
+                    await new Promise((resolve) => window.setTimeout(resolve, 700));
+                }
             }
 
             setZipDownload({
                 active: true,
-                completed,
-                total: imageLinks.length,
-                percent: 94,
-                message: failedLinks.length > 0
-                    ? `Creating ZIP with ${downloadedCount} images; ${failedLinks.length} links failed`
-                    : 'Creating ZIP file...',
-                fallbackAvailable: failedLinks.length > 0,
-            });
-
-            const zipped = zipSync(zipFiles, { level: 0 });
-            const zipBuffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer;
-            const blobUrl = window.URL.createObjectURL(new Blob([zipBuffer], { type: 'application/zip' }));
-            const anchor = document.createElement('a');
-            const zipBaseName = zipSafeFileName(orderNumberFromQuery || displayOrder || jobOrderId || 'order-images', 'order-images');
-            anchor.href = blobUrl;
-            anchor.download = `${zipBaseName}-images.zip`;
-            anchor.style.display = 'none';
-            document.body.appendChild(anchor);
-            anchor.click();
-            anchor.remove();
-            window.URL.revokeObjectURL(blobUrl);
-
-            setZipDownload({
-                active: true,
-                completed,
+                completed: imageLinks.length,
                 total: imageLinks.length,
                 percent: 100,
-                message: failedLinks.length > 0
-                    ? `ZIP ready with ${downloadedCount} images; ${failedLinks.length} failed links noted`
+                message: totalChunks > 1
+                    ? `All ${totalChunks} ZIP parts downloaded`
                     : `ZIP ready with ${imageLinks.length} images`,
-                fallbackAvailable: failedLinks.length > 0,
+                fallbackAvailable: false,
             });
 
             window.setTimeout(() => {
@@ -492,7 +395,7 @@ export default function OrderAssetLinks() {
                 completed: 0,
                 total: imageLinks.length,
                 percent: 0,
-                message: zipError instanceof Error ? zipError.message : 'ZIP download failed.',
+                message: 'ZIP download failed. You can still use direct downloads for the original image links.',
                 fallbackAvailable: true,
             });
         } finally {

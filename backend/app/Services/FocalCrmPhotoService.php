@@ -421,7 +421,7 @@ class FocalCrmPhotoService
      */
     protected function generateOrderNumber(string $clientPortalId): string
     {
-        return $clientPortalId;
+        return 'PHOTO-' . $clientPortalId;
     }
 
     /**
@@ -567,7 +567,8 @@ class FocalCrmPhotoService
     /**
      * Store job images and preferences from either the job payload or asset detail.
      *
-     * This importer runs in fetch-only mode and uses GET-only calls.
+     * Accept is triggered only after the order exists locally in DB. This avoids
+     * accepting jobs before they are safely stored in the local order table.
      */
     protected function storeJobAssets(array $job): void
     {
@@ -578,16 +579,28 @@ class FocalCrmPhotoService
         }
 
         $this->ensureImagesTableExists();
+
+        if (!$this->orderExists($jobOrderId)) {
+            Log::warning('Skipping photo accept/image fetch because order is not stored locally yet', [
+                'job_order_id' => $jobOrderId,
+            ]);
+            return;
+        }
+
         $images = $this->extractImagesFromJob($job);
 
-        if (empty($images)) {
-            $assetDetail = $this->fetchAssetDetail($jobOrderId);
-            $images = $this->extractImagesFromAssetDetail($assetDetail);
+        $accepted = $this->acceptJob($jobOrderId);
+        $assetDetail = $this->fetchAssetDetail($jobOrderId);
+        $assetImages = $this->extractImagesFromAssetDetail($assetDetail);
+
+        if (!empty($assetImages)) {
+            $images = array_merge($images, $assetImages);
         }
 
         if (empty($images)) {
             Log::info('No photo image URLs found for job', [
                 'job_order_id' => $jobOrderId,
+                'accepted' => $accepted,
             ]);
             return;
         }
@@ -627,7 +640,88 @@ class FocalCrmPhotoService
     }
 
     /**
-     * Fetch asset detail with GET only. This does not accept or update portal jobs.
+     * Confirm the order was inserted/updated locally before any portal accept.
+     */
+    protected function orderExists(string $jobOrderId): bool
+    {
+        return DB::table($this->tableName)
+            ->where('client_portal_id', $jobOrderId)
+            ->exists();
+    }
+
+    /**
+     * Send the client portal accept request only after local DB receipt.
+     */
+    protected function acceptJob(string $jobOrderId): bool
+    {
+        if (!$this->orderExists($jobOrderId)) {
+            Log::warning('Skipping photo accept because order does not exist locally', [
+                'job_order_id' => $jobOrderId,
+            ]);
+            return false;
+        }
+
+        $endpoints = [
+            str_replace('/v3/', '/v2/', rtrim($this->apiUrl, '/')) . '/' . $jobOrderId . '/accept',
+            rtrim($this->apiUrl, '/') . '/' . $jobOrderId . '/accept',
+        ];
+
+        foreach ($endpoints as $acceptUrl) {
+            try {
+                $response = Http::timeout(60)
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Accept' => '*/*',
+                        'Supplier-Secret' => $this->supplierSecret,
+                        'Ocp-Apim-Subscription-Key' => $this->subscriptionKey,
+                    ])
+                    ->post($acceptUrl, [
+                        'supplierReference' => 'BM-' . mt_rand(),
+                    ]);
+
+                if ($response->successful()) {
+                    Log::info('FocalCRM Photo job accepted successfully', [
+                        'job_order_id' => $jobOrderId,
+                        'url' => $acceptUrl,
+                        'status' => $response->status(),
+                        'response' => $response->json(),
+                    ]);
+                    return true;
+                }
+
+                if (in_array($response->status(), [400, 409, 422], true)) {
+                    Log::warning('FocalCRM Photo accept did not succeed but may already be accepted or invalid', [
+                        'job_order_id' => $jobOrderId,
+                        'url' => $acceptUrl,
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+                    return false;
+                }
+
+                Log::debug('FocalCRM Photo accept endpoint response', [
+                    'job_order_id' => $jobOrderId,
+                    'url' => $acceptUrl,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+            } catch (Exception $e) {
+                Log::warning('FocalCRM Photo accept request failed', [
+                    'job_order_id' => $jobOrderId,
+                    'url' => $acceptUrl,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        Log::warning('FocalCRM Photo accept endpoint not available for job', [
+            'job_order_id' => $jobOrderId,
+        ]);
+        return false;
+    }
+
+    /**
+     * Fetch asset detail with GET only after local order receipt/accept attempt.
      */
     protected function fetchAssetDetail(string $jobOrderId): array
     {

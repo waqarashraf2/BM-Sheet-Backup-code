@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\LiveQAController;
 use App\Http\Controllers\Api\ClientPortalUploadController;
+use App\Http\Controllers\Api\OrderAssetZipDownloadController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -77,6 +78,7 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
         Route::get('/my-current', [WorkflowController::class, 'myCurrent']);
 
         // Separate link APIs by job_order_id (standalone, no my-current dependency)
+        Route::get('/orders/links/{jobOrderId}/download-zip', OrderAssetZipDownloadController::class);
         Route::get('/orders/links/{jobOrderId}', [WorkflowController::class, 'orderAssetLinks']);
 
         // Backward-compatible alias

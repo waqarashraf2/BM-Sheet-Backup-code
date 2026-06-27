@@ -194,6 +194,25 @@ export const workflowService = {
       params: projectId ? { project_id: projectId } : undefined,
     }),
 
+  orderAssetZip: (
+    jobOrderId: string,
+    options?: { projectId?: number; offset?: number; limit?: number; displayOrder?: string },
+    onDownloadProgress?: (progress: number) => void,
+  ) =>
+    api.get<Blob>(`/workflow/orders/links/${encodeURIComponent(jobOrderId)}/download-zip`, {
+      params: {
+        ...(options?.projectId ? { project_id: options.projectId } : {}),
+        ...(typeof options?.offset === 'number' ? { offset: options.offset } : {}),
+        ...(typeof options?.limit === 'number' ? { limit: options.limit } : {}),
+        ...(options?.displayOrder ? { display_order: options.displayOrder } : {}),
+      },
+      responseType: 'blob',
+      onDownloadProgress: (event) => {
+        if (!event.total) return;
+        onDownloadProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      },
+    }),
+
   // Backward-compatible alias for order assets endpoint
   orderImageLinks: (jobOrderId: string, projectId?: number) =>
     api.get<{
