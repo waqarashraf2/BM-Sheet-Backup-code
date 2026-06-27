@@ -21,6 +21,7 @@ export interface ClientPortalUploadStatus {
   job_order_id?: string | null;
   client_portal_job_id?: string | null;
   order_number?: string | null;
+  client_name?: string | null;
   client_reference?: string | null;
   file_names: string[];
   uploaded_at: string | null;

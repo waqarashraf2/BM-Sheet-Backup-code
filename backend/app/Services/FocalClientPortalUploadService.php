@@ -63,6 +63,7 @@ class FocalClientPortalUploadService
             'job_order_id' => $jobOrderId !== '' ? $jobOrderId : null,
             'client_portal_job_id' => $clientPortalJobId !== '' ? $clientPortalJobId : null,
             'order_number' => $order->order_number,
+            'client_name' => $order->client_name,
             'client_reference' => $order->client_reference,
             'file_names' => $upload?->file_names ?? [],
             'uploaded_at' => $upload?->uploaded_at?->toIso8601String(),

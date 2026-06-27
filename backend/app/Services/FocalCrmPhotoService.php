@@ -363,6 +363,7 @@ class FocalCrmPhotoService
             'quantity' => $job['Quantity'] ?? null,
             'images' => (int) ($job['Quantity'] ?? 0),
             'parent_company' => $job['CustomerParentCompany'] ?? null,
+            'CustomerParentCompany' => $job['CustomerParentCompany'] ?? null,
             'metadata' => json_encode([
                 'focalcrm_id' => $job['Id'],
                 'customer_parent_company' => $job['CustomerParentCompany'] ?? null,
@@ -421,7 +422,7 @@ class FocalCrmPhotoService
      */
     protected function generateOrderNumber(string $clientPortalId): string
     {
-        return 'PHOTO-' . $clientPortalId;
+        return $clientPortalId;
     }
 
     /**
@@ -453,7 +454,7 @@ class FocalCrmPhotoService
 
                 if ($existing) {
                     $updateData = [];
-                    foreach (['client_reference', 'quantity', 'parent_company', 'metadata', 'updated_at'] as $field) {
+                    foreach (['client_reference', 'quantity', 'parent_company', 'CustomerParentCompany', 'metadata', 'updated_at'] as $field) {
                         if (array_key_exists($field, $record)) {
                             $updateData[$field] = $record[$field];
                         }

@@ -127,6 +127,10 @@ export default function ClientUpload() {
         return orderLookup;
     }, [orderInfo, orderLookup, queryOrderNumber, queryProjectId, status]);
     const uploadedFileNames = useMemo(() => Array.isArray(status?.file_names) ? status.file_names : [], [status]);
+    const displayClientName = useMemo(
+        () => String(status?.client_name || queryClientName || orderInfo?.clientName || '').trim(),
+        [orderInfo, queryClientName, status]
+    );
     const canUpload = !!orderLookup && status?.can_upload !== false;
     const uploadStatusLabel = canUpload && (!status?.status || status.status === 'not_required')
         ? 'not_uploaded'
@@ -140,11 +144,11 @@ export default function ClientUpload() {
         if (projectId) params.set('projectId', projectId);
         if (displayOrder) params.set('displayOrder', displayOrder);
         if (orderNumber) params.set('orderNumber', orderNumber);
-        if (queryClientName || orderInfo?.clientName) params.set('clientName', queryClientName || orderInfo?.clientName || '');
+        if (displayClientName) params.set('clientName', displayClientName);
         if (clientReference) params.set('clientReference', clientReference);
         if (orderLookup) params.set('clientOrderNumber', orderLookup);
         return params.toString();
-    }, [orderInfo, orderLookup, queryClientName, queryClientReference, queryDisplayOrder, queryOrderNumber, queryProjectId, status]);
+    }, [displayClientName, orderInfo, orderLookup, queryClientReference, queryDisplayOrder, queryOrderNumber, queryProjectId, status]);
 
     const invalidFiles = useMemo(() => {
         if (!status || !orderLookup) return [];
@@ -267,6 +271,7 @@ export default function ClientUpload() {
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
                                 <div className="font-semibold text-slate-900 mb-2">Order Reference</div>
                                 <div>Internal Order ID #{status.order_id || numericOrderId}</div>
+                                <div>Client Name: {displayClientName || 'Not available'}</div>
                                 <div>Upload Order Reference: {orderLookup || 'Not available'}</div>
                                 <div>Client Portal Job ID: {status.client_portal_job_id || status.order_number || queryOrderNumber || 'Not available'}</div>
                             </div>

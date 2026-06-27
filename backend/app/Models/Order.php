@@ -38,7 +38,7 @@ class Order extends Model
 
     protected $fillable = [
         'order_number', 'project_id', 'batch_number', 'client_reference',
-        'address', 'client_name', 'company', 'branch', 'photographer', 'client_portal_id', 'orignal_image_id',
+        'address', 'client_name', 'company', 'branch', 'photographer', 'parent_company', 'CustomerParentCompany', 'client_portal_id', 'orignal_image_id',
         'current_layer', 'status', 'workflow_state', 'workflow_type',
         'assigned_to', 'qa_supervisor_id', 'team_id', 'priority',
         'complexity_weight', 'estimated_minutes', 'order_type',
