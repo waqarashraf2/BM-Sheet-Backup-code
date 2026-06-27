@@ -247,17 +247,17 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
       {/* Panel */}
       <div className="relative ml-auto w-full max-w-2xl bg-white shadow-2xl flex flex-col h-full overflow-hidden animate-slide-in-right">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
-          <div className="flex items-center gap-3">
+        <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-slate-200 bg-slate-50">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
             <div className="p-2 bg-emerald-100 rounded-lg">
               <Eye className="h-5 w-5 text-emerald-700" />
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <h2 className="text-base font-semibold text-slate-900">QA Review</h2>
-              <p className="text-xs text-slate-500">{order.order_number} · {metadata.address || order.client_reference || '—'}</p>
+              <p className="text-xs leading-snug text-slate-500 break-words">{order.order_number} · {metadata.address || order.client_reference || '—'}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {/* Timer */}
             <button
               onClick={toggleTimer}

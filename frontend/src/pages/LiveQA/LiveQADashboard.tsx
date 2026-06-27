@@ -932,7 +932,7 @@ export default function LiveQADashboard() {
                               <div className="text-xs font-semibold text-slate-900">{order.order_number || '—'}</div>
                             </td>
                             <td className="px-3 py-3">
-                              <div className="max-w-md truncate text-xs text-slate-700" title={String(order.address || '')}>
+                              <div className="max-w-md whitespace-normal break-words text-xs leading-snug text-slate-700" title={String(order.address || '')}>
                                 {order.address || '—'}
                               </div>
                             </td>
@@ -1192,7 +1192,7 @@ export default function LiveQADashboard() {
 
                             {/* Address + Remaining Time */}
                             <td className="px-3 py-2">
-                              <div className="text-xs text-slate-700 truncate" title={String(order.address || '')}>
+                              <div className="whitespace-normal break-words text-xs leading-snug text-slate-700" title={String(order.address || '')}>
                                 {String(order.address || '') || '—'}
                               </div>
                               {!(order.workflow_state?.includes('COMPLETE') || order.workflow_state?.includes('DELIVER') || order.final_upload === 'yes') && (

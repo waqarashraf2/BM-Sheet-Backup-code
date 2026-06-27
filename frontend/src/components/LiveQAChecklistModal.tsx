@@ -559,7 +559,7 @@ export default function LiveQAChecklistModal({ open, onClose, projectId, orderNu
                 )}
                 <div>
                   <span className="text-slate-500 text-xs">Address</span>
-                  <p className="font-medium text-slate-700 truncate">{reviewData.order.address || '—'}</p>
+                  <p className="font-medium text-slate-700 whitespace-normal break-words">{reviewData.order.address || '—'}</p>
                 </div>
                 <div>
                   <span className="text-slate-500 text-xs">Worker ({layerLabel})</span>

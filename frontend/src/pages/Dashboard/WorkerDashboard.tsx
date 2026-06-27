@@ -1345,7 +1345,7 @@ export default function WorkerDashboard() {
                         {isProjectFieldVisible('address') && (
                           <div>
                             <div className="text-xs text-slate-400 mb-1">{getProjectFieldLabel('address', 'Address')}</div>
-                            <div className="text-sm font-medium text-slate-700 truncate" title={(currentOrder as any).address || '—'}>{(currentOrder as any).address || '—'}</div>
+                            <div className="text-sm font-medium leading-snug text-slate-700 whitespace-normal break-words" title={(currentOrder as any).address || '—'}>{(currentOrder as any).address || '—'}</div>
                           </div>
                         )}
 
@@ -1522,7 +1522,7 @@ export default function WorkerDashboard() {
                                 </td>
                               )}
                               {isProjectFieldVisible('address') && (
-                                <td className="px-4 py-3 text-slate-600 max-w-[200px] truncate" title={(order as any).address || ''}>{isDrawer ? '••••••' : ((order as any).address || '—')}</td>
+                                <td className="px-4 py-3 text-slate-600 whitespace-normal break-words" title={(order as any).address || ''}>{isDrawer ? '••••••' : ((order as any).address || '—')}</td>
                               )}
                               <td className="px-4 py-3">
                                 {dueInfo ? (
@@ -1682,7 +1682,7 @@ export default function WorkerDashboard() {
                     {isProjectFieldVisible('address') && (
                       <div>
                         <div className="text-xs text-slate-400 mb-1">{getProjectFieldLabel('address', 'Address')}</div>
-                        <div className="text-sm font-medium text-slate-700 truncate" title={(currentOrder as any).address || '—'}>{(currentOrder as any).address || '—'}</div>
+                        <div className="text-sm font-medium leading-snug text-slate-700 whitespace-normal break-words" title={(currentOrder as any).address || '—'}>{(currentOrder as any).address || '—'}</div>
                       </div>
                     )}
                     <div>

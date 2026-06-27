@@ -320,6 +320,19 @@ export const workflowService = {
       ...(options?.qc_portal_account_id ? { qc_portal_account_id: options.qc_portal_account_id } : {}),
     }),
 
+  bulkAssignRole: (role: 'designer' | 'qa', userId: number, orders: Array<{ id: number; project_id: number }>) =>
+    api.post<{
+      message: string;
+      assigned_count: number;
+      skipped_count: number;
+      assigned: Array<{ id: number; project_id: number; order_number?: string }>;
+      skipped: Array<{ id: number; project_id: number; order_number?: string; reason: string }>;
+    }>('/workflow/orders/bulk-assign-role', {
+      role,
+      user_id: userId,
+      orders,
+    }),
+
   // Supervisor: Update order instruction / plan type
   updateInstruction: (
     orderId: number,

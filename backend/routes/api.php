@@ -220,6 +220,7 @@ Route::prefix('assignments')->group(function () {
         Route::post('/projects/{id}/teams', [ProjectController::class, 'createTeam']);
         Route::delete('/projects/{projectId}/teams/{teamId}', [ProjectController::class, 'deleteTeam']);
         Route::post('/workflow/orders/{id}/reassign', [WorkflowController::class, 'reassignOrder']);
+        Route::post('/workflow/orders/bulk-assign-role', [WorkflowController::class, 'bulkAssignRole']);
         Route::post('/workflow/orders/{id}/assign-role', [WorkflowController::class, 'assignRole']);
         Route::get('/workflow/{projectId}/orders', [WorkflowController::class, 'projectOrders']);
         Route::get('/workflow/{projectId}/staffing', [WorkflowController::class, 'staffing']);

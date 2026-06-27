@@ -3896,6 +3896,226 @@ public function qaTeamMembers(Request $request)
      * POST /workflow/orders/{id}/assign-role
      * PM assigns a specific role (drawer/designer/checker/filler/qa) user to an order.
      */
+public function bulkAssignRole(Request $request)
+{
+    $request->validate([
+        'role' => 'required|in:designer,qa',
+        'user_id' => 'required|exists:users,id',
+        'orders' => 'required|array|min:1|max:200',
+        'orders.*.id' => 'required|integer',
+        'orders.*.project_id' => 'required|integer|exists:projects,id',
+    ]);
+
+    $actor = $request->user();
+    $role = $request->input('role');
+    $targetUser = \App\Models\User::findOrFail($request->input('user_id'));
+
+    if ($targetUser->role !== $role) {
+        return response()->json(['message' => "Selected user must have the {$role} role."], 422);
+    }
+
+    $allowedProjectIds = array_map('intval', $this->resolveProjectIds($actor));
+    $allowedProjectIdLookup = array_flip($allowedProjectIds);
+    $queuedState = self::getRoleQueueState($role);
+    $cols = self::getRoleAssignmentColumns($role);
+
+    if (!$queuedState || !$cols['id_col'] || !$cols['name_col']) {
+        return response()->json(['message' => 'Invalid role configuration.'], 422);
+    }
+
+    $assigned = [];
+    $skipped = [];
+
+    foreach ($request->input('orders', []) as $item) {
+        $orderId = (int) $item['id'];
+        $projectId = (int) $item['project_id'];
+
+        if (!isset($allowedProjectIdLookup[$projectId])) {
+            $skipped[] = [
+                'id' => $orderId,
+                'project_id' => $projectId,
+                'reason' => 'Access denied for this project.',
+            ];
+            continue;
+        }
+
+        $order = Order::findInProject($projectId, $orderId);
+        if (!$order) {
+            $skipped[] = [
+                'id' => $orderId,
+                'project_id' => $projectId,
+                'reason' => 'Order not found in selected project.',
+            ];
+            continue;
+        }
+
+        if ((int) $targetUser->project_id !== $projectId) {
+            $skipped[] = [
+                'id' => $orderId,
+                'project_id' => $projectId,
+                'order_number' => $order->order_number,
+                'reason' => 'Selected user is not assigned to this project.',
+            ];
+            continue;
+        }
+
+        if ($role === 'designer' && $order->workflow_type !== 'PH_2_LAYER') {
+            $skipped[] = [
+                'id' => $orderId,
+                'project_id' => $projectId,
+                'order_number' => $order->order_number,
+                'reason' => 'Designer bulk assignment is only for PH_2_LAYER orders.',
+            ];
+            continue;
+        }
+
+        $allowedStates = $role === 'designer'
+            ? ['RECEIVED', $queuedState]
+            : [$queuedState];
+
+        if (!in_array((string) $order->workflow_state, $allowedStates, true)) {
+            $skipped[] = [
+                'id' => $orderId,
+                'project_id' => $projectId,
+                'order_number' => $order->order_number,
+                'reason' => "Order is {$order->workflow_state}; only " . implode(' or ', $allowedStates) . ' can be bulk assigned.',
+            ];
+            continue;
+        }
+
+        [, $doneCol] = self::getRoleColumns($role);
+        if ($doneCol && strtolower(trim((string) ($order->{$doneCol} ?? ''))) === 'yes') {
+            $skipped[] = [
+                'id' => $orderId,
+                'project_id' => $projectId,
+                'order_number' => $order->order_number,
+                'reason' => 'This stage is already marked done.',
+            ];
+            continue;
+        }
+
+        try {
+            DB::transaction(function () use ($orderId, $projectId, $queuedState, $targetUser, $actor, $role, $cols, &$assigned) {
+                $allowedStates = $role === 'designer'
+                    ? ['RECEIVED', $queuedState]
+                    : [$queuedState];
+
+                $lockedOrder = Order::forProject($projectId)
+                    ->where('id', $orderId)
+                    ->whereIn('workflow_state', $allowedStates)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$lockedOrder) {
+                    throw new \RuntimeException('Order changed while assigning. Please refresh and try again.');
+                }
+
+                $oldAssignedTo = $lockedOrder->assigned_to;
+                $updates = [
+                    'assigned_to' => $targetUser->id,
+                    'team_id' => $targetUser->team_id,
+                    'workflow_state' => $queuedState,
+                    'status' => 'pending',
+                    $cols['id_col'] => $targetUser->id,
+                    $cols['name_col'] => $targetUser->name,
+                ];
+
+                if ($cols['time_col']) {
+                    $updates[$cols['time_col']] = now();
+                }
+                if ($role === 'designer') {
+                    $updates['current_layer'] = 'designer';
+                    $updates['workflow_type'] = 'PH_2_LAYER';
+                } elseif ($role === 'qa') {
+                    $updates['current_layer'] = 'qa';
+                }
+
+                $lockedOrder->update($updates);
+
+                if ($oldAssignedTo && (int) $oldAssignedTo !== (int) $targetUser->id) {
+                    \App\Models\User::where('id', $oldAssignedTo)
+                        ->where('wip_count', '>', 0)
+                        ->decrement('wip_count');
+                    $targetUser->increment('wip_count');
+                    self::pauseActiveWorkItemsForAssignment($lockedOrder, (int) $oldAssignedTo);
+                }
+
+                $verified = $lockedOrder->fresh();
+
+                $assignData = [
+                    'project_id' => $verified->project_id,
+                    'order_number' => $verified->order_number,
+                    'workflow_state' => $verified->workflow_state,
+                    'assigned_to' => $verified->assigned_to,
+                    $cols['id_col'] => $targetUser->id,
+                    $cols['name_col'] => $targetUser->name,
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                    'drawer_id' => $verified->drawer_id,
+                    'drawer_name' => $verified->drawer_name,
+                    'checker_id' => $verified->checker_id,
+                    'checker_name' => $verified->checker_name,
+                    'qa_id' => $verified->qa_id,
+                    'qa_name' => $verified->qa_name,
+                    'dassign_time' => $verified->dassign_time,
+                    'cassign_time' => $verified->cassign_time,
+                ];
+
+                if ($cols['time_col']) {
+                    $assignData[$cols['time_col']] = $verified->{$cols['time_col']};
+                }
+                if (Schema::hasColumn('crm_order_assignments', 'current_layer')) {
+                    $assignData['current_layer'] = $verified->current_layer;
+                }
+
+                DB::table('crm_order_assignments')->updateOrInsert(
+                    [
+                        'project_id' => $verified->project_id,
+                        'order_number' => $verified->order_number,
+                    ],
+                    $assignData
+                );
+
+                AuditService::log(
+                    $actor->id,
+                    'bulk_assign_role',
+                    'Order',
+                    (int) $verified->id,
+                    (int) $verified->project_id,
+                    ['assigned_to' => $oldAssignedTo],
+                    [
+                        'role' => $role,
+                        'user_id' => $targetUser->id,
+                        'user_name' => $targetUser->name,
+                        'workflow_state' => $verified->workflow_state,
+                    ]
+                );
+
+                $assigned[] = [
+                    'id' => (int) $verified->id,
+                    'project_id' => (int) $verified->project_id,
+                    'order_number' => $verified->order_number,
+                ];
+            });
+        } catch (\Throwable $e) {
+            $skipped[] = [
+                'id' => $orderId,
+                'project_id' => $projectId,
+                'order_number' => $order->order_number,
+                'reason' => $e->getMessage(),
+            ];
+        }
+    }
+
+    return response()->json([
+        'message' => count($assigned) . ' order(s) assigned. ' . count($skipped) . ' skipped.',
+        'assigned_count' => count($assigned),
+        'skipped_count' => count($skipped),
+        'assigned' => $assigned,
+        'skipped' => $skipped,
+    ]);
+}
+
 public function assignRole(Request $request, int $id)
 {
     $request->validate([

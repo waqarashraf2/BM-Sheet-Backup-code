@@ -927,10 +927,9 @@ export default function SupervisorAssignment() {
       if (aMs == null) return 1;
       if (bMs == null) return -1;
 
-      return aMs - bMs;
+    return aMs - bMs;
     });
   }, [displayedOrders, effectiveProjectId, parseDueIn]);
-
   /** Render remaining time badge with colour coding */
   const RemainingBadge = ({ dueIn, receivedAt }: { dueIn: string | null; receivedAt?: string | null }) => {
     const ms = parseDueIn(dueIn, receivedAt);
@@ -1021,6 +1020,46 @@ export default function SupervisorAssignment() {
   const [assignDropdown, setAssignDropdown] = useState<{ orderId: number; role: 'drawer' | 'checker' | 'filler' | 'qa'; anchorRect?: DOMRect; mode?: 'worker' | 'team' } | null>(null);
   const [assignSearch, setAssignSearch] = useState('');
   const [assigning, setAssigning] = useState(false);
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkRole, setBulkRole] = useState<'designer' | 'qa'>(isPhotoEnhancementQueue ? 'designer' : 'qa');
+  const [bulkUserId, setBulkUserId] = useState('');
+  const [bulkSelectedKeys, setBulkSelectedKeys] = useState<Set<string>>(new Set());
+  const [bulkAssigning, setBulkAssigning] = useState(false);
+
+  useEffect(() => {
+    setBulkRole(isPhotoEnhancementQueue ? 'designer' : 'qa');
+    setBulkUserId('');
+    setBulkSelectedKeys(new Set());
+  }, [isPhotoEnhancementQueue, selectedQueue]);
+
+  const getBulkOrderKey = useCallback((order: Pick<AssignmentOrder, 'id' | 'project_id'>) => (
+    `${order.project_id}:${order.id}`
+  ), []);
+
+  const isBulkAssignableOrder = useCallback((order: AssignmentOrder, role: 'designer' | 'qa') => {
+    const state = String(order.workflow_state || '').toUpperCase();
+
+    if (role === 'designer') {
+      return isPhotoEnhancementQueue && (state === 'QUEUED_DESIGN' || state === 'RECEIVED');
+    }
+
+    return state === 'QUEUED_QA';
+  }, [isPhotoEnhancementQueue]);
+
+  const bulkWorkers = useMemo(() => {
+    const list = workers[bulkRole] || [];
+    return list.filter((worker) => worker.is_active !== false && !worker.is_absent);
+  }, [bulkRole, workers]);
+  const bulkAssignableOrders = useMemo(
+    () => sortedOrders.filter((order) => isBulkAssignableOrder(order, bulkRole)),
+    [bulkRole, isBulkAssignableOrder, sortedOrders]
+  );
+  const selectedBulkOrders = useMemo(
+    () => sortedOrders.filter((order) => bulkSelectedKeys.has(getBulkOrderKey(order))),
+    [bulkSelectedKeys, getBulkOrderKey, sortedOrders]
+  );
+  const allBulkVisibleSelected = bulkAssignableOrders.length > 0
+    && bulkAssignableOrders.every((order) => bulkSelectedKeys.has(getBulkOrderKey(order)));
 
   const getAssignmentWorkerPool = useCallback((role: 'drawer' | 'checker' | 'filler' | 'qa') => {
     if (role === 'filler') {
@@ -1130,6 +1169,69 @@ export default function SupervisorAssignment() {
       toast({ type: 'error', title: 'Assignment Failed', description: e?.response?.data?.message || 'Could not assign role' });
     } finally { setAssigning(false); }
   }, [allWorkers, canReassignDoneOrders, hasAssigneeForRole, isOrderDoneForReassignmentRestriction, isPhotoEnhancementQueue, loadData, orders, toast]);
+
+  const toggleBulkOrder = useCallback((order: AssignmentOrder) => {
+    if (!isBulkAssignableOrder(order, bulkRole)) return;
+
+    const key = getBulkOrderKey(order);
+    setBulkSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, [bulkRole, getBulkOrderKey, isBulkAssignableOrder]);
+
+  const toggleAllBulkVisible = useCallback(() => {
+    setBulkSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (allBulkVisibleSelected) {
+        bulkAssignableOrders.forEach((order) => next.delete(getBulkOrderKey(order)));
+      } else {
+        bulkAssignableOrders.forEach((order) => next.add(getBulkOrderKey(order)));
+      }
+      return next;
+    });
+  }, [allBulkVisibleSelected, bulkAssignableOrders, getBulkOrderKey]);
+
+  const handleBulkAssign = useCallback(async () => {
+    const userId = Number(bulkUserId);
+    if (!userId || selectedBulkOrders.length === 0) return;
+
+    const confirmed = window.confirm(`Assign ${selectedBulkOrders.length} selected order(s) to the selected ${bulkRole}?`);
+    if (!confirmed) return;
+
+    try {
+      setBulkAssigning(true);
+      const res = await workflowService.bulkAssignRole(
+        bulkRole,
+        userId,
+        selectedBulkOrders.map((order) => ({ id: order.id, project_id: order.project_id }))
+      );
+      const assignedCount = res.data?.assigned_count ?? 0;
+      const skippedCount = res.data?.skipped_count ?? 0;
+      const firstSkipped = res.data?.skipped?.[0]?.reason;
+
+      toast({
+        type: assignedCount > 0 ? 'success' : 'error',
+        title: assignedCount > 0 ? 'Bulk assigned' : 'No orders assigned',
+        description: skippedCount > 0 && firstSkipped
+          ? `${assignedCount} assigned, ${skippedCount} skipped. First skip: ${firstSkipped}`
+          : res.data?.message || `${assignedCount} order(s) assigned.`,
+      });
+
+      setBulkSelectedKeys(new Set());
+      loadData(currentPage, true);
+    } catch (e: any) {
+      console.error(e);
+      toast({ type: 'error', title: 'Bulk assignment failed', description: e?.response?.data?.message || 'Could not assign selected orders.' });
+    } finally {
+      setBulkAssigning(false);
+    }
+  }, [bulkRole, bulkUserId, currentPage, loadData, selectedBulkOrders, toast]);
 
   const openAssignDropdown = (
     e: React.MouseEvent,
@@ -3166,6 +3268,78 @@ export default function SupervisorAssignment() {
               </AnimatePresence>
             </div>
 
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <Button
+                type="button"
+                variant={bulkMode ? 'secondary' : 'primary'}
+                size="sm"
+                onClick={() => {
+                  setBulkMode((open) => !open);
+                  setBulkSelectedKeys(new Set());
+                  setBulkUserId('');
+                }}
+                icon={<CheckSquare className="h-4 w-4" />}
+              >
+                Bulk Insert
+              </Button>
+
+              {bulkMode && (
+                <>
+                  <select
+                    value={bulkRole}
+                    onChange={(event) => {
+                      setBulkRole(event.target.value as 'designer' | 'qa');
+                      setBulkUserId('');
+                      setBulkSelectedKeys(new Set());
+                    }}
+                    className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                    aria-label="Bulk assignment role"
+                  >
+                    <option value="qa">QA</option>
+                    {isPhotoEnhancementQueue && <option value="designer">Designer</option>}
+                  </select>
+
+                  <select
+                    value={bulkUserId}
+                    onChange={(event) => setBulkUserId(event.target.value)}
+                    className="h-9 min-w-[180px] rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                    aria-label="Bulk assignment worker"
+                  >
+                    <option value="">Select {bulkRole === 'designer' ? 'Designer' : 'QA'}</option>
+                    {bulkWorkers.map((worker) => (
+                      <option key={worker.id} value={worker.id}>
+                        #{worker.id} - {worker.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!bulkUserId || selectedBulkOrders.length === 0 || bulkAssigning}
+                    loading={bulkAssigning}
+                    onClick={handleBulkAssign}
+                  >
+                    Assign Selected ({selectedBulkOrders.length})
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setBulkSelectedKeys(new Set())}
+                    disabled={selectedBulkOrders.length === 0 || bulkAssigning}
+                  >
+                    Clear
+                  </Button>
+
+                  <span className="text-xs text-slate-500">
+                    {bulkAssignableOrders.length} assignable on this page
+                  </span>
+                </>
+              )}
+            </div>
+
             {/* Orders table */}
             <div className="bg-white rounded-xl border border-slate-200/60 overflow-hidden">
               {loading ? (
@@ -3177,6 +3351,7 @@ export default function SupervisorAssignment() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs" style={{ tableLayout: 'fixed' }}>
                     <colgroup>
+                      {bulkMode && <col style={{ width: '44px' }} />}
                       {dynamicPrimaryColumns.map((column) => {
                         const adjustedStyle = getAdjustedColumnWidths(column);
                         return (
@@ -3198,6 +3373,18 @@ export default function SupervisorAssignment() {
 
                     <thead>
                       <tr className="bg-brand-700 text-white">
+                        {bulkMode && (
+                          <th className="px-2 py-2 text-center font-semibold">
+                            <input
+                              type="checkbox"
+                              checked={allBulkVisibleSelected}
+                              onChange={toggleAllBulkVisible}
+                              disabled={bulkAssignableOrders.length === 0 || bulkAssigning}
+                              className="h-4 w-4 rounded border-white/60 text-brand-600 focus:ring-white"
+                              aria-label="Select all assignable orders"
+                            />
+                          </th>
+                        )}
                         {dynamicPrimaryColumns.map((column) => (
                           <th
                             key={column.key}
@@ -3243,6 +3430,18 @@ export default function SupervisorAssignment() {
                             transition={{ delay: idx * 0.02 }}
                             className={`border-b border-slate-100 hover:bg-brand-50/40 transition-colors ${o.is_on_hold ? 'bg-red-50/50' : ''} ${recentlyReassignedOrderIds.has(o.id) ? 'bg-amber-50/90 ring-1 ring-inset ring-amber-200' : ''} ${highlightedIds.has(o.id) ? 'new-order-highlight' : ''} ${urgentOrderIds.has(o.id) ? 'bg-red-100/80' : ''} ${blinkingUrgentOrderIds.has(o.id) ? 'animate-pulse' : ''}`}>
 
+                            {bulkMode && (
+                              <td className="px-2 py-2 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={bulkSelectedKeys.has(getBulkOrderKey(o))}
+                                  onChange={() => toggleBulkOrder(o)}
+                                  disabled={!isBulkAssignableOrder(o, bulkRole) || bulkAssigning}
+                                  className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-30"
+                                  aria-label={`Select order ${o.order_number || o.id}`}
+                                />
+                              </td>
+                            )}
                             {dynamicPrimaryColumns.map((column) => (
                               <React.Fragment key={`${o.id}-${column.key}`}>
                                 {renderPrimaryCell(o, column)}

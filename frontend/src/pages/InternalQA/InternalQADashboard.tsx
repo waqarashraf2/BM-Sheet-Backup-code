@@ -676,8 +676,8 @@ export default function InternalQADashboard() {
                                                                 </span>
                                                             </td>
                                                         )}
-                                                        <td className="px-3 py-2.5 max-w-[200px]">
-                                                            <span className="text-xs text-slate-600 line-clamp-1" title={order.address || ''}>
+                                                        <td className="px-3 py-2.5 max-w-[260px]">
+                                                            <span className="text-xs leading-snug text-slate-600 whitespace-normal break-words" title={order.address || ''}>
                                                                 {order.address || '-'}
                                                             </span>
                                                         </td>

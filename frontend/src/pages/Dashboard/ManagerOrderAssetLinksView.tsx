@@ -51,7 +51,39 @@ interface ManagerOrderAssetLinksViewProps {
   }>;
 }
 
-const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.svg'];
+const IMAGE_EXTENSIONS = [
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.webp',
+  '.gif',
+  '.bmp',
+  '.tif',
+  '.tiff',
+  '.svg',
+  '.heic',
+  '.heif',
+  '.raw',
+  '.dng',
+  '.cr2',
+  '.cr3',
+  '.nef',
+  '.nrw',
+  '.arw',
+  '.srf',
+  '.sr2',
+  '.orf',
+  '.rw2',
+  '.raf',
+  '.pef',
+  '.srw',
+  '.x3f',
+  '.erf',
+  '.kdc',
+  '.mrw',
+  '.mos',
+  '.rwl',
+];
 
 function isImageLike(name: string, url: string): boolean {
   const lowerName = String(name || '').toLowerCase();
