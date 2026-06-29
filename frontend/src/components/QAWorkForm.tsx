@@ -33,6 +33,22 @@ interface ChecklistItem {
   checked: boolean;
 }
 
+type ImageCountStateKey = 'totalImages' | 'normalImages' | 'hdrImages' | 'editImages' | 'finalImages';
+type ImageCountPayloadKey =
+  | 'total_raw_files'
+  | 'hdr_images_count'
+  | 'single_images_count'
+  | 'final_images_count'
+  | 'edited_images_count';
+
+interface ImageCountFieldConfig {
+  stateKey: ImageCountStateKey;
+  label: string;
+  commentLabels: string[];
+  metadataKeys: string[];
+  payloadKey?: ImageCountPayloadKey;
+}
+
 const DEFAULT_CHECKLIST: ChecklistItem[] = [
   { id: 'dimensions', label: 'Dimensions & Measurements', description: 'All dimensions match source data accurately', checked: false },
   { id: 'format', label: 'File Format & Quality', description: 'Output meets required format, resolution, and quality standards', checked: false },
@@ -41,6 +57,40 @@ const DEFAULT_CHECKLIST: ChecklistItem[] = [
   { id: 'labeling', label: 'Labeling & Annotations', description: 'All labels, text, and annotations are correct and properly placed', checked: false },
   { id: 'completeness', label: 'Completeness Check', description: 'No missing elements — all required items present', checked: false },
 ];
+
+const DEFAULT_IMAGE_COUNT_FIELDS: ImageCountFieldConfig[] = [
+  { stateKey: 'totalImages', label: 'Total', commentLabels: ['Total'], metadataKeys: ['total_images', 'totalImages'] },
+  { stateKey: 'normalImages', label: 'Normal', commentLabels: ['Normal'], metadataKeys: ['normal_images', 'normalImages', 'normal_final_images', 'normalFinalImages'] },
+  { stateKey: 'hdrImages', label: 'HDR', commentLabels: ['HDR'], metadataKeys: ['hdr_images', 'hdrImages'] },
+  { stateKey: 'editImages', label: 'Edited', commentLabels: ['Edited', 'Edit'], metadataKeys: ['edit_images', 'editImages'] },
+  { stateKey: 'finalImages', label: 'Final', commentLabels: ['Final'], metadataKeys: ['final_images', 'finalImages'] },
+];
+
+const PROJECT_IMAGE_COUNT_FIELDS: Record<number, ImageCountFieldConfig[]> = {
+  17: [
+    { stateKey: 'totalImages', label: 'Total', commentLabels: ['Total'], metadataKeys: ['total_raw_files', 'total_images', 'totalImages'], payloadKey: 'total_raw_files' },
+    { stateKey: 'normalImages', label: 'Normal', commentLabels: ['Normal'], metadataKeys: ['single_images_count', 'normal_images', 'normalImages', 'normal_final_images', 'normalFinalImages'], payloadKey: 'single_images_count' },
+    { stateKey: 'hdrImages', label: 'HDR', commentLabels: ['HDR'], metadataKeys: ['hdr_images_count', 'hdr_images', 'hdrImages'], payloadKey: 'hdr_images_count' },
+    { stateKey: 'editImages', label: 'Edited', commentLabels: ['Edited', 'Edit'], metadataKeys: ['edited_images_count', 'edit_images', 'editImages'], payloadKey: 'edited_images_count' },
+    { stateKey: 'finalImages', label: 'Final', commentLabels: ['Final'], metadataKeys: ['final_images_count', 'final_images', 'finalImages'], payloadKey: 'final_images_count' },
+  ],
+  52: [
+    { stateKey: 'totalImages', label: 'Images', commentLabels: ['Images', 'Total'], metadataKeys: ['total_raw_files', 'images', 'totalImages'], payloadKey: 'total_raw_files' },
+    { stateKey: 'hdrImages', label: 'General QA Image', commentLabels: ['General QA Image', 'HDR'], metadataKeys: ['hdr_images_count', 'hdrImages'], payloadKey: 'hdr_images_count' },
+    { stateKey: 'normalImages', label: 'Human Edit', commentLabels: ['Human Edit', 'Normal'], metadataKeys: ['single_images_count', 'normalImages'], payloadKey: 'single_images_count' },
+    { stateKey: 'finalImages', label: 'GDPR', commentLabels: ['GDPR', 'Final'], metadataKeys: ['final_images_count', 'finalImages'], payloadKey: 'final_images_count' },
+    { stateKey: 'editImages', label: 'Edited Images', commentLabels: ['Edited Images', 'Edited', 'Edit'], metadataKeys: ['edited_images_count', 'editImages'], payloadKey: 'edited_images_count' },
+  ],
+};
+
+type ImageCountSyncPayload = {
+  project_id: number;
+  total_raw_files?: string | number | null;
+  hdr_images_count?: number | null;
+  single_images_count?: number | null;
+  final_images_count?: number | null;
+  edited_images_count?: number | null;
+};
 
 export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormProps) {
   const metadata = (order.metadata || {}) as Record<string, string>;
@@ -65,6 +115,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
 
   // PH_2_LAYER image counts
   const isPh2Layer = order.workflow_type === 'PH_2_LAYER';
+  const imageCountFields = PROJECT_IMAGE_COUNT_FIELDS[order.project_id] ?? DEFAULT_IMAGE_COUNT_FIELDS;
   const [totalImages, setTotalImages] = useState('');
   const [normalImages, setNormalImages] = useState('');
   const [hdrImages, setHdrImages] = useState('');
@@ -105,21 +156,51 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
       if (isPh2Layer) {
         const workItems = res.data.work_items ?? res.data.order?.work_items ?? [];
         const designerWorkItem = workItems.find((item: any) => item.stage === 'DESIGN');
+        const detailOrder = (res.data?.order || order) as unknown as Record<string, unknown>;
+        const metadataSource = ((res.data?.order?.metadata || order.metadata || {}) as Record<string, unknown>);
+        const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const extractNumber = (comments: string, labels: string[]) => {
+          for (const label of labels) {
+            const match = comments.match(new RegExp(`${escapeRegExp(label)}:\\s*(\\d+)`, 'i'));
+            if (match) return match[1];
+          }
+          return '';
+        };
+        const getStoredCount = (keys: string[]) => {
+          for (const key of keys) {
+            const value = detailOrder[key] ?? metadataSource[key];
+            if (value === null || value === undefined || value === '') continue;
+            return String(value);
+          }
+          return '';
+        };
+        const countsByState: Record<ImageCountStateKey, string> = {
+          totalImages: '',
+          normalImages: '',
+          hdrImages: '',
+          editImages: '',
+          finalImages: '',
+        };
 
         if (designerWorkItem && designerWorkItem.comments) {
           const comments = designerWorkItem.comments;
           // Parse: "Images — Total: 255, HDR: 200, Edit: 240, Normal: 50, Final: 255"
-          const extractNumber = (pattern: string) => {
-            const match = comments.match(new RegExp(pattern + ':\\s*(\\d+)', 'i'));
-            return match ? match[1] : '';
-          };
-
-          setTotalImages(extractNumber('Total'));
-          setHdrImages(extractNumber('HDR'));
-          setEditImages(extractNumber('Edit'));
-          setNormalImages(extractNumber('Normal'));
-          setFinalImages(extractNumber('Final'));
+          imageCountFields.forEach((field) => {
+            countsByState[field.stateKey] = extractNumber(comments, field.commentLabels);
+          });
         }
+
+        imageCountFields.forEach((field) => {
+          if (!countsByState[field.stateKey]) {
+            countsByState[field.stateKey] = getStoredCount(field.metadataKeys);
+          }
+        });
+
+        setTotalImages(countsByState.totalImages);
+        setHdrImages(countsByState.hdrImages);
+        setEditImages(countsByState.editImages);
+        setNormalImages(countsByState.normalImages);
+        setFinalImages(countsByState.finalImages);
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -148,18 +229,36 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
     try {
       const checklistSummary = !isPh2Layer ? checklist.map(c => `✓ ${c.label}`).join('\n') : '';
       const areaSummary = editableArea.trim() ? `\nArea: ${editableArea.trim()}` : '';
+      const imageCountValues: Record<ImageCountStateKey, string> = {
+        totalImages,
+        normalImages,
+        hdrImages,
+        editImages,
+        finalImages,
+      };
       const imageCountSummary = isPh2Layer && (totalImages || normalImages || hdrImages || editImages || finalImages)
-        ? `\nPhoto Selections — Total: ${totalImages || 0}, Normal: ${normalImages || 0}, HDR: ${hdrImages || 0}, Edited: ${editImages || 0}, Final: ${finalImages || 0}`
+        ? `\nPhoto Selections - ${imageCountFields.map((field) => `${field.label}: ${imageCountValues[field.stateKey] || 0}`).join(', ')}`
         : '';
       const comment = `QA Approved${checklistSummary ? `\n\nChecklist:\n${checklistSummary}` : ''}${areaSummary}${imageCountSummary}${notes ? `\n\nNotes: ${notes}` : ''}`;
       await workflowService.submitWork(order.id, comment);
 
-      if (isPh2Layer && order.project_id === 17) {
+      if (isPh2Layer && imageCountFields.some((field) => field.payloadKey)) {
         const parseOptionalCount = (value: string): number | null => {
           const trimmed = value.trim();
           if (trimmed === '') return null;
           if (!/^\d+$/.test(trimmed)) return null;
           return Number(trimmed);
+        };
+        const getCurrentOrder = (): Record<string, unknown> => (
+          (details?.order || order) as unknown as Record<string, unknown>
+        );
+        const normalizeCurrentString = (value: unknown): string | null => (
+          value === null || value === undefined || value === '' ? null : String(value)
+        );
+        const normalizeCurrentCount = (value: unknown): number | null => {
+          if (value === null || value === undefined || value === '') return null;
+          const count = Number(value);
+          return Number.isFinite(count) ? count : null;
         };
 
         const parsedTotalImages = parseOptionalCount(totalImages);
@@ -168,27 +267,52 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
         const parsedEditImages = parseOptionalCount(editImages);
         const parsedFinalImages = parseOptionalCount(finalImages);
 
-        const derivedTotalRawFiles = parsedTotalImages
-          ?? ((parsedNormalImages ?? 0) + (parsedHdrImages ?? 0));
+        const parsedByState: Record<ImageCountStateKey, number | null> = {
+          totalImages: parsedTotalImages,
+          normalImages: parsedNormalImages,
+          hdrImages: parsedHdrImages,
+          editImages: parsedEditImages,
+          finalImages: parsedFinalImages,
+        };
 
-        const hasCountPayload = [
-          derivedTotalRawFiles,
-          parsedHdrImages,
-          parsedNormalImages,
-          parsedFinalImages,
-          parsedEditImages,
-        ].some((value) => value !== null);
+        const nextByPayloadKey = imageCountFields.reduce<Record<ImageCountPayloadKey, string | number | null>>((nextValues, field) => {
+          if (!field.payloadKey) return nextValues;
 
-        if (hasCountPayload) {
+          nextValues[field.payloadKey] = field.payloadKey === 'total_raw_files'
+            ? (parsedByState[field.stateKey] === null ? null : String(parsedByState[field.stateKey]))
+            : parsedByState[field.stateKey];
+          return nextValues;
+        }, {} as Record<ImageCountPayloadKey, string | number | null>);
+
+        if (order.project_id === 17 && Object.prototype.hasOwnProperty.call(nextByPayloadKey, 'total_raw_files')) {
+          const totalRawFiles = parsedTotalImages
+            ?? ((parsedNormalImages ?? 0) + (parsedHdrImages ?? 0));
+          nextByPayloadKey.total_raw_files = String(totalRawFiles);
+        }
+
+        const currentOrder = getCurrentOrder();
+        const currentByPayloadKey: Record<ImageCountPayloadKey, string | number | null> = {
+          total_raw_files: normalizeCurrentString(currentOrder.total_raw_files),
+          hdr_images_count: normalizeCurrentCount(currentOrder.hdr_images_count),
+          single_images_count: normalizeCurrentCount(currentOrder.single_images_count),
+          final_images_count: normalizeCurrentCount(currentOrder.final_images_count),
+          edited_images_count: normalizeCurrentCount(currentOrder.edited_images_count),
+        };
+
+        const countPayload = Object.entries(nextByPayloadKey).reduce<ImageCountSyncPayload>((payload, [key, nextValue]) => {
+          const payloadKey = key as ImageCountPayloadKey;
+          if (currentByPayloadKey[payloadKey] !== nextValue) {
+            return {
+              ...payload,
+              [payloadKey]: nextValue,
+            };
+          }
+          return payload;
+        }, { project_id: order.project_id });
+
+        if (Object.keys(countPayload).length > 1) {
           try {
-            await workflowService.updateInstruction(order.id, {
-              project_id: order.project_id,
-              total_raw_files: derivedTotalRawFiles,
-              hdr_images_count: parsedHdrImages,
-              single_images_count: parsedNormalImages,
-              final_images_count: parsedFinalImages,
-              edited_images_count: parsedEditImages,
-            });
+            await workflowService.updateInstruction(order.id, countPayload);
           } catch (syncError) {
             console.warn('QA submit succeeded, but image count sync failed.', syncError);
           }
@@ -421,24 +545,28 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                       <label className="mb-2 block text-xs font-semibold text-slate-700">Photo Selections</label>
                       <div className="grid grid-cols-3 gap-3 md:grid-cols-5">
                         {[
-                          { label: 'Total', value: totalImages, setter: setTotalImages },
-                          { label: 'Normal', value: normalImages, setter: setNormalImages },
-                          { label: 'HDR', value: hdrImages, setter: setHdrImages },
-                          { label: 'Edited', value: editImages, setter: setEditImages },
-                          { label: 'Final', value: finalImages, setter: setFinalImages },
-                        ].map(field => (
-                          <div key={field.label}>
-                            <label className="block text-xs text-slate-500 mb-1">{field.label}</label>
-                            <input
-                              type="number"
-                              min="0"
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
-                              placeholder="0"
-                              value={field.value}
-                              onChange={e => field.setter(e.target.value)}
-                            />
-                          </div>
-                        ))}
+                          { stateKey: 'totalImages' as const, value: totalImages, setter: setTotalImages },
+                          { stateKey: 'normalImages' as const, value: normalImages, setter: setNormalImages },
+                          { stateKey: 'hdrImages' as const, value: hdrImages, setter: setHdrImages },
+                          { stateKey: 'editImages' as const, value: editImages, setter: setEditImages },
+                          { stateKey: 'finalImages' as const, value: finalImages, setter: setFinalImages },
+                        ].filter((stateField) => imageCountFields.some((field) => field.stateKey === stateField.stateKey)).map((stateField) => {
+                          const field = imageCountFields.find((item) => item.stateKey === stateField.stateKey)!;
+
+                          return (
+                            <div key={field.label}>
+                              <label className="block text-xs text-slate-500 mb-1">{field.label}</label>
+                              <input
+                                type="number"
+                                min="0"
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                                placeholder="0"
+                                value={stateField.value}
+                                onChange={e => stateField.setter(e.target.value)}
+                              />
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

@@ -55,11 +55,7 @@ class FocalClientPortalUploadService
         $clientPortalJobId = $this->uploadJobId($order);
         $customerParentCompany = $this->customerParentCompany($order);
         $upload = $canUpload && Schema::hasTable('client_portal_uploads')
-            ? ClientPortalUpload::query()
-                ->where('project_id', $order->project_id)
-                ->where('order_id', $order->id)
-                ->latest('id')
-                ->first()
+            ? $this->latestUploadForStatus($order)
             : null;
 
         return [
@@ -105,6 +101,17 @@ class FocalClientPortalUploadService
 
         $this->validateFileNames($projectId, $fileReference, $fileNames);
 
+        $existingSuccessfulUpload = ClientPortalUpload::query()
+            ->where('project_id', $projectId)
+            ->where('order_id', $order->id)
+            ->whereIn('status', ['uploaded', 'submitted'])
+            ->latest('id')
+            ->first();
+
+        if ($existingSuccessfulUpload) {
+            return $existingSuccessfulUpload;
+        }
+
         $record = ClientPortalUpload::create([
             'project_id' => $projectId,
             'order_id' => $order->id,
@@ -133,7 +140,7 @@ class FocalClientPortalUploadService
                     }
                 }
 
-                if (!$lastResponse->successful()) {
+                if (!$lastResponse->successful() && !$this->isAlreadyDoneResponse($lastResponse, ['uploaded', 'exists', 'duplicate'])) {
                     throw new \RuntimeException($this->responseMessage($lastResponse, 'Client portal upload failed.'));
                 }
             }
@@ -154,6 +161,26 @@ class FocalClientPortalUploadService
         }
 
         return $record->fresh();
+    }
+
+    private function latestUploadForStatus(Order $order): ?ClientPortalUpload
+    {
+        $successfulUpload = ClientPortalUpload::query()
+            ->where('project_id', $order->project_id)
+            ->where('order_id', $order->id)
+            ->whereIn('status', ['uploaded', 'submitted'])
+            ->latest('id')
+            ->first();
+
+        if ($successfulUpload) {
+            return $successfulUpload;
+        }
+
+        return ClientPortalUpload::query()
+            ->where('project_id', $order->project_id)
+            ->where('order_id', $order->id)
+            ->latest('id')
+            ->first();
     }
 
     public function submit(Order $order): ClientPortalUpload
@@ -179,8 +206,11 @@ class FocalClientPortalUploadService
             $response = $this->client()->post($this->submitUrl($record->job_order_id), []);
             $payload = $response->json();
             $acceptanceStatus = data_get($payload, 'Statuses.AcceptanceStatus');
-            $successful = $response->successful()
-                && ($acceptanceStatus === null || strcasecmp((string) $acceptanceStatus, 'Accepted') === 0);
+            $alreadySubmitted = $this->isAlreadyDoneResponse($response, ['submitted', 'completed', 'accepted']);
+            $successful = $alreadySubmitted || (
+                $response->successful()
+                && ($acceptanceStatus === null || strcasecmp((string) $acceptanceStatus, 'Accepted') === 0)
+            );
 
             if (!$successful) {
                 throw new \RuntimeException($this->responseMessage($response, 'Client portal submit failed.'));
@@ -370,5 +400,25 @@ class FocalClientPortalUploadService
         }
 
         return (string) ($message ?? $error ?? "{$fallback} (HTTP {$response->status()})");
+    }
+
+    private function isAlreadyDoneResponse(Response $response, array $keywords): bool
+    {
+        if (!in_array($response->status(), [400, 409], true)) {
+            return false;
+        }
+
+        $body = strtolower($response->body());
+        if ($body === '') {
+            return false;
+        }
+
+        foreach (array_merge(['already'], $keywords) as $keyword) {
+            if (str_contains($body, strtolower($keyword))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
