@@ -20,6 +20,55 @@ interface OrderDetails {
   timer_running: boolean;
 }
 
+type ImageCountStateKey = 'totalImages' | 'hdrImages' | 'editImages' | 'normalImages' | 'finalImages';
+type ImageCountPayloadKey =
+  | 'total_raw_files'
+  | 'hdr_images_count'
+  | 'single_images_count'
+  | 'final_images_count'
+  | 'edited_images_count';
+
+interface ImageCountFieldConfig {
+  stateKey: ImageCountStateKey;
+  label: string;
+  metadataKeys: string[];
+  payloadKey?: ImageCountPayloadKey;
+}
+
+const DEFAULT_IMAGE_COUNT_FIELDS: ImageCountFieldConfig[] = [
+  { stateKey: 'totalImages', label: 'Total Images', metadataKeys: ['total_images', 'totalImages'] },
+  { stateKey: 'hdrImages', label: 'HDR Images', metadataKeys: ['hdr_images', 'hdrImages'] },
+  { stateKey: 'editImages', label: 'Edit Images', metadataKeys: ['edit_images', 'editImages'] },
+  { stateKey: 'normalImages', label: 'Normal Images', metadataKeys: ['normal_images', 'normalImages', 'normal_final_images', 'normalFinalImages'] },
+  { stateKey: 'finalImages', label: 'Final Images', metadataKeys: ['final_images', 'finalImages'] },
+];
+
+const PROJECT_IMAGE_COUNT_FIELDS: Record<number, ImageCountFieldConfig[]> = {
+  17: [
+    { stateKey: 'totalImages', label: 'Total Raw Files', metadataKeys: ['total_raw_files', 'totalImages'], payloadKey: 'total_raw_files' },
+    { stateKey: 'hdrImages', label: 'HDR Images', metadataKeys: ['hdr_images_count', 'hdr_images', 'hdrImages'], payloadKey: 'hdr_images_count' },
+    { stateKey: 'editImages', label: 'Edited Images', metadataKeys: ['edited_images_count', 'edit_images', 'editImages'], payloadKey: 'edited_images_count' },
+    { stateKey: 'normalImages', label: 'Single Images', metadataKeys: ['single_images_count', 'normal_images', 'normalImages', 'normal_final_images', 'normalFinalImages'], payloadKey: 'single_images_count' },
+    { stateKey: 'finalImages', label: 'Final Images', metadataKeys: ['final_images_count', 'final_images', 'finalImages'], payloadKey: 'final_images_count' },
+  ],
+  52: [
+    { stateKey: 'totalImages', label: 'Images', metadataKeys: ['total_raw_files', 'images', 'totalImages'], payloadKey: 'total_raw_files' },
+    { stateKey: 'hdrImages', label: 'General QA Image', metadataKeys: ['hdr_images_count', 'hdrImages'], payloadKey: 'hdr_images_count' },
+    { stateKey: 'normalImages', label: 'Human Edit', metadataKeys: ['single_images_count', 'normalImages'], payloadKey: 'single_images_count' },
+    { stateKey: 'finalImages', label: 'GDPR', metadataKeys: ['final_images_count', 'finalImages'], payloadKey: 'final_images_count' },
+    { stateKey: 'editImages', label: 'Edited Images', metadataKeys: ['edited_images_count', 'editImages'], payloadKey: 'edited_images_count' },
+  ],
+};
+
+type ImageCountSyncPayload = {
+  project_id: number;
+  total_raw_files?: string | null;
+  hdr_images_count?: number | null;
+  single_images_count?: number | null;
+  final_images_count?: number | null;
+  edited_images_count?: number | null;
+};
+
 export default function DesignerWorkForm({ order, onComplete, onClose }: DesignerWorkFormProps) {
   const [details, setDetails] = useState<OrderDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,6 +87,7 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
 
   // PH_2_LAYER image counts
   const isPh2Layer = order.workflow_type === 'PH_2_LAYER';
+  const imageCountFields = PROJECT_IMAGE_COUNT_FIELDS[order.project_id] ?? DEFAULT_IMAGE_COUNT_FIELDS;
   const [totalImages, setTotalImages] = useState('');
   const [hdrImages, setHdrImages] = useState('');
   const [editImages, setEditImages] = useState('');
@@ -80,25 +130,33 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
       setDetails(res.data);
 
       const metadata = ((res.data?.order?.metadata || order.metadata || {}) as Record<string, unknown>);
+      const detailOrder = (res.data?.order || order) as unknown as Record<string, unknown>;
       const getCount = (keys: string[]) => {
         for (const key of keys) {
-          const value = metadata[key];
+          const value = detailOrder[key] ?? metadata[key];
           if (value === null || value === undefined || value === '') continue;
           return String(value);
         }
         return '';
       };
 
-      setTotalImages(getCount(['total_images', 'totalImages']));
-      setHdrImages(getCount(['hdr_images', 'hdrImages']));
-      setEditImages(getCount(['edit_images', 'editImages']));
+      const countsByState: Record<ImageCountStateKey, string> = {
+        totalImages: '',
+        hdrImages: '',
+        editImages: '',
+        normalImages: '',
+        finalImages: '',
+      };
 
-      const normal = getCount(['normal_images', 'normalImages']);
-      const final = getCount(['final_images', 'finalImages']);
-      const legacyNormalFinal = getCount(['normal_final_images', 'normalFinalImages']);
+      imageCountFields.forEach((field) => {
+        countsByState[field.stateKey] = getCount(field.metadataKeys);
+      });
 
-      setNormalImages(normal || legacyNormalFinal);
-      setFinalImages(final);
+      setTotalImages(countsByState.totalImages);
+      setHdrImages(countsByState.hdrImages);
+      setEditImages(countsByState.editImages);
+      setNormalImages(countsByState.normalImages);
+      setFinalImages(countsByState.finalImages);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -124,8 +182,15 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
       if (skyReplacement) tasks.push('Sky Replacement');
       if (virtualStaging) tasks.push('Virtual Staging');
 
-      const imageCounts = isPh2Layer && (totalImages || hdrImages || editImages || normalImages || finalImages)
-        ? `Images — Total: ${totalImages || 0}, HDR: ${hdrImages || 0}, Edit: ${editImages || 0}, Normal: ${normalImages || 0}, Final: ${finalImages || 0}`
+      const imageCountValues: Record<ImageCountStateKey, string> = {
+        totalImages,
+        hdrImages,
+        editImages,
+        normalImages,
+        finalImages,
+      };
+      const imageCounts = isPh2Layer && imageCountFields.some((field) => imageCountValues[field.stateKey])
+        ? `Images - ${imageCountFields.map((field) => `${field.label}: ${imageCountValues[field.stateKey] || 0}`).join(', ')}`
         : null;
 
       const summary = [
@@ -138,12 +203,23 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
 
       await workflowService.submitWork(order.id, summary);
 
-      if (isPh2Layer && order.project_id === 17) {
+      if (isPh2Layer && imageCountFields.some((field) => field.payloadKey)) {
         const parseOptionalCount = (value: string): number | null => {
           const trimmed = value.trim();
           if (trimmed === '') return null;
           if (!/^\d+$/.test(trimmed)) return null;
           return Number(trimmed);
+        };
+        const getCurrentOrder = (): Record<string, unknown> => (
+          (details?.order || order) as unknown as Record<string, unknown>
+        );
+        const normalizeCurrentString = (value: unknown): string | null => (
+          value === null || value === undefined || value === '' ? null : String(value)
+        );
+        const normalizeCurrentCount = (value: unknown): number | null => {
+          if (value === null || value === undefined || value === '') return null;
+          const count = Number(value);
+          return Number.isFinite(count) ? count : null;
         };
 
         const parsedTotalImages = parseOptionalCount(totalImages);
@@ -152,27 +228,52 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
         const parsedNormalImages = parseOptionalCount(normalImages);
         const parsedFinalImages = parseOptionalCount(finalImages);
 
-        const derivedTotalRawFiles = parsedTotalImages
-          ?? ((parsedNormalImages ?? 0) + (parsedHdrImages ?? 0));
+        const parsedByState: Record<ImageCountStateKey, number | null> = {
+          totalImages: parsedTotalImages,
+          hdrImages: parsedHdrImages,
+          editImages: parsedEditImages,
+          normalImages: parsedNormalImages,
+          finalImages: parsedFinalImages,
+        };
 
-        const hasCountPayload = [
-          derivedTotalRawFiles,
-          parsedHdrImages,
-          parsedNormalImages,
-          parsedFinalImages,
-          parsedEditImages,
-        ].some((value) => value !== null);
+        const nextByPayloadKey = imageCountFields.reduce<Record<ImageCountPayloadKey, string | number | null>>((nextValues, field) => {
+          if (!field.payloadKey) return nextValues;
 
-        if (hasCountPayload) {
+          nextValues[field.payloadKey] = field.payloadKey === 'total_raw_files'
+            ? (parsedByState[field.stateKey] === null ? null : String(parsedByState[field.stateKey]))
+            : parsedByState[field.stateKey];
+          return nextValues;
+        }, {} as Record<ImageCountPayloadKey, string | number | null>);
+
+        if (order.project_id === 17 && Object.prototype.hasOwnProperty.call(nextByPayloadKey, 'total_raw_files')) {
+          const totalRawFiles = parsedTotalImages
+            ?? ((parsedNormalImages ?? 0) + (parsedHdrImages ?? 0));
+          nextByPayloadKey.total_raw_files = String(totalRawFiles);
+        }
+
+        const currentOrder = getCurrentOrder();
+        const currentByPayloadKey: Record<ImageCountPayloadKey, string | number | null> = {
+          total_raw_files: normalizeCurrentString(currentOrder.total_raw_files),
+          hdr_images_count: normalizeCurrentCount(currentOrder.hdr_images_count),
+          single_images_count: normalizeCurrentCount(currentOrder.single_images_count),
+          final_images_count: normalizeCurrentCount(currentOrder.final_images_count),
+          edited_images_count: normalizeCurrentCount(currentOrder.edited_images_count),
+        };
+
+        const countPayload = Object.entries(nextByPayloadKey).reduce<ImageCountSyncPayload>((payload, [key, nextValue]) => {
+          const payloadKey = key as ImageCountPayloadKey;
+          if (currentByPayloadKey[payloadKey] !== nextValue) {
+            return {
+              ...payload,
+              [payloadKey]: nextValue,
+            };
+          }
+          return payload;
+        }, { project_id: order.project_id });
+
+        if (Object.keys(countPayload).length > 1) {
           try {
-            await workflowService.updateInstruction(order.id, {
-              project_id: order.project_id,
-              total_raw_files: derivedTotalRawFiles,
-              hdr_images_count: parsedHdrImages,
-              single_images_count: parsedNormalImages,
-              final_images_count: parsedFinalImages,
-              edited_images_count: parsedEditImages,
-            });
+            await workflowService.updateInstruction(order.id, countPayload);
           } catch (syncError) {
             console.warn('Submit succeeded, but image count sync failed.', syncError);
           }
@@ -430,24 +531,28 @@ export default function DesignerWorkForm({ order, onComplete, onClose }: Designe
                       <label className="block text-xs font-semibold text-slate-700 mb-2">Image Counts</label>
                       <div className="grid grid-cols-2 gap-3">
                         {[
-                          { label: 'Total Images', value: totalImages, setter: setTotalImages },
-                          { label: 'HDR Images', value: hdrImages, setter: setHdrImages },
-                          { label: 'Edit Images', value: editImages, setter: setEditImages },
-                          { label: 'Normal Images', value: normalImages, setter: setNormalImages },
-                          { label: 'Final Images', value: finalImages, setter: setFinalImages },
-                        ].map(field => (
-                          <div key={field.label}>
-                            <label className="block text-xs text-slate-500 mb-1">{field.label}</label>
-                            <input
-                              type="number"
-                              min="0"
-                              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 focus:ring-pink-500 focus:border-pink-500"
-                              placeholder="0"
-                              value={field.value}
-                              onChange={e => field.setter(e.target.value)}
-                            />
-                          </div>
-                        ))}
+                          { stateKey: 'totalImages' as const, value: totalImages, setter: setTotalImages },
+                          { stateKey: 'hdrImages' as const, value: hdrImages, setter: setHdrImages },
+                          { stateKey: 'editImages' as const, value: editImages, setter: setEditImages },
+                          { stateKey: 'normalImages' as const, value: normalImages, setter: setNormalImages },
+                          { stateKey: 'finalImages' as const, value: finalImages, setter: setFinalImages },
+                        ].filter((stateField) => imageCountFields.some((field) => field.stateKey === stateField.stateKey)).map((stateField) => {
+                          const field = imageCountFields.find((item) => item.stateKey === stateField.stateKey)!;
+
+                          return (
+                            <div key={field.label}>
+                              <label className="block text-xs text-slate-500 mb-1">{field.label}</label>
+                              <input
+                                type="number"
+                                min="0"
+                                className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 focus:ring-pink-500 focus:border-pink-500"
+                                placeholder="0"
+                                value={stateField.value}
+                                onChange={e => stateField.setter(e.target.value)}
+                              />
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

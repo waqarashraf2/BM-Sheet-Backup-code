@@ -257,6 +257,8 @@ class FocalAiImportService
         $receivedAt = $this->parseTimestamp($job['timestamp'] ?? null);
         $now = new DateTime('now', new DateTimeZone($this->timezone));
         $rawFilesCount = (int) ($job['number_of_images'] ?? 0);
+        $dueInHours = $rawFilesCount > 20 ? 6 : 3;
+        $dueIn = $receivedAt ? (clone $receivedAt)->modify("+{$dueInHours} hours") : null;
 
         return [
             'order_number' => $propId,
@@ -271,6 +273,7 @@ class FocalAiImportService
             'complexity_weight' => 1,
             'order_type' => 'standard',
             'received_at' => $receivedAt?->format('Y-m-d H:i:s'),
+            'due_in' => $dueIn?->format('Y-m-d H:i:s'),
             'total_raw_files' => (string) $rawFilesCount,
             'year' => $receivedAt ? (int) $receivedAt->format('Y') : null,
             'month' => $receivedAt ? (int) $receivedAt->format('m') : null,
@@ -289,6 +292,7 @@ class FocalAiImportService
             'client_reference' => $record['client_reference'] ?? null,
             'client_portal_id' => $record['client_portal_id'] ?? null,
             'received_at' => $record['received_at'] ?? null,
+            'due_in' => $record['due_in'] ?? null,
             'total_raw_files' => $record['total_raw_files'] ?? null,
             'year' => $record['year'] ?? null,
             'month' => $record['month'] ?? null,

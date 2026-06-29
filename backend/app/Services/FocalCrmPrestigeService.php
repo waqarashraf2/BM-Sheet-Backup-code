@@ -213,6 +213,9 @@ class FocalCrmPrestigeService
         $clientPortalId = (string) $job['Id'];
         $receivedAt = $this->parseDateAssigned($job['DateAssigned'] ?? null, $now);
         $dueDate = (clone $receivedAt)->modify('+1 days');
+        $imageCount = max(0, (int) ($job['Quantity'] ?? 0));
+        $dueInHours = $imageCount > 20 ? 6 : 3;
+        $dueIn = (clone $receivedAt)->modify("+{$dueInHours} hours");
 
         return [
             'order_number' => 'PRESTIGE-' . $clientPortalId,
@@ -231,14 +234,16 @@ class FocalCrmPrestigeService
             'workflow_state' => 'RECEIVED',
             'workflow_type' => 'PH_2_LAYER',
             'received_at' => $receivedAt->format('Y-m-d H:i:s'),
+            'due_in' => $dueIn->format('Y-m-d H:i:s'),
             'due_date' => $dueDate->format('Y-m-d'),
             'priority' => 'normal',
             'import_source' => 'api',
-            'images' => (int) ($job['Quantity'] ?? 0),
+            'images' => $imageCount,
             'metadata' => json_encode([
                 'focalcrm_id' => $job['Id'] ?? null,
                 'product' => $job['Product'] ?? null,
                 'quantity' => $job['Quantity'] ?? null,
+                'due_in_hours' => $dueInHours,
                 'property_reference' => $job['Property']['Reference'] ?? null,
                 'property_address' => $job['Property']['Address'] ?? null,
                 'raw_api_response' => $job,
@@ -307,7 +312,7 @@ class FocalCrmPrestigeService
 
                 if ($existing) {
                     $updateData = [];
-                    foreach (['clint_order_number', 'client_reference', 'images', 'metadata', 'updated_at'] as $field) {
+                    foreach (['clint_order_number', 'client_reference', 'images', 'due_in', 'metadata', 'updated_at'] as $field) {
                         if (array_key_exists($field, $record)) {
                             $updateData[$field] = $record[$field];
                         }
@@ -403,6 +408,9 @@ class FocalCrmPrestigeService
 
     /**
      * Store Prestige image links without deleting existing rows.
+     *
+     * Accept is triggered only after the order exists locally in DB. This avoids
+     * accepting jobs before they are safely stored in the local order table.
      */
     protected function storeJobAssets(array $job): void
     {
@@ -413,16 +421,28 @@ class FocalCrmPrestigeService
         }
 
         $this->ensureImagesTableExists();
+
+        if (!$this->orderExists($jobOrderId)) {
+            Log::warning('Skipping prestige accept/image fetch because order is not stored locally yet', [
+                'job_order_id' => $jobOrderId,
+            ]);
+            return;
+        }
+
         $images = $this->extractImagesFromJob($job);
 
-        if (empty($images)) {
-            $assetDetail = $this->fetchAssetDetail($jobOrderId);
-            $images = $this->extractImagesFromAssetDetail($assetDetail);
+        $accepted = $this->acceptJob($jobOrderId);
+        $assetDetail = $this->fetchAssetDetail($jobOrderId);
+        $assetImages = $this->extractImagesFromAssetDetail($assetDetail);
+
+        if (!empty($assetImages)) {
+            $images = array_merge($images, $assetImages);
         }
 
         if (empty($images)) {
             Log::info('No prestige image URLs found for job', [
                 'job_order_id' => $jobOrderId,
+                'accepted' => $accepted,
             ]);
             return;
         }
@@ -459,6 +479,87 @@ class FocalCrmPrestigeService
                 ]);
             }
         }
+    }
+
+    /**
+     * Confirm the order was inserted/updated locally before any portal accept.
+     */
+    protected function orderExists(string $jobOrderId): bool
+    {
+        return DB::table($this->tableName)
+            ->where('client_portal_id', $jobOrderId)
+            ->exists();
+    }
+
+    /**
+     * Send the client portal accept request only after local DB receipt.
+     */
+    protected function acceptJob(string $jobOrderId): bool
+    {
+        if (!$this->orderExists($jobOrderId)) {
+            Log::warning('Skipping prestige accept because order does not exist locally', [
+                'job_order_id' => $jobOrderId,
+            ]);
+            return false;
+        }
+
+        $endpoints = [
+            str_replace('/v3/', '/v2/', rtrim($this->apiUrl, '/')) . '/' . $jobOrderId . '/accept',
+            rtrim($this->apiUrl, '/') . '/' . $jobOrderId . '/accept',
+        ];
+
+        foreach ($endpoints as $acceptUrl) {
+            try {
+                $response = Http::timeout(60)
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Accept' => '*/*',
+                        'Supplier-Secret' => $this->supplierSecret,
+                        'Ocp-Apim-Subscription-Key' => $this->subscriptionKey,
+                    ])
+                    ->post($acceptUrl, [
+                        'supplierReference' => 'BM-' . mt_rand(),
+                    ]);
+
+                if ($response->successful()) {
+                    Log::info('FocalCRM Prestige job accepted successfully', [
+                        'job_order_id' => $jobOrderId,
+                        'url' => $acceptUrl,
+                        'status' => $response->status(),
+                        'response' => $response->json(),
+                    ]);
+                    return true;
+                }
+
+                if (in_array($response->status(), [400, 409, 422], true)) {
+                    Log::warning('FocalCRM Prestige accept did not succeed but may already be accepted or invalid', [
+                        'job_order_id' => $jobOrderId,
+                        'url' => $acceptUrl,
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+                    return false;
+                }
+
+                Log::debug('FocalCRM Prestige accept endpoint response', [
+                    'job_order_id' => $jobOrderId,
+                    'url' => $acceptUrl,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+            } catch (Exception $e) {
+                Log::warning('FocalCRM Prestige accept request failed', [
+                    'job_order_id' => $jobOrderId,
+                    'url' => $acceptUrl,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        Log::warning('FocalCRM Prestige accept endpoint not available for job', [
+            'job_order_id' => $jobOrderId,
+        ]);
+        return false;
     }
 
     protected function fetchAssetDetail(string $jobOrderId): array
