@@ -624,6 +624,33 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
               {/* History Tab */}
               {activeTab === 'history' && details && (
                 <div className="space-y-4">
+                  {details.work_items && details.work_items.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-slate-500 uppercase mb-2">Work History</h4>
+                      <div className="space-y-2">
+                        {details.work_items
+                          .filter((item) => item.comments || item.rework_reason || item.rejection_code)
+                          .map((item) => (
+                            <div key={item.id} className="p-3 bg-slate-50 rounded-lg text-xs">
+                              <div className="mb-1 flex flex-wrap items-center gap-2 text-slate-500">
+                                <span className="font-semibold text-slate-700">{item.stage}</span>
+                                {item.assignedUser?.name && <span>{item.assignedUser.name}</span>}
+                                {item.completed_at && <span>{new Date(item.completed_at).toLocaleString()}</span>}
+                              </div>
+                              {item.comments && (
+                                <div className="whitespace-pre-wrap text-slate-700">{item.comments}</div>
+                              )}
+                              {item.rework_reason && (
+                                <div className="mt-1 text-rose-700">Rework: {item.rework_reason}</div>
+                              )}
+                              {item.rejection_code && (
+                                <div className="mt-1 text-rose-700">Code: {item.rejection_code}</div>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
                   {details.help_requests && details.help_requests.length > 0 && (
                     <div>
                       <h4 className="text-xs font-semibold text-slate-500 uppercase mb-2">Help Requests</h4>
@@ -655,7 +682,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                       <div className="p-3 bg-blue-50 rounded-lg text-xs text-blue-700">{details.supervisor_notes}</div>
                     </div>
                   )}
-                  {(!details.help_requests?.length && !details.issue_flags?.length && !details.supervisor_notes) && (
+                  {(!details.work_items?.some((item) => item.comments || item.rework_reason || item.rejection_code) && !details.help_requests?.length && !details.issue_flags?.length && !details.supervisor_notes) && (
                     <div className="text-center py-8 text-sm text-slate-400">No history available for this order.</div>
                   )}
                 </div>
