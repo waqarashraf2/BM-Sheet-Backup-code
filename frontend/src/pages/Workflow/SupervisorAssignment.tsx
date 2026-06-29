@@ -1802,6 +1802,8 @@ export default function SupervisorAssignment() {
     }
 
     return [
+      { key: '__received_at_datetime', label: 'Received At Date Time' },
+      { key: '__due_in_datetime', label: 'Due In Date Time' },
       ...primaryColumns,
       ...(showTeamNameColumn ? [{ key: '__team_name', label: 'Team' }] : []),
       ...visibleRoleColumns.map((column) => ({ key: column.key, label: column.label })),
@@ -1970,6 +1972,25 @@ export default function SupervisorAssignment() {
     return `${Number(parsed.month)}/${Number(parsed.day)}/${parsed.year}`;
   }, [parseDisplayDateValue]);
 
+  const fmtExportDateTime = useCallback((t: string | null) => {
+    const parsed = parseStoredDateTime(t);
+    if (!parsed) return '-';
+
+    return `${Number(parsed.month)}/${Number(parsed.day)}/${parsed.year} ${parsed.hour}:${parsed.minute}:${parsed.second}`;
+  }, [parseStoredDateTime]);
+
+  const fmtDueInExportDateTime = useCallback((t: string | null) => {
+    if (!t) return '-';
+
+    const trimmed = t.trim();
+    const slashDateTimeMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (slashDateTimeMatch) {
+      return `${Number(slashDateTimeMatch[1])}/${Number(slashDateTimeMatch[2])}/${slashDateTimeMatch[3]} ${String(Number(slashDateTimeMatch[4])).padStart(2, '0')}:${slashDateTimeMatch[5]}:${slashDateTimeMatch[6] ?? '00'}`;
+    }
+
+    return fmtExportDateTime(trimmed);
+  }, [fmtExportDateTime]);
+
   const fmtOrderExportDate = useCallback((order: AssignmentOrder) => {
     return fmtExportDate(getOrderDisplayDateSource(order));
   }, [fmtExportDate, getOrderDisplayDateSource]);
@@ -1980,8 +2001,12 @@ export default function SupervisorAssignment() {
         return fmtOrderExportDate(order);
       case 'received_at':
         return fmtExportDate(order.received_at);
+      case '__received_at_datetime':
+        return fmtExportDateTime(order.received_at);
       case '__received_time':
         return fmtReceivedTime(order.received_at);
+      case '__due_in_datetime':
+        return fmtDueInExportDateTime(order.due_in);
       case '__batch_number':
         return String((order as any).batch_number || '-');
       case '__remaining':

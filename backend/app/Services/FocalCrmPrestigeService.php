@@ -218,7 +218,7 @@ class FocalCrmPrestigeService
         $dueIn = (clone $receivedAt)->modify("+{$dueInHours} hours");
 
         return [
-            'order_number' => 'PRESTIGE-' . $clientPortalId,
+            'order_number' => $clientPortalId,
             'project_id' => $this->projectId,
             'client_portal_id' => $clientPortalId,
             'clint_order_number' => $clientPortalId,
