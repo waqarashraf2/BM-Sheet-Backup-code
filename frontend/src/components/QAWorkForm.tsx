@@ -59,23 +59,23 @@ const DEFAULT_CHECKLIST: ChecklistItem[] = [
 ];
 
 const DEFAULT_IMAGE_COUNT_FIELDS: ImageCountFieldConfig[] = [
-  { stateKey: 'totalImages', label: 'Total', commentLabels: ['Total'], metadataKeys: ['total_images', 'totalImages'] },
-  { stateKey: 'normalImages', label: 'Normal', commentLabels: ['Normal'], metadataKeys: ['normal_images', 'normalImages', 'normal_final_images', 'normalFinalImages'] },
-  { stateKey: 'hdrImages', label: 'HDR', commentLabels: ['HDR'], metadataKeys: ['hdr_images', 'hdrImages'] },
-  { stateKey: 'editImages', label: 'Edited', commentLabels: ['Edited', 'Edit'], metadataKeys: ['edit_images', 'editImages'] },
-  { stateKey: 'finalImages', label: 'Final', commentLabels: ['Final'], metadataKeys: ['final_images', 'finalImages'] },
+  { stateKey: 'totalImages', label: 'Total', commentLabels: ['Total Raw Files', 'Total Images', 'Images', 'Total'], metadataKeys: ['total_raw_files', 'images', 'total_images', 'totalImages'] },
+  { stateKey: 'normalImages', label: 'Normal', commentLabels: ['Single Images', 'Normal Images', 'Normal'], metadataKeys: ['single_images_count', 'normal_images', 'normalImages', 'normal_final_images', 'normalFinalImages'] },
+  { stateKey: 'hdrImages', label: 'HDR', commentLabels: ['HDR Images', 'HDR'], metadataKeys: ['hdr_images_count', 'hdr_images', 'hdrImages'] },
+  { stateKey: 'editImages', label: 'Edited', commentLabels: ['Edited Images', 'Edit Images', 'Edited', 'Edit'], metadataKeys: ['edited_images_count', 'edit_images', 'editImages'] },
+  { stateKey: 'finalImages', label: 'Final', commentLabels: ['Final Images', 'Final'], metadataKeys: ['final_images_count', 'final_images', 'finalImages'] },
 ];
 
 const PROJECT_IMAGE_COUNT_FIELDS: Record<number, ImageCountFieldConfig[]> = {
   17: [
-    { stateKey: 'totalImages', label: 'Total', commentLabels: ['Total'], metadataKeys: ['total_raw_files', 'total_images', 'totalImages'], payloadKey: 'total_raw_files' },
-    { stateKey: 'normalImages', label: 'Normal', commentLabels: ['Normal'], metadataKeys: ['single_images_count', 'normal_images', 'normalImages', 'normal_final_images', 'normalFinalImages'], payloadKey: 'single_images_count' },
-    { stateKey: 'hdrImages', label: 'HDR', commentLabels: ['HDR'], metadataKeys: ['hdr_images_count', 'hdr_images', 'hdrImages'], payloadKey: 'hdr_images_count' },
-    { stateKey: 'editImages', label: 'Edited', commentLabels: ['Edited', 'Edit'], metadataKeys: ['edited_images_count', 'edit_images', 'editImages'], payloadKey: 'edited_images_count' },
-    { stateKey: 'finalImages', label: 'Final', commentLabels: ['Final'], metadataKeys: ['final_images_count', 'final_images', 'finalImages'], payloadKey: 'final_images_count' },
+    { stateKey: 'totalImages', label: 'Total', commentLabels: ['Total Raw Files', 'Total Images', 'Images', 'Total'], metadataKeys: ['total_raw_files', 'images', 'total_images', 'totalImages'], payloadKey: 'total_raw_files' },
+    { stateKey: 'normalImages', label: 'Normal', commentLabels: ['Single Images', 'Normal Images', 'Normal'], metadataKeys: ['single_images_count', 'normal_images', 'normalImages', 'normal_final_images', 'normalFinalImages'], payloadKey: 'single_images_count' },
+    { stateKey: 'hdrImages', label: 'HDR', commentLabels: ['HDR Images', 'HDR'], metadataKeys: ['hdr_images_count', 'hdr_images', 'hdrImages'], payloadKey: 'hdr_images_count' },
+    { stateKey: 'editImages', label: 'Edited', commentLabels: ['Edited Images', 'Edit Images', 'Edited', 'Edit'], metadataKeys: ['edited_images_count', 'edit_images', 'editImages'], payloadKey: 'edited_images_count' },
+    { stateKey: 'finalImages', label: 'Final', commentLabels: ['Final Images', 'Final'], metadataKeys: ['final_images_count', 'final_images', 'finalImages'], payloadKey: 'final_images_count' },
   ],
   52: [
-    { stateKey: 'totalImages', label: 'Images', commentLabels: ['Images', 'Total'], metadataKeys: ['total_raw_files', 'images', 'totalImages'], payloadKey: 'total_raw_files' },
+    { stateKey: 'totalImages', label: 'Images', commentLabels: ['Total Raw Files', 'Total Images', 'Images', 'Total'], metadataKeys: ['total_raw_files', 'images', 'totalImages'], payloadKey: 'total_raw_files' },
     { stateKey: 'hdrImages', label: 'General QA Image', commentLabels: ['General QA Image', 'HDR'], metadataKeys: ['hdr_images_count', 'hdrImages'], payloadKey: 'hdr_images_count' },
     { stateKey: 'normalImages', label: 'Human Edit', commentLabels: ['Human Edit', 'Normal'], metadataKeys: ['single_images_count', 'normalImages'], payloadKey: 'single_images_count' },
     { stateKey: 'finalImages', label: 'GDPR', commentLabels: ['GDPR', 'Final'], metadataKeys: ['final_images_count', 'finalImages'], payloadKey: 'final_images_count' },
@@ -155,7 +155,9 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
       // For PH_2_LAYER, load image counts from designer's work_items comments
       if (isPh2Layer) {
         const workItems = res.data.work_items ?? res.data.order?.work_items ?? [];
-        const designerWorkItem = workItems.find((item: any) => item.stage === 'DESIGN');
+        const designerWorkItem = [...workItems]
+          .reverse()
+          .find((item: any) => String(item.stage || '').toUpperCase() === 'DESIGN');
         const detailOrder = (res.data?.order || order) as unknown as Record<string, unknown>;
         const metadataSource = ((res.data?.order?.metadata || order.metadata || {}) as Record<string, unknown>);
         const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -165,6 +167,10 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
             if (match) return match[1];
           }
           return '';
+        };
+        const extractDesignerComment = (comments: string) => {
+          const match = comments.match(/(?:^|\n)Comments:\s*([\s\S]*?)(?=\n[A-Z][A-Za-z ]*:\s*|\n*$)/);
+          return match?.[1]?.trim() || '';
         };
         const getStoredCount = (keys: string[]) => {
           for (const key of keys) {
@@ -184,6 +190,10 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
 
         if (designerWorkItem && designerWorkItem.comments) {
           const comments = designerWorkItem.comments;
+          const designerComment = extractDesignerComment(comments);
+          if (designerComment) {
+            setNotes((currentNotes) => currentNotes || designerComment);
+          }
           // Parse: "Images — Total: 255, HDR: 200, Edit: 240, Normal: 50, Final: 255"
           imageCountFields.forEach((field) => {
             countsByState[field.stateKey] = extractNumber(comments, field.commentLabels);
