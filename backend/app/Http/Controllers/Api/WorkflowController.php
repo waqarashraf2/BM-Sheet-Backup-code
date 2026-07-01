@@ -2874,6 +2874,7 @@ public function startTimer(Request $request, int $id)
             'code' => 'nullable|string|max:255',
             'it_datetime' => 'nullable|date',
             'total_raw_files' => 'nullable|string|max:255',
+            'vf_count' => 'nullable|string|max:250',
             'hdr_images_count' => 'nullable|integer|min:0',
             'single_images_count' => 'nullable|integer|min:0',
             'final_images_count' => 'nullable|integer|min:0',
@@ -2943,6 +2944,8 @@ public function startTimer(Request $request, int $id)
 
         $totalRawFiles = trim((string) ($request->input('total_raw_files') ?? ''));
         $totalRawFiles = $totalRawFiles === '' ? null : $totalRawFiles;
+        $vfCount = trim((string) ($request->input('vf_count') ?? ''));
+        $vfCount = $vfCount === '' ? null : $vfCount;
         $countFields = [
             'hdr_images_count',
             'single_images_count',
@@ -2962,6 +2965,7 @@ public function startTimer(Request $request, int $id)
         $hasCodeInput = $request->exists('code');
         $hasItDatetimeInput = $request->exists('it_datetime');
         $hasTotalRawFilesInput = $request->exists('total_raw_files');
+        $hasVfCountInput = $request->exists('vf_count');
         $hasEditorPortalAccountInput = $request->exists('editor_portal_account_id');
         $hasQcPortalAccountInput = $request->exists('qc_portal_account_id');
         $countInputFields = array_values(array_filter(
@@ -2970,13 +2974,13 @@ public function startTimer(Request $request, int $id)
         ));
         $hasCountInput = !empty($countInputFields);
 
-        if (!$hasInstructionInput && !$hasPlanTypeInput && !$hasCodeInput && !$hasItDatetimeInput && !$hasTotalRawFilesInput && !$hasCountInput && !$hasEditorPortalAccountInput && !$hasQcPortalAccountInput) {
+        if (!$hasInstructionInput && !$hasPlanTypeInput && !$hasCodeInput && !$hasItDatetimeInput && !$hasTotalRawFilesInput && !$hasVfCountInput && !$hasCountInput && !$hasEditorPortalAccountInput && !$hasQcPortalAccountInput) {
             return response()->json([
                 'message' => 'Nothing to update.',
             ], 422);
         }
 
-        DB::transaction(function () use ($order, $actor, $instruction, $planType, $code, $itDatetime, $totalRawFiles, $countInputFields, $countValues, $hasInstructionInput, $hasPlanTypeInput, $hasCodeInput, $hasItDatetimeInput, $hasTotalRawFilesInput, $hasCountInput, $hasEditorPortalAccountInput, $hasQcPortalAccountInput, $project51PortalAccountUpdates) {
+        DB::transaction(function () use ($order, $actor, $instruction, $planType, $code, $itDatetime, $totalRawFiles, $vfCount, $countInputFields, $countValues, $hasInstructionInput, $hasPlanTypeInput, $hasCodeInput, $hasItDatetimeInput, $hasTotalRawFilesInput, $hasVfCountInput, $hasCountInput, $hasEditorPortalAccountInput, $hasQcPortalAccountInput, $project51PortalAccountUpdates) {
             $before = [];
             $after = [];
             $orderUpdates = [];
@@ -3009,6 +3013,12 @@ public function startTimer(Request $request, int $id)
                 $before['total_raw_files'] = $order->total_raw_files;
                 $after['total_raw_files'] = $totalRawFiles;
                 $orderUpdates['total_raw_files'] = $totalRawFiles;
+            }
+
+            if ($hasVfCountInput) {
+                $before['vf_count'] = $order->vf_count;
+                $after['vf_count'] = $vfCount;
+                $orderUpdates['vf_count'] = $vfCount;
             }
 
             foreach ($countInputFields as $countField) {
@@ -3063,6 +3073,10 @@ public function startTimer(Request $request, int $id)
                     $crmData['total_raw_files'] = $totalRawFiles;
                 }
 
+                if ($hasVfCountInput && Schema::hasColumn('crm_order_assignments', 'vf_count')) {
+                    $crmData['vf_count'] = $vfCount;
+                }
+
                 foreach ($countInputFields as $countField) {
                     if (Schema::hasColumn('crm_order_assignments', $countField)) {
                         $crmData[$countField] = $countValues[$countField];
@@ -3091,12 +3105,13 @@ public function startTimer(Request $request, int $id)
                         + ($hasCodeInput ? 1 : 0)
                         + ($hasItDatetimeInput ? 1 : 0)
                         + ($hasTotalRawFilesInput ? 1 : 0)
+                        + ($hasVfCountInput ? 1 : 0)
                         + ($hasCountInput ? 1 : 0)
                     ) > 1
                     ? 'update_order_details'
                     : ($hasCodeInput
                         ? 'update_code'
-                        : ($hasPlanTypeInput ? 'update_plan_type' : ($hasItDatetimeInput ? 'update_it_datetime' : (($hasTotalRawFilesInput || $hasCountInput) ? 'update_image_counts' : 'update_instruction')))),
+                        : ($hasPlanTypeInput ? 'update_plan_type' : ($hasItDatetimeInput ? 'update_it_datetime' : (($hasTotalRawFilesInput || $hasVfCountInput || $hasCountInput) ? 'update_image_counts' : 'update_instruction')))),
                 'Order',
                 (int) $order->id,
                 (int) $order->project_id,
@@ -3108,12 +3123,12 @@ public function startTimer(Request $request, int $id)
         return response()->json([
             'order' => $order->fresh(),
             'message' => (
-                (($hasInstructionInput ? 1 : 0) + ($hasPlanTypeInput ? 1 : 0) + ($hasCodeInput ? 1 : 0) + ($hasItDatetimeInput ? 1 : 0) + ($hasTotalRawFilesInput ? 1 : 0) + ($hasCountInput ? 1 : 0)) > 1
+                (($hasInstructionInput ? 1 : 0) + ($hasPlanTypeInput ? 1 : 0) + ($hasCodeInput ? 1 : 0) + ($hasItDatetimeInput ? 1 : 0) + ($hasTotalRawFilesInput ? 1 : 0) + ($hasVfCountInput ? 1 : 0) + ($hasCountInput ? 1 : 0)) > 1
             )
                 ? 'Order details updated successfully.'
                 : ($hasCodeInput
                     ? 'Code updated successfully.'
-                    : ($hasPlanTypeInput ? 'Plan type updated successfully.' : ($hasItDatetimeInput ? 'IT datetime updated successfully.' : (($hasTotalRawFilesInput || $hasCountInput) ? 'Image counts updated successfully.' : 'Instruction updated successfully.')))),
+                    : ($hasPlanTypeInput ? 'Plan type updated successfully.' : ($hasItDatetimeInput ? 'IT datetime updated successfully.' : (($hasTotalRawFilesInput || $hasVfCountInput || $hasCountInput) ? 'Image counts updated successfully.' : 'Instruction updated successfully.')))),
         ]);
     }
 

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { columnService, dashboardService, projectService, workflowService } from '../../services';
 import { useRef } from 'react';
 import { useSelector } from 'react-redux';
@@ -159,6 +159,7 @@ export default function SupervisorAssignment() {
   const [singleImagesCountDraft, setSingleImagesCountDraft] = useState('');
   const [finalImagesCountDraft, setFinalImagesCountDraft] = useState('');
   const [editedImagesCountDraft, setEditedImagesCountDraft] = useState('');
+  const [vfCountDraft, setVfCountDraft] = useState('');
   const [flambientOrderCountDraft, setFlambientOrderCountDraft] = useState('');
   const [dayToDuskCountDraft, setDayToDuskCountDraft] = useState('');
   const [objectRemovalCountDraft, setObjectRemovalCountDraft] = useState('');
@@ -1553,6 +1554,11 @@ export default function SupervisorAssignment() {
         label: 'Edited Images',
         width: '6%',
       },
+      vf_count: {
+        key: 'vf_count',
+        label: 'VF Count',
+        width: '6%',
+      },
       flambient_order_count: {
         key: 'flambient_order_count',
         label: 'Flambient',
@@ -1661,6 +1667,7 @@ export default function SupervisorAssignment() {
       'single_images_count',
       'final_images_count',
       'edited_images_count',
+      'vf_count',
       'flambient_order_count',
       'day_to_dusk_count',
       'object_removal_count',
@@ -1810,6 +1817,39 @@ export default function SupervisorAssignment() {
       { key: 'workflow_state', label: 'Status' },
     ];
   }, [dynamicPrimaryColumns, isPhotoEnhancementQueue, showTeamNameColumn, visibleRoleColumns]);
+
+  const ASSIGNMENT_EXPORT_PAGE_RETRIES = 5;
+  const ASSIGNMENT_EXPORT_RETRY_DELAY_MS = 800;
+  const CSV_EXPORT_CHUNK_SIZE = 1000;
+  const CSV_EXPORT_CACHE_KEY = 'supervisor-assignment-csv-export';
+
+  const waitForAssignmentExportRetry = (attempt: number) => new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ASSIGNMENT_EXPORT_RETRY_DELAY_MS * attempt);
+  });
+
+  const saveCsvExportCheckpoint = (checkpoint: {
+    filename: string;
+    totalPages: number;
+    completedPages: number;
+    completedRows: number;
+    currentPage: number;
+    updatedAt: string;
+  }) => {
+    try {
+      window.sessionStorage.setItem(CSV_EXPORT_CACHE_KEY, JSON.stringify(checkpoint));
+    } catch (error) {
+      console.warn('Unable to save CSV export checkpoint:', error);
+    }
+  };
+
+  const clearCsvExportCheckpoint = () => {
+    try {
+      window.sessionStorage.removeItem(CSV_EXPORT_CACHE_KEY);
+    } catch (error) {
+      console.warn('Unable to clear CSV export checkpoint:', error);
+    }
+  };
+
   const buildAssignmentExportParams = useCallback((page: number, perPage: number) => {
     const params: Record<string, string | number> = { page, per_page: perPage };
 
@@ -1824,6 +1864,24 @@ export default function SupervisorAssignment() {
     return params;
   }, [endDate, searchQuery, selectedWorker, startDate, statusFilter]);
 
+  const fetchAssignmentExportPage = useCallback(async (page: number, perPage: number) => {
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= ASSIGNMENT_EXPORT_PAGE_RETRIES; attempt += 1) {
+      try {
+        return await dashboardService.assignmentDashboard(selectedQueue, buildAssignmentExportParams(page, perPage));
+      } catch (error) {
+        lastError = error;
+        console.error(`CSV/month export page ${page} failed, attempt ${attempt}:`, error);
+        if (attempt < ASSIGNMENT_EXPORT_PAGE_RETRIES) {
+          await waitForAssignmentExportRetry(attempt);
+        }
+      }
+    }
+
+    throw lastError ?? new Error(`Could not fetch export page ${page}.`);
+  }, [buildAssignmentExportParams, selectedQueue]);
+
   const fetchAllOrdersForExport = useCallback(async () => {
     const perPage = 2000;
     const allOrders: AssignmentOrder[] = [];
@@ -1831,7 +1889,7 @@ export default function SupervisorAssignment() {
     let lastAvailablePage = 1;
 
     do {
-      const res = await dashboardService.assignmentDashboard(selectedQueue, buildAssignmentExportParams(page, perPage));
+      const res = await fetchAssignmentExportPage(page, perPage);
       const fetchedOrders = (res.data?.orders?.data ?? []) as AssignmentOrder[];
       allOrders.push(...fetchedOrders);
 
@@ -1858,10 +1916,9 @@ export default function SupervisorAssignment() {
 
     return filteredOrders;
   }, [
-    buildAssignmentExportParams,
+    fetchAssignmentExportPage,
     hasDrawerAssignment,
     isPendingOrder,
-    selectedQueue,
     statusFilter,
   ]);
 
@@ -2050,14 +2107,172 @@ export default function SupervisorAssignment() {
     }
   };
 
-  const downloadBlob = (content: BlobPart, type: string, filename: string) => {
-    const blob = new Blob([content], { type });
+  const downloadBlobParts = (parts: BlobPart[], type: string, filename: string) => {
+    const blob = new Blob(parts, { type });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const MONTH_PDF_EXPORT_CACHE_KEY = 'supervisor-assignment-month-pdf-export';
+  const PDF_EXPORT_CHUNK_SIZE = 200;
+  const PDF_EXPORT_CHUNK_RETRIES = 3;
+
+  const waitForPdfExportFrame = () => new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+
+  const savePdfExportCheckpoint = (checkpoint: {
+    key: string;
+    filename: string;
+    totalRows: number;
+    completedRows: number;
+    completedPages: number;
+    updatedAt: string;
+  }) => {
+    try {
+      window.sessionStorage.setItem(MONTH_PDF_EXPORT_CACHE_KEY, JSON.stringify(checkpoint));
+    } catch (error) {
+      console.warn('Unable to save PDF export checkpoint:', error);
+    }
+  };
+
+  const clearPdfExportCheckpoint = () => {
+    try {
+      window.sessionStorage.removeItem(MONTH_PDF_EXPORT_CACHE_KEY);
+    } catch (error) {
+      console.warn('Unable to clear PDF export checkpoint:', error);
+    }
+  };
+
+  const generateMonthCsv = async (
+    filenameBase: string,
+    headers: string[],
+    rows: string[][],
+  ) => {
+    const filename = `${filenameBase}.csv`;
+    const csvParts: BlobPart[] = [`${headers.join(',')}\n`];
+
+    for (let index = 0; index < rows.length; index += CSV_EXPORT_CHUNK_SIZE) {
+      const chunkRows = rows.slice(index, index + CSV_EXPORT_CHUNK_SIZE);
+      const chunk = chunkRows
+        .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+
+      csvParts.push(chunk);
+      if (index + CSV_EXPORT_CHUNK_SIZE < rows.length) {
+        csvParts.push('\n');
+      }
+
+      saveCsvExportCheckpoint({
+        filename,
+        totalPages: Math.ceil(rows.length / CSV_EXPORT_CHUNK_SIZE),
+        completedPages: Math.ceil(Math.min(index + CSV_EXPORT_CHUNK_SIZE, rows.length) / CSV_EXPORT_CHUNK_SIZE),
+        completedRows: Math.min(index + CSV_EXPORT_CHUNK_SIZE, rows.length),
+        currentPage: Math.floor(index / CSV_EXPORT_CHUNK_SIZE) + 1,
+        updatedAt: new Date().toISOString(),
+      });
+
+      await waitForPdfExportFrame();
+    }
+
+    downloadBlobParts(csvParts, 'text/csv;charset=utf-8;', filename);
+    clearCsvExportCheckpoint();
+  };
+
+  const generateMonthPdf = async (
+    filenameBase: string,
+    headers: string[],
+    rows: string[][],
+    dateRangeLabel: string,
+  ) => {
+    const { default: jsPDF } = await import('jspdf');
+    const { default: autoTable } = await import('jspdf-autotable');
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const exportKey = [
+      filenameBase,
+      headers.join('|'),
+      rows.length,
+      rows[0]?.join('|') ?? '',
+      rows[rows.length - 1]?.join('|') ?? '',
+    ].join('::');
+
+    doc.setFontSize(14);
+    doc.text(`Orders Export - ${projectLabel || selectedQueue}`, 14, 14);
+    doc.setFontSize(9);
+    doc.text(dateRangeLabel, 14, 20);
+
+    let completedRows = 0;
+    let startY = 26;
+
+    while (completedRows < rows.length) {
+      const chunkStart = completedRows;
+      const chunkRows = rows.slice(chunkStart, chunkStart + PDF_EXPORT_CHUNK_SIZE);
+      let rendered = false;
+      let lastError: unknown = null;
+
+      for (let attempt = 1; attempt <= PDF_EXPORT_CHUNK_RETRIES && !rendered; attempt += 1) {
+        try {
+          autoTable(doc, {
+            startY,
+            head: chunkStart === 0 ? [headers] : undefined,
+            body: chunkRows,
+            styles: {
+              fontSize: 7,
+              cellPadding: 2,
+              overflow: 'linebreak',
+              minCellHeight: 4,
+            },
+            headStyles: { fillColor: [42, 167, 160] },
+            margin: { left: 10, right: 10, top: 14, bottom: 12 },
+            showHead: chunkStart === 0 ? 'firstPage' : 'never',
+            rowPageBreak: 'auto',
+          });
+
+          rendered = true;
+        } catch (error) {
+          lastError = error;
+          console.error(`PDF export chunk failed at row ${chunkStart + 1}, attempt ${attempt}:`, error);
+          await waitForPdfExportFrame();
+        }
+      }
+
+      if (!rendered) {
+        savePdfExportCheckpoint({
+          key: exportKey,
+          filename: `${filenameBase}.pdf`,
+          totalRows: rows.length,
+          completedRows,
+          completedPages: doc.getNumberOfPages(),
+          updatedAt: new Date().toISOString(),
+        });
+        throw lastError ?? new Error(`PDF export failed at row ${chunkStart + 1}.`);
+      }
+
+      completedRows += chunkRows.length;
+      const lastAutoTable = (doc as any).lastAutoTable;
+      startY = Number(lastAutoTable?.finalY ?? 0) + 4;
+      if (!Number.isFinite(startY) || startY > 185) {
+        doc.addPage();
+        startY = 14;
+      }
+
+      savePdfExportCheckpoint({
+        key: exportKey,
+        filename: `${filenameBase}.pdf`,
+        totalRows: rows.length,
+        completedRows,
+        completedPages: doc.getNumberOfPages(),
+        updatedAt: new Date().toISOString(),
+      });
+      await waitForPdfExportFrame();
+    }
+
+    doc.save(`${filenameBase}.pdf`);
+    clearPdfExportCheckpoint();
   };
 
   const handleMonthExport = async (type: 'csv' | 'pdf') => {
@@ -2121,38 +2336,22 @@ export default function SupervisorAssignment() {
       }
 
       const headers = exportColumns.map((column) => column.label);
-      const rows = filteredOrders.map((order) => exportColumns.map((column) => getExportValue(order, column.key)));
+      const rows = filteredOrders.map((order, orderIndex) => exportColumns.map((column) => {
+        try {
+          return getExportValue(order, column.key);
+        } catch (error) {
+          console.error(`Export value failed for order row ${orderIndex + 1}, column ${column.key}:`, error);
+          return '-';
+        }
+      }));
 
       if (type === 'csv') {
-        const csv = [
-          headers.join(','),
-          ...rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')),
-        ].join('\n');
-
-        downloadBlob(csv, 'text/csv;charset=utf-8;', `${filenameBase}.csv`);
+        await generateMonthCsv(filenameBase, headers, rows);
       } else {
-        const { default: jsPDF } = await import('jspdf');
-        const { default: autoTable } = await import('jspdf-autotable');
-        const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-
-        doc.setFontSize(14);
-        doc.text(`Orders Export - ${projectLabel || selectedQueue}`, 14, 14);
-        doc.setFontSize(9);
         const dateRangeLabel = hasDateRangeFilter
           ? `Date Range: ${startDate || 'start'} to ${endDate || 'end'}`
           : `Month: ${exportMonth}`;
-        doc.text(dateRangeLabel, 14, 20);
-
-        autoTable(doc, {
-          startY: 26,
-          head: [headers],
-          body: rows,
-          styles: { fontSize: 7, cellPadding: 2 },
-          headStyles: { fillColor: [42, 167, 160] },
-          margin: { left: 10, right: 10 },
-        });
-
-        doc.save(`${filenameBase}.pdf`);
+        await generateMonthPdf(filenameBase, headers, rows, dateRangeLabel);
       }
 
       const exportTypeLabel = type === 'csv' ? 'CSV' : 'PDF';
@@ -2257,6 +2456,7 @@ export default function SupervisorAssignment() {
       setSingleImagesCountDraft((order as any).single_images_count == null ? '' : String((order as any).single_images_count));
       setFinalImagesCountDraft((order as any).final_images_count == null ? '' : String((order as any).final_images_count));
       setEditedImagesCountDraft((order as any).edited_images_count == null ? '' : String((order as any).edited_images_count));
+      setVfCountDraft((order as any).vf_count == null ? '' : String((order as any).vf_count));
       setFlambientOrderCountDraft((order as any).flambient_order_count == null ? '' : String((order as any).flambient_order_count));
       setDayToDuskCountDraft((order as any).day_to_dusk_count == null ? '' : String((order as any).day_to_dusk_count));
       setObjectRemovalCountDraft((order as any).object_removal_count == null ? '' : String((order as any).object_removal_count));
@@ -2338,6 +2538,7 @@ export default function SupervisorAssignment() {
       'single_images_count',
       'final_images_count',
       'edited_images_count',
+      'vf_count',
       'flambient_order_count',
       'day_to_dusk_count',
       'object_removal_count',
@@ -2566,6 +2767,7 @@ export default function SupervisorAssignment() {
       case 'single_images_count':
       case 'final_images_count':
       case 'edited_images_count':
+      case 'vf_count':
       case 'flambient_order_count':
       case 'day_to_dusk_count':
       case 'object_removal_count':
@@ -2713,6 +2915,7 @@ export default function SupervisorAssignment() {
       const nextSingleImagesCount = parseOptionalNonNegativeInteger(singleImagesCountDraft);
       const nextFinalImagesCount = parseOptionalNonNegativeInteger(finalImagesCountDraft);
       const nextEditedImagesCount = parseOptionalNonNegativeInteger(editedImagesCountDraft);
+      const nextVfCount = vfCountDraft.trim() === '' ? null : vfCountDraft.trim();
       const nextFlambientOrderCount = parseOptionalNonNegativeInteger(flambientOrderCountDraft);
       const nextDayToDuskCount = parseOptionalNonNegativeInteger(dayToDuskCountDraft);
       const nextObjectRemovalCount = parseOptionalNonNegativeInteger(objectRemovalCountDraft);
@@ -2739,6 +2942,7 @@ export default function SupervisorAssignment() {
       const currentSingleImagesCount = (targetOrder as any).single_images_count ?? null;
       const currentFinalImagesCount = (targetOrder as any).final_images_count ?? null;
       const currentEditedImagesCount = (targetOrder as any).edited_images_count ?? null;
+      const currentVfCount = (targetOrder as any).vf_count == null ? null : String((targetOrder as any).vf_count);
       const currentFlambientOrderCount = (targetOrder as any).flambient_order_count ?? null;
       const currentDayToDuskCount = (targetOrder as any).day_to_dusk_count ?? null;
       const currentObjectRemovalCount = (targetOrder as any).object_removal_count ?? null;
@@ -2751,6 +2955,7 @@ export default function SupervisorAssignment() {
         && currentSingleImagesCount === nextSingleImagesCount
         && currentFinalImagesCount === nextFinalImagesCount
         && currentEditedImagesCount === nextEditedImagesCount
+        && currentVfCount === nextVfCount
         && currentFlambientOrderCount === nextFlambientOrderCount
         && currentDayToDuskCount === nextDayToDuskCount
         && currentObjectRemovalCount === nextObjectRemovalCount
@@ -2763,6 +2968,7 @@ export default function SupervisorAssignment() {
         setSingleImagesCountDraft('');
         setFinalImagesCountDraft('');
         setEditedImagesCountDraft('');
+        setVfCountDraft('');
         setFlambientOrderCountDraft('');
         setDayToDuskCountDraft('');
         setObjectRemovalCountDraft('');
@@ -2783,6 +2989,7 @@ export default function SupervisorAssignment() {
         single_images_count?: number | null;
         final_images_count?: number | null;
         edited_images_count?: number | null;
+        vf_count?: string | null;
         flambient_order_count?: number | null;
         day_to_dusk_count?: number | null;
         object_removal_count?: number | null;
@@ -2796,6 +3003,7 @@ export default function SupervisorAssignment() {
       if (currentSingleImagesCount !== nextSingleImagesCount) payload.single_images_count = nextSingleImagesCount;
       if (currentFinalImagesCount !== nextFinalImagesCount) payload.final_images_count = nextFinalImagesCount;
       if (currentEditedImagesCount !== nextEditedImagesCount) payload.edited_images_count = nextEditedImagesCount;
+      if (currentVfCount !== nextVfCount) payload.vf_count = nextVfCount;
       if (currentFlambientOrderCount !== nextFlambientOrderCount) payload.flambient_order_count = nextFlambientOrderCount;
       if (currentDayToDuskCount !== nextDayToDuskCount) payload.day_to_dusk_count = nextDayToDuskCount;
       if (currentObjectRemovalCount !== nextObjectRemovalCount) payload.object_removal_count = nextObjectRemovalCount;
@@ -2813,6 +3021,7 @@ export default function SupervisorAssignment() {
             ...(payload.single_images_count !== undefined ? { single_images_count: nextSingleImagesCount } : {}),
             ...(payload.final_images_count !== undefined ? { final_images_count: nextFinalImagesCount } : {}),
             ...(payload.edited_images_count !== undefined ? { edited_images_count: nextEditedImagesCount } : {}),
+            ...(payload.vf_count !== undefined ? { vf_count: nextVfCount } : {}),
             ...(payload.flambient_order_count !== undefined ? { flambient_order_count: nextFlambientOrderCount } : {}),
             ...(payload.day_to_dusk_count !== undefined ? { day_to_dusk_count: nextDayToDuskCount } : {}),
             ...(payload.object_removal_count !== undefined ? { object_removal_count: nextObjectRemovalCount } : {}),
@@ -4037,6 +4246,7 @@ export default function SupervisorAssignment() {
           setSingleImagesCountDraft('');
           setFinalImagesCountDraft('');
           setEditedImagesCountDraft('');
+          setVfCountDraft('');
           setFlambientOrderCountDraft('');
           setDayToDuskCountDraft('');
           setObjectRemovalCountDraft('');
@@ -4058,6 +4268,7 @@ export default function SupervisorAssignment() {
                 setSingleImagesCountDraft('');
                 setFinalImagesCountDraft('');
                 setEditedImagesCountDraft('');
+                setVfCountDraft('');
                 setFlambientOrderCountDraft('');
                 setDayToDuskCountDraft('');
                 setObjectRemovalCountDraft('');
@@ -4184,6 +4395,21 @@ export default function SupervisorAssignment() {
                     step={1}
                     value={editedImagesCountDraft}
                     onChange={(e) => setEditedImagesCountDraft(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  />
+                </div>
+              )}
+
+              {visiblePrimaryFieldSet.has('vf_count') && (
+                <div className="space-y-2">
+                  <label htmlFor="order-vf-count" className="block text-sm font-medium text-slate-700">
+                    VF Count
+                  </label>
+                  <input
+                    id="order-vf-count"
+                    type="text"
+                    value={vfCountDraft}
+                    onChange={(e) => setVfCountDraft(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                   />
                 </div>

@@ -118,6 +118,12 @@ private function buildDynamicUnion(array $projectIds, array $columns)
         $projectId = $request->input('project_id');
         $tableName = "project_{$projectId}_orders";
         $data = $request->except(['project_id']);
+        $actualColumns = DB::getSchemaBuilder()->getColumnListing($tableName);
+        $data = array_intersect_key($data, array_flip($actualColumns));
+
+        if (empty($data)) {
+            return response()->json(['message' => 'No valid assignment fields provided'], 422);
+        }
 
         $id = DB::table($tableName)->insertGetId($data);
         return response()->json(['id' => $id, 'message' => 'Assignment created']);
@@ -249,6 +255,12 @@ public function saveAllColumns(Request $request)
     {
         $tableName = "project_{$projectId}_orders";
         $data = $request->except(['project_id', 'id']);
+        $actualColumns = DB::getSchemaBuilder()->getColumnListing($tableName);
+        $data = array_intersect_key($data, array_flip($actualColumns));
+
+        if (empty($data)) {
+            return response()->json(['message' => 'No valid assignment fields provided'], 422);
+        }
 
         DB::table($tableName)->where('id', $id)->update($data);
         return response()->json(['message' => 'Assignment updated']);

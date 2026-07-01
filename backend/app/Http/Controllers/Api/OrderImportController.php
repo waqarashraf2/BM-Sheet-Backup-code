@@ -414,12 +414,13 @@ class OrderImportController extends Controller
             'hdr_images_count' => 'hdr_images_count',
             'single_images_count' => 'single_images_count',
             'final_images_count' => 'final_images_count',
+            'vf_count' => 'vf_count',
         ];
 
         // Also auto-map any CSV header that exactly matches a known column
         $knownCols = ['order_number','client_reference','client_name','address','priority','received_at',
             'due_in','due_date','order_type','complexity_weight','estimated_minutes',
-            'total_raw_files','hdr_images_count','single_images_count','final_images_count'];
+            'total_raw_files','hdr_images_count','single_images_count','final_images_count','vf_count'];
         foreach ($headers as $h) {
             $lh = strtolower(trim($h));
             if (in_array($lh, $knownCols) && !isset($mapping[$lh])) {
@@ -859,6 +860,7 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                 'hdr_images_count'    => 'hdr_images_count',
                 'single_images_count' => 'single_images_count',
                 'final_images_count'  => 'final_images_count',
+                'vf_count'            => 'vf_count',
 
             ];
 
@@ -877,7 +879,7 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                         $rawValue = trim($rawValue);
                     }
 
-                    if ($dbColumn === 'total_raw_files') {
+                    if (in_array($dbColumn, ['total_raw_files', 'vf_count'], true)) {
                         // This field can contain provider text/codes, not only counts.
                         if ($rawValue !== '' && $rawValue !== null) {
                             $orderData[$dbColumn] = (string) $rawValue;
@@ -934,12 +936,12 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                 return (int) preg_replace('/[^0-9\-]/', '', $raw);
             };
 
-            foreach (['total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count'] as $imgCol) {
+            foreach (['total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count', 'vf_count'] as $imgCol) {
                 if (!in_array($imgCol, $columns, true)) {
                     continue;
                 }
 
-                $imgValue = $imgCol === 'total_raw_files'
+                $imgValue = in_array($imgCol, ['total_raw_files', 'vf_count'], true)
                     ? $readImageValue($imgCol)
                     : $readImageCount($imgCol);
 
