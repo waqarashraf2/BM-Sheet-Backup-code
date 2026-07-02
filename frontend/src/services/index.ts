@@ -40,6 +40,7 @@ export interface ClientPortalInProgressOrder {
   client_reference: string | null;
   client_name: string | null;
   customer_parent_company: string | null;
+  received_at: string | null;
   job_order_id: string | null;
   client_portal_job_id: string | null;
   workflow_state: string | null;

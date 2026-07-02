@@ -10,6 +10,14 @@ function valueOrDash(value: unknown): string {
   return normalized || '-';
 }
 
+function formatDateTime(value: unknown): string {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) return '-';
+
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? normalized : date.toLocaleString();
+}
+
 export default function ClientPortalInProgress() {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<ClientPortalInProgressOrder[]>([]);
@@ -157,6 +165,7 @@ export default function ClientPortalInProgress() {
                 <th className="px-4 py-3">Project</th>
                 <th className="px-4 py-3">Order</th>
                 <th className="px-4 py-3">Client</th>
+                <th className="px-4 py-3">Received At</th>
                 <th className="px-4 py-3">QA</th>
                 <th className="px-4 py-3">Portal Status</th>
                 <th className="px-4 py-3">Reason</th>
@@ -167,11 +176,11 @@ export default function ClientPortalInProgress() {
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading orders...</td>
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">Loading orders...</td>
                 </tr>
               ) : orders.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
                     No {mode === 'Failed' ? 'failed' : 'in-progress'} client portal orders found.
                   </td>
                 </tr>
@@ -189,6 +198,7 @@ export default function ClientPortalInProgress() {
                       <div className="font-medium text-slate-700">{valueOrDash(order.client_name)}</div>
                       <div className="text-xs text-slate-500">{valueOrDash(order.customer_parent_company)}</div>
                     </td>
+                    <td className="px-4 py-3 text-slate-700">{formatDateTime(order.received_at)}</td>
                     <td className="px-4 py-3 text-slate-700">{valueOrDash(order.qa_name || order.qa_id)}</td>
                     <td className="px-4 py-3">
                       <StatusBadge status={order.client_portal_job_status || 'InProgress'} />

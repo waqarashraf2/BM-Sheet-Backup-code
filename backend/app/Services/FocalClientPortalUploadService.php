@@ -120,7 +120,7 @@ class FocalClientPortalUploadService
             ->latest('id')
             ->first();
 
-        if ($existingSubmittedUpload) {
+        if ($existingSubmittedUpload && !$forceReupload) {
             return $existingSubmittedUpload;
         }
 
@@ -350,6 +350,7 @@ class FocalClientPortalUploadService
                     'client_reference' => $order->client_reference,
                     'client_name' => $order->client_name,
                     'customer_parent_company' => $this->customerParentCompany($order),
+                    'received_at' => $this->receivedAt($order),
                     'job_order_id' => $this->fileReference($order) ?: null,
                     'client_portal_job_id' => $clientPortalJobId ?: null,
                     'workflow_state' => $order->workflow_state,
@@ -384,6 +385,7 @@ class FocalClientPortalUploadService
                     'client_reference' => trim((string) ($job['Property']['Reference'] ?? $job['property']['reference'] ?? '')) ?: null,
                     'client_name' => trim((string) ($job['CustomerName'] ?? $job['customerName'] ?? '')) ?: null,
                     'customer_parent_company' => trim((string) ($job['CustomerParentCompany'] ?? $job['customerParentCompany'] ?? '')) ?: null,
+                    'received_at' => trim((string) ($job['DateAssigned'] ?? $job['dateAssigned'] ?? '')) ?: null,
                     'job_order_id' => trim((string) ($job['OrderReference'] ?? $job['orderReference'] ?? '')) ?: null,
                     'client_portal_job_id' => trim((string) ($job['Id'] ?? $job['id'] ?? '')) ?: null,
                     'workflow_state' => null,
@@ -504,6 +506,18 @@ class FocalClientPortalUploadService
                 ?? ''
             ));
         }
+
+        return $value !== '' ? $value : null;
+    }
+
+    private function receivedAt(Order $order): ?string
+    {
+        $value = trim((string) (
+            $order->getAttribute('received_at')
+            ?? $order->getAttribute('date')
+            ?? $order->getAttribute('ausDatein')
+            ?? ''
+        ));
 
         return $value !== '' ? $value : null;
     }
@@ -663,7 +677,8 @@ class FocalClientPortalUploadService
             'id', 'project_id', 'order_number', 'client_reference', 'client_name',
             'parent_company', 'CustomerParentCompany', 'client_portal_id',
             'clint_order_number', 'workflow_state', 'workflow_type', 'status',
-            'qa_id', 'qa_name', 'final_upload', 'ausFinaldate', 'metadata',
+            'qa_id', 'qa_name', 'final_upload', 'ausFinaldate', 'received_at',
+            'date', 'ausDatein', 'metadata',
         ])->filter(fn ($column) => Schema::hasColumn($table, $column))->values()->all();
 
         if (empty($columns)) {

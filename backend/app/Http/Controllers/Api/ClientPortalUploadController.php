@@ -91,7 +91,11 @@ class ClientPortalUploadController extends Controller
     public function submit(Request $request, int $orderId)
     {
         $order = $this->portalOrder($request, $orderId, false);
-        abort_unless($request->user()?->role === 'qa', 403, 'Only QA can submit orders to the client portal.');
+        abort_unless(
+            in_array($request->user()?->role, ['operations_manager', 'project_manager', 'qa'], true),
+            403,
+            'Only OM, PM, or QA can submit orders to the client portal.'
+        );
 
         try {
             $upload = $this->service->submit($order);

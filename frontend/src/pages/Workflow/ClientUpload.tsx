@@ -82,6 +82,7 @@ export default function ClientUpload() {
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [uploadProgress, setUploadProgress] = useState(0);
+    const [reuploadCompleted, setReuploadCompleted] = useState(false);
 
     const numericOrderId = Number(orderId);
     const orderIdValid = Number.isFinite(numericOrderId) && numericOrderId > 0;
@@ -111,6 +112,7 @@ export default function ClientUpload() {
             .then((statusResponse) => {
                 if (!active) return;
                 setStatus(statusResponse.data);
+                setReuploadCompleted(false);
 
                 if (
                     !statusResponse.data?.job_order_id
@@ -169,6 +171,8 @@ export default function ClientUpload() {
         [orderInfo, queryCustomerParentCompany, status]
     );
     const canUpload = !!orderLookup && status?.can_upload !== false;
+    const canSubmitRole = ['operations_manager', 'project_manager', 'qa'].includes(user?.role || '');
+    const canSubmitClientPortal = !!status?.uploaded && (!status?.submitted || (forceReupload && reuploadCompleted));
     const uploadStatusLabel = canUpload && (!status?.status || status.status === 'not_required')
         ? 'not_uploaded'
         : (status?.status || 'not_required');
@@ -213,6 +217,7 @@ export default function ClientUpload() {
                 { forceReupload, projectId: requestedProjectId }
             );
             setStatus(response.data.status);
+            setReuploadCompleted(forceReupload);
             setMessage(response.data.message || 'Files uploaded successfully.');
         } catch (e: any) {
             const statusCode = e.response?.status;
@@ -241,6 +246,7 @@ export default function ClientUpload() {
         try {
             const response = await workflowService.submitClientPortalOrder(numericOrderId, requestedProjectId);
             setStatus(response.data.status);
+            setReuploadCompleted(false);
             setMessage(response.data.message || 'Order submitted successfully.');
         } catch (e: any) {
             setError(e.response?.data?.message || 'Submit failed.');
@@ -251,6 +257,7 @@ export default function ClientUpload() {
 
     const selectFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
         setFiles(Array.from(event.target.files || []));
+        setReuploadCompleted(false);
     };
 
     const openImageLinks = () => {
@@ -416,15 +423,15 @@ export default function ClientUpload() {
                             >
                                 {forceReupload ? 'Reupload Files' : 'Upload Files'}
                             </Button>
-                            {user?.role === 'qa' && (
+                            {canSubmitRole && (
                                 <Button
                                     size="sm"
                                     icon={<Send className="h-4 w-4" />}
                                     onClick={submitOrder}
                                     loading={busy === 'submit'}
-                                    disabled={!status?.uploaded || status?.submitted || busy !== null}
+                                    disabled={!canSubmitClientPortal || busy !== null}
                                 >
-                                    Submit Order
+                                    {forceReupload ? 'Submit Again' : 'Submit Order'}
                                 </Button>
                             )}
                         </div>
