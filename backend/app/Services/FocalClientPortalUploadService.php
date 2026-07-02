@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ClientPortalUpload;
 use App\Models\Order;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Http\Client\Response;
 use Illuminate\Http\UploadedFile;
@@ -16,6 +17,13 @@ use Illuminate\Validation\ValidationException;
 class FocalClientPortalUploadService
 {
     private const DEFAULT_ENABLED_PROJECT_IDS = [22, 23, 25];
+    private const IN_PROGRESS_PRODUCTS = [
+        'photography',
+        'drone photography',
+        'streetscape',
+        'additional photo',
+        'photo enhancement',
+    ];
 
     public function isRequiredForProject(int $projectId): bool
     {
@@ -58,12 +66,16 @@ class FocalClientPortalUploadService
             ? $this->latestUploadForStatus($order)
             : null;
 
+        $portalJobStatus = $canUpload ? $this->clientPortalJobStatus($order) : null;
+
         return [
             'required' => $required,
             'can_upload' => $canUpload,
             'uploaded' => in_array($upload?->status, ['uploaded', 'submitted', 'submit_failed'], true),
             'submitted' => $upload?->status === 'submitted',
             'status' => $upload?->status ?? ($canUpload ? 'not_uploaded' : 'not_required'),
+            'client_portal_job_status' => $portalJobStatus,
+            'client_portal_blocks_internal_submit' => $this->blocksInternalSubmit($portalJobStatus, $upload?->status),
             'order_id' => (int) $order->id,
             'project_id' => (int) $order->project_id,
             'job_order_id' => $jobOrderId !== '' ? $jobOrderId : null,
@@ -83,7 +95,7 @@ class FocalClientPortalUploadService
     /**
      * @param array<int, UploadedFile> $files
      */
-    public function upload(Order $order, User $user, array $files, ?string $requestedJobOrderId = null): ClientPortalUpload
+    public function upload(Order $order, User $user, array $files, ?string $requestedJobOrderId = null, bool $forceReupload = false): ClientPortalUpload
     {
         $projectId = (int) $order->project_id;
         if (!$this->canUploadForOrder($order, $requestedJobOrderId)) {
@@ -101,15 +113,26 @@ class FocalClientPortalUploadService
 
         $this->validateFileNames($projectId, $fileReference, $fileNames);
 
-        $existingSuccessfulUpload = ClientPortalUpload::query()
+        $existingSubmittedUpload = ClientPortalUpload::query()
             ->where('project_id', $projectId)
             ->where('order_id', $order->id)
-            ->whereIn('status', ['uploaded', 'submitted'])
+            ->where('status', 'submitted')
             ->latest('id')
             ->first();
 
-        if ($existingSuccessfulUpload) {
-            return $existingSuccessfulUpload;
+        if ($existingSubmittedUpload) {
+            return $existingSubmittedUpload;
+        }
+
+        $existingUploadedUpload = ClientPortalUpload::query()
+            ->where('project_id', $projectId)
+            ->where('order_id', $order->id)
+            ->where('status', 'uploaded')
+            ->latest('id')
+            ->first();
+
+        if ($existingUploadedUpload && !$forceReupload) {
+            return $existingUploadedUpload;
         }
 
         $record = ClientPortalUpload::create([
@@ -232,6 +255,169 @@ class FocalClientPortalUploadService
         }
 
         return $record->fresh();
+    }
+
+    public function blocksInternalSubmit(?string $clientPortalJobStatus, ?string $localUploadStatus = null): bool
+    {
+        $externalStatus = strtolower(trim((string) $clientPortalJobStatus));
+        if (in_array($externalStatus, ['inprogress', 'in progress', 'uploaded'], true)) {
+            return true;
+        }
+
+        return in_array($localUploadStatus, ['uploaded', 'submit_failed'], true);
+    }
+
+    public function clientPortalJobStatus(Order $order): ?string
+    {
+        $jobOrderId = $this->uploadJobId($order);
+        if ($jobOrderId === '') {
+            return null;
+        }
+
+        foreach (['InProgress', 'Uploaded'] as $status) {
+            $job = $this->clientPortalJob($jobOrderId, $status);
+            if ($job) {
+                return trim((string) ($job['JobStatus'] ?? $job['jobStatus'] ?? $status)) ?: $status;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array{orders: array<int, array<string, mixed>>, meta: array<string, mixed>}
+     */
+    public function inProgressOrdersForUser(User $user, string $status = 'InProgress', ?int $requestedProjectId = null): array
+    {
+        $allowedProjectIds = $this->allowedProjectIdsForUser($user);
+        $projectOptions = $this->projectOptions($allowedProjectIds);
+
+        if ($requestedProjectId && in_array($requestedProjectId, $allowedProjectIds, true)) {
+            $allowedProjectIds = [$requestedProjectId];
+        }
+
+        if (empty($allowedProjectIds)) {
+            return [
+                'orders' => [],
+                'meta' => [
+                    'allowed_project_ids' => [],
+                    'project_options' => [],
+                    'selected_project_id' => null,
+                    'status' => $status,
+                    'client_portal_checked' => false,
+                    'client_portal_error' => null,
+                ],
+            ];
+        }
+
+        $status = in_array($status, ['InProgress', 'Failed'], true) ? $status : 'InProgress';
+        $jobsById = $this->clientPortalJobsById([$status]);
+        $clientPortalChecked = $jobsById !== null;
+        $clientPortalError = null;
+        if ($jobsById === null) {
+            $jobsById = collect();
+            $clientPortalError = "Client portal {$status} status could not be checked. Showing local uploaded but not submitted orders only.";
+        }
+
+        $orders = collect();
+        foreach ($allowedProjectIds as $projectId) {
+            $orders = $orders->merge(
+                $this->localOrdersForClientPortalReview($projectId, $jobsById->keys()->all())
+            );
+        }
+
+        $localRows = $orders
+            ->map(function ($order) use ($jobsById, $status) {
+                $clientPortalJobId = $this->uploadJobId($order);
+                $job = $clientPortalJobId !== '' ? $jobsById->get(strtolower($clientPortalJobId)) : null;
+                $latestUpload = Schema::hasTable('client_portal_uploads')
+                    ? $this->latestUploadForStatus($order)
+                    : null;
+
+                $localUploadStatus = $latestUpload?->status;
+                $externalStatus = is_array($job)
+                    ? trim((string) ($job['JobStatus'] ?? $job['jobStatus'] ?? $status))
+                    : null;
+
+                if (!$job && !in_array($localUploadStatus, ['uploaded', 'submit_failed'], true)) {
+                    return null;
+                }
+
+                return [
+                    'order_id' => (int) $order->id,
+                    'project_id' => (int) $order->project_id,
+                    'order_number' => $order->order_number,
+                    'client_reference' => $order->client_reference,
+                    'client_name' => $order->client_name,
+                    'customer_parent_company' => $this->customerParentCompany($order),
+                    'job_order_id' => $this->fileReference($order) ?: null,
+                    'client_portal_job_id' => $clientPortalJobId ?: null,
+                    'workflow_state' => $order->workflow_state,
+                    'internal_status' => $order->status,
+                    'qa_id' => $order->qa_id,
+                    'qa_name' => $order->qa_name,
+                    'local_upload_status' => $localUploadStatus,
+                    'uploaded_at' => $latestUpload?->uploaded_at?->toIso8601String(),
+                    'client_portal_job_status' => $externalStatus,
+                    'client_portal_reason' => $this->clientPortalStatusReason($job, $status),
+                    'can_reupload' => true,
+                    'client_portal_job' => $job,
+                ];
+            })
+            ->filter()
+            ->values();
+
+        $matchedJobIds = $localRows
+            ->pluck('client_portal_job_id')
+            ->map(fn ($id) => strtolower(trim((string) $id)))
+            ->filter()
+            ->all();
+
+        $externalOnlyRows = $jobsById
+            ->reject(fn ($job, $jobId) => in_array(strtolower((string) $jobId), $matchedJobIds, true))
+            ->when($requestedProjectId, fn ($collection) => collect())
+            ->map(function (array $job) use ($status) {
+                return [
+                    'order_id' => null,
+                    'project_id' => null,
+                    'order_number' => trim((string) ($job['OrderReference'] ?? $job['orderReference'] ?? '')) ?: null,
+                    'client_reference' => trim((string) ($job['Property']['Reference'] ?? $job['property']['reference'] ?? '')) ?: null,
+                    'client_name' => trim((string) ($job['CustomerName'] ?? $job['customerName'] ?? '')) ?: null,
+                    'customer_parent_company' => trim((string) ($job['CustomerParentCompany'] ?? $job['customerParentCompany'] ?? '')) ?: null,
+                    'job_order_id' => trim((string) ($job['OrderReference'] ?? $job['orderReference'] ?? '')) ?: null,
+                    'client_portal_job_id' => trim((string) ($job['Id'] ?? $job['id'] ?? '')) ?: null,
+                    'workflow_state' => null,
+                    'internal_status' => null,
+                    'qa_id' => null,
+                    'qa_name' => null,
+                    'local_upload_status' => null,
+                    'uploaded_at' => null,
+                    'client_portal_job_status' => trim((string) ($job['JobStatus'] ?? $job['jobStatus'] ?? $status)) ?: $status,
+                    'client_portal_reason' => $this->clientPortalStatusReason($job, $status),
+                    'can_reupload' => false,
+                    'client_portal_job' => $job,
+                ];
+            })
+            ->values();
+
+        $rows = $localRows->merge($externalOnlyRows)->values()->all();
+
+        return [
+            'orders' => $rows,
+            'meta' => [
+                'allowed_project_ids' => $allowedProjectIds,
+                'project_options' => $projectOptions,
+                'selected_project_id' => $requestedProjectId ?: null,
+                'status' => $status,
+                'client_portal_checked' => $clientPortalChecked,
+                'client_portal_error' => $clientPortalError,
+            ],
+        ];
+    }
+
+    public function canAccessInProgressOrders(User $user): bool
+    {
+        return !empty($this->allowedProjectIdsForUser($user));
     }
 
     private function validateFileNames(int $projectId, string $jobOrderId, Collection $fileNames): void
@@ -373,6 +559,188 @@ class FocalClientPortalUploadService
                 'Supplier-Secret' => (string) config('services.focal_client_portal.supplier_secret'),
                 'Ocp-Apim-Subscription-Key' => (string) config('services.focal_client_portal.subscription_key'),
             ]);
+    }
+
+    private function statusJobsUrl(string $status): string
+    {
+        return rtrim((string) config('services.focal_client_portal.status_api_url'), '/')
+            . '?jobstatus=' . rawurlencode($status);
+    }
+
+    private function clientPortalJob(string $jobOrderId, string $status): ?array
+    {
+        $jobs = $this->clientPortalJobsById([$status]);
+
+        return $jobs?->get(strtolower($jobOrderId));
+    }
+
+    private function clientPortalJobsById(array $statuses): ?Collection
+    {
+        try {
+            $jobs = collect();
+            foreach ($statuses as $status) {
+                $response = $this->statusClient()->get($this->statusJobsUrl($status));
+                if (!$response->successful()) {
+                    return null;
+                }
+
+                $jobs = $jobs->merge((array) (($response->json() ?? [])['jobs'] ?? []));
+            }
+
+            return $jobs
+                ->filter(fn ($job) => is_array($job))
+                ->filter(fn (array $job) => $this->isInProgressProduct($job))
+                ->keyBy(function (array $job) {
+                    return strtolower(trim((string) ($job['Id'] ?? $job['id'] ?? '')));
+                });
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function allowedProjectIdsForUser(User $user): array
+    {
+        if (!in_array($user->role, ['operations_manager', 'project_manager', 'qa'], true)) {
+            return [];
+        }
+
+        $projectIds = $user->role === 'qa'
+            ? ($user->project_id ? [(int) $user->project_id] : [])
+            : array_map('intval', $user->getManagedProjectIds());
+
+        return array_values(array_intersect($projectIds, self::DEFAULT_ENABLED_PROJECT_IDS));
+    }
+
+    private function projectOptions(array $projectIds): array
+    {
+        if (empty($projectIds)) {
+            return [];
+        }
+
+        return Project::query()
+            ->whereIn('id', $projectIds)
+            ->orderBy('id')
+            ->get(['id', 'code', 'name'])
+            ->map(fn (Project $project) => [
+                'id' => (int) $project->id,
+                'label' => trim(($project->code ? "{$project->code} - " : '') . ($project->name ?: "Project {$project->id}")),
+            ])
+            ->values()
+            ->all();
+    }
+
+    private function statusClient()
+    {
+        if (
+            blank(config('services.focal_client_portal.supplier_secret'))
+            || blank(config('services.focal_client_portal.subscription_key'))
+        ) {
+            throw new \RuntimeException(
+                'Focal client portal credentials are not configured on the server.'
+            );
+        }
+
+        return Http::timeout((int) config('services.focal_client_portal.status_timeout', 30))
+            ->withHeaders([
+                'Accept' => '*/*',
+                'Supplier-Secret' => (string) config('services.focal_client_portal.supplier_secret'),
+                'Ocp-Apim-Subscription-Key' => (string) config('services.focal_client_portal.subscription_key'),
+            ]);
+    }
+
+    private function localOrdersForClientPortalReview(int $projectId, array $clientPortalJobIds = []): Collection
+    {
+        $table = \App\Services\ProjectOrderService::getTableName($projectId);
+        if (!Schema::hasTable($table)) {
+            return collect();
+        }
+
+        if (!Schema::hasColumn($table, 'workflow_type') || !Schema::hasColumn($table, 'final_upload')) {
+            return collect();
+        }
+
+        $columns = collect([
+            'id', 'project_id', 'order_number', 'client_reference', 'client_name',
+            'parent_company', 'CustomerParentCompany', 'client_portal_id',
+            'clint_order_number', 'workflow_state', 'workflow_type', 'status',
+            'qa_id', 'qa_name', 'final_upload', 'ausFinaldate', 'metadata',
+        ])->filter(fn ($column) => Schema::hasColumn($table, $column))->values()->all();
+
+        if (empty($columns)) {
+            return collect();
+        }
+
+        $normalizedJobIds = collect($clientPortalJobIds)
+            ->map(fn ($id) => trim((string) $id))
+            ->filter()
+            ->values()
+            ->all();
+
+        return Order::forProject($projectId)
+            ->select($columns)
+            ->where('workflow_type', 'PH_2_LAYER')
+            ->where(function ($query) use ($normalizedJobIds, $table) {
+                $query->where('final_upload', 'yes')
+                    ->orWhereIn('workflow_state', ['IN_QA', 'SUBMITTED_QA', 'APPROVED_QA', 'DELIVERED']);
+
+                if (!empty($normalizedJobIds)) {
+                    if (Schema::hasColumn($table, 'clint_order_number')) {
+                        $query->orWhereIn('clint_order_number', $normalizedJobIds);
+                    }
+                    if (Schema::hasColumn($table, 'order_number')) {
+                        $query->orWhereIn('order_number', $normalizedJobIds);
+                    }
+                    if (Schema::hasColumn($table, 'client_reference')) {
+                        $query->orWhereIn('client_reference', $normalizedJobIds);
+                    }
+                }
+            })
+            ->latest('id')
+            ->limit(500)
+            ->get();
+    }
+
+    private function isInProgressProduct(array $job): bool
+    {
+        $product = strtolower(trim((string) ($job['Product'] ?? $job['product'] ?? '')));
+
+        return in_array($product, self::IN_PROGRESS_PRODUCTS, true);
+    }
+
+    private function clientPortalStatusReason(?array $job, string $status): ?string
+    {
+        if (!$job) {
+            return null;
+        }
+
+        $messages = [];
+        $assetCount = $job['AssetCount'] ?? $job['assetCount'] ?? $job['AssetsCount'] ?? null;
+        $quantity = $job['Quantity'] ?? $job['quantity'] ?? null;
+
+        if (is_numeric($assetCount) && is_numeric($quantity) && (int) $assetCount < (int) $quantity) {
+            $messages[] = "Uploaded image count {$assetCount} is less than required quantity {$quantity}.";
+        }
+
+        $statusMessage = trim((string) (
+            $job['Message']
+            ?? $job['StatusMessage']
+            ?? $job['statusMessage']
+            ?? $job['Reason']
+            ?? $job['reason']
+            ?? ''
+        ));
+
+        if ($statusMessage !== '') {
+            $messages[] = $statusMessage;
+        }
+
+        return !empty($messages)
+            ? implode(' ', array_unique($messages))
+            : (
+                $status === 'Failed'
+                    ? 'Client portal shows this job as Failed. Check image count, file names, and original order reference before reuploading.'
+                    : 'Client portal still shows this job as InProgress. Check image count and file names against the original order reference.'
+            );
     }
 
     private function uploadUrl(string $jobOrderId): string

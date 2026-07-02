@@ -67,6 +67,10 @@ return [
             'FOCAL_CLIENT_PORTAL_API_URL',
             env('FOCAL_CRM_PHOTO_SUBMIT_API_URL', 'https://api.focalagent.com/supplier-enhancement/v2/jobs')
         ),
+        'status_api_url' => env(
+            'FOCAL_CLIENT_PORTAL_STATUS_API_URL',
+            env('FOCAL_CRM_STATUS_API_URL', 'https://api.focalagent.com/supplier-enhancement/v2/jobs')
+        ),
         'supplier_secret' => env(
             'FOCAL_CLIENT_PORTAL_SUPPLIER_SECRET',
             env('FOCAL_CRM_PHOTO_SUPPLIER_SECRET', env('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu'))
@@ -76,6 +80,7 @@ return [
             env('FOCAL_CRM_PHOTO_SUBSCRIPTION_KEY', env('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1'))
         ),
         'timeout' => env('FOCAL_CLIENT_PORTAL_TIMEOUT', 600),
+        'status_timeout' => env('FOCAL_CLIENT_PORTAL_STATUS_TIMEOUT', 30),
         'max_file_kb' => env('FOCAL_CLIENT_PORTAL_MAX_FILE_KB', 614400),
     ],
 

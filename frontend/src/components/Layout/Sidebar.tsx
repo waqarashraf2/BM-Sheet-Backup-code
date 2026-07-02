@@ -4,13 +4,13 @@ import { useSelector, useDispatch } from 'react-redux';
 import type { RootState } from '../../store/store';
 import { logout } from '../../store/slices/authSlice';
 import { resetNotifications } from '../../store/slices/notificationSlice';
-import { authService } from '../../services';
+import { authService, workflowService } from '../../services';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, FolderKanban, Users, Receipt, ClipboardList,
   Upload, AlertTriangle, UserPlus, ChevronsLeft, ChevronsRight,
   Command, LogOut, UserCheck, UsersRound, Briefcase, Shield, ScrollText,
-  ShieldCheck, BarChart3, ShieldAlert,
+  ShieldCheck, BarChart3, ShieldAlert, UploadCloud,
 } from 'lucide-react';
 import BenchmarkLogo from '../ui/BenchmarkLogo';
 
@@ -29,6 +29,7 @@ const NAV = [
   { name: 'My Team', href: '/qa-team', icon: UsersRound, roles: ['qa'] },
   { name: 'My Team', href: '/checker-team', icon: UsersRound, roles: ['checker'] },
   { name: 'Assignments', href: '/assign', icon: UserPlus, roles: ['director', 'operations_manager', 'project_manager', 'qa'] },
+  { name: 'In Progress Orders', href: '/client-portal-in-progress', icon: UploadCloud, roles: ['operations_manager', 'project_manager', 'qa'], clientPortalProjectGate: true },
   { name: 'Live QA', href: '/live-qa', icon: ShieldCheck, roles: ['live_qa', 'director', 'ceo', 'checker', 'qa'] },
   { name: 'Internal QA', href: '/internal-qa', icon: ShieldAlert, roles: ['live_qa', 'ceo', 'director', 'operations_manager'] },
   { name: 'Rejected', href: '/rejected', icon: AlertTriangle, roles: ['director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer'] },
@@ -44,10 +45,36 @@ export default function Sidebar() {
   const { user } = useSelector((state: RootState) => state.auth);
   const [collapsed, setCollapsed] = useState(false);
   const [isMac, setIsMac] = useState(false);
+  const [showClientPortalTab, setShowClientPortalTab] = useState(false);
 
   useEffect(() => {
     setIsMac(navigator.platform.toLowerCase().includes('mac'));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    setShowClientPortalTab(false);
+
+    if (!user?.role || !['operations_manager', 'project_manager', 'qa'].includes(user.role)) {
+      return () => {
+        active = false;
+      };
+    }
+
+    workflowService.getClientPortalAccess()
+      .then((response) => {
+        if (!active) return;
+        setShowClientPortalTab(Boolean(response.data.can_access_in_progress));
+      })
+      .catch(() => {
+        if (!active) return;
+        setShowClientPortalTab(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user?.id, user?.role]);
 
   const handleLogout = async () => {
     try {
@@ -66,6 +93,10 @@ export default function Sidebar() {
 
     if (item.href === '/live-qa' && (user.role === 'checker' || user.role === 'qa')) {
       return Number(user.project_id) === 16;
+    }
+
+    if ((item as any).clientPortalProjectGate) {
+      return showClientPortalTab;
     }
 
     return true;

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import { workflowService } from '../../services';
 import { AnimatedPage, PageHeader, Button, StatusBadge } from '../../components/ui';
 import { ArrowLeft, UploadCloud, Send, Loader2, Image as ImageIcon } from 'lucide-react';
 import type { ClientPortalUploadStatus } from '../../services';
 import type { Order } from '../../types';
+import type { RootState } from '../../store/store';
 
 type UploadOrderInfo = {
     jobOrderId: string;
@@ -70,6 +72,7 @@ function formatFileSize(bytes: number): string {
 
 export default function ClientUpload() {
     const navigate = useNavigate();
+    const user = useSelector((state: RootState) => state.auth.user);
     const { orderId } = useParams<{ orderId: string }>();
     const [searchParams] = useSearchParams();
     const [status, setStatus] = useState<ClientPortalUploadStatus | null>(null);
@@ -94,6 +97,8 @@ export default function ClientUpload() {
         || ''
     ).trim();
     const queryClientReference = (searchParams.get('clientReference') || '').trim();
+    const forceReupload = searchParams.get('reupload') === '1';
+    const requestedProjectId = Number(queryProjectId || 0) || undefined;
 
     useEffect(() => {
         if (!orderIdValid) return;
@@ -102,7 +107,7 @@ export default function ClientUpload() {
         setBusy('status');
         setError('');
 
-        workflowService.getClientPortalUploadStatus(numericOrderId)
+        workflowService.getClientPortalUploadStatus(numericOrderId, requestedProjectId)
             .then((statusResponse) => {
                 if (!active) return;
                 setStatus(statusResponse.data);
@@ -135,7 +140,7 @@ export default function ClientUpload() {
         return () => {
             active = false;
         };
-    }, [numericOrderId, orderIdValid, queryJobOrderId]);
+    }, [numericOrderId, orderIdValid, queryJobOrderId, requestedProjectId]);
 
     const orderLookup = useMemo(() => String(status?.job_order_id || status?.order_number || queryJobOrderId || orderInfo?.jobOrderId || '').trim(), [orderInfo, queryJobOrderId, status]);
     const imageLookup = useMemo(() => {
@@ -200,7 +205,13 @@ export default function ClientUpload() {
         setUploadProgress(0);
 
         try {
-            const response = await workflowService.uploadToClientPortal(numericOrderId, files, orderLookup, setUploadProgress);
+            const response = await workflowService.uploadToClientPortal(
+                numericOrderId,
+                files,
+                orderLookup,
+                setUploadProgress,
+                { forceReupload, projectId: requestedProjectId }
+            );
             setStatus(response.data.status);
             setMessage(response.data.message || 'Files uploaded successfully.');
         } catch (e: any) {
@@ -228,7 +239,7 @@ export default function ClientUpload() {
         setError('');
 
         try {
-            const response = await workflowService.submitClientPortalOrder(numericOrderId);
+            const response = await workflowService.submitClientPortalOrder(numericOrderId, requestedProjectId);
             setStatus(response.data.status);
             setMessage(response.data.message || 'Order submitted successfully.');
         } catch (e: any) {
@@ -403,17 +414,19 @@ export default function ClientUpload() {
                                 loading={busy === 'upload'}
                                 disabled={!files.length || !!invalidFiles.length || !!oversizedFiles.length || !canUpload || busy !== null}
                             >
-                                Upload Files
+                                {forceReupload ? 'Reupload Files' : 'Upload Files'}
                             </Button>
-                            <Button
-                                size="sm"
-                                icon={<Send className="h-4 w-4" />}
-                                onClick={submitOrder}
-                                loading={busy === 'submit'}
-                                disabled={!status?.uploaded || status?.submitted || busy !== null}
-                            >
-                                Submit Order
-                            </Button>
+                            {user?.role === 'qa' && (
+                                <Button
+                                    size="sm"
+                                    icon={<Send className="h-4 w-4" />}
+                                    onClick={submitOrder}
+                                    loading={busy === 'submit'}
+                                    disabled={!status?.uploaded || status?.submitted || busy !== null}
+                                >
+                                    Submit Order
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </div>

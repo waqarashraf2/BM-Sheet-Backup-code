@@ -30,6 +30,7 @@ class FocalCrmPhotoService
 
     protected array $photoProducts = [
         'photography',
+        'drone photography',
         'streetscape',
         'additional photo',
         'photo enhancement',

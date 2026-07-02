@@ -58,6 +58,8 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
     // Dedicated QA client-portal upload routes. Kept outside /workflow so generic
     // workflow order routes cannot interfere with upload method matching.
     Route::prefix('client-portal')->group(function () {
+        Route::get('/access', [ClientPortalUploadController::class, 'access']);
+        Route::get('/in-progress', [ClientPortalUploadController::class, 'inProgress']);
         Route::get('/orders/{orderId}/status', [ClientPortalUploadController::class, 'status']);
         Route::post('/orders/{orderId}/asset-upload', [ClientPortalUploadController::class, 'upload']);
         Route::post('/orders/{orderId}/submit', [ClientPortalUploadController::class, 'submit']);

@@ -991,9 +991,9 @@ public function myCurrent(Request $request)
             $portalService = app(FocalClientPortalUploadService::class);
             if ($portalService->isRequiredForOrder($order)) {
                 $portalStatus = $portalService->status($order);
-                if (!$portalStatus['submitted']) {
+                if (!$portalStatus['submitted'] || ($portalStatus['client_portal_blocks_internal_submit'] ?? false)) {
                     return response()->json([
-                        'message' => 'Upload and submit this order to the client portal before completing it here.',
+                        'message' => 'Upload and submit this order to the client portal before completing it here. Client portal is still InProgress/Uploaded.',
                         'client_portal_status' => $portalStatus,
                     ], 422);
                 }

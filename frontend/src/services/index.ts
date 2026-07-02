@@ -16,6 +16,8 @@ export interface ClientPortalUploadStatus {
   uploaded: boolean;
   submitted: boolean;
   status: 'not_required' | 'not_uploaded' | 'uploading' | 'uploaded' | 'submitted' | 'failed' | 'submit_failed';
+  client_portal_job_status?: string | null;
+  client_portal_blocks_internal_submit?: boolean;
   order_id?: number;
   project_id?: number;
   job_order_id?: string | null;
@@ -29,6 +31,32 @@ export interface ClientPortalUploadStatus {
   uploaded_at: string | null;
   submitted_at: string | null;
   failure_reason: string | null;
+}
+
+export interface ClientPortalInProgressOrder {
+  order_id: number | null;
+  project_id: number | null;
+  order_number: string | null;
+  client_reference: string | null;
+  client_name: string | null;
+  customer_parent_company: string | null;
+  job_order_id: string | null;
+  client_portal_job_id: string | null;
+  workflow_state: string | null;
+  internal_status: string | null;
+  qa_id: number | null;
+  qa_name: string | null;
+  local_upload_status: string | null;
+  uploaded_at: string | null;
+  client_portal_job_status: string | null;
+  client_portal_reason?: string | null;
+  can_reupload?: boolean;
+  client_portal_job?: Record<string, unknown> | null;
+}
+
+export interface ClientPortalProjectOption {
+  id: number;
+  label: string;
 }
 
 // ═══════════════════════════════════════════
@@ -256,19 +284,40 @@ export const workflowService = {
       response: unknown;
     }>(`/workflow/orders/${encodeURIComponent(jobOrderId)}/client-portal-submit`, orderId ? { order_id: orderId } : {}),
 
-  getClientPortalUploadStatus: (orderId: number) =>
-    api.get<ClientPortalUploadStatus>(`/client-portal/orders/${orderId}/status`),
+  getClientPortalUploadStatus: (orderId: number, projectId?: number) =>
+    api.get<ClientPortalUploadStatus>(`/client-portal/orders/${orderId}/status`, {
+      params: projectId ? { project_id: projectId } : undefined,
+    }),
+
+  getClientPortalInProgressOrders: (params?: { status?: 'InProgress' | 'Failed'; project_id?: number | null }) =>
+    api.get<{
+      orders: ClientPortalInProgressOrder[];
+      meta: {
+        allowed_project_ids: number[];
+        project_options: ClientPortalProjectOption[];
+        selected_project_id: number | null;
+        status: 'InProgress' | 'Failed';
+        client_portal_checked: boolean;
+        client_portal_error: string | null;
+      };
+    }>('/client-portal/in-progress', { params }),
+
+  getClientPortalAccess: () =>
+    api.get<{ can_access_in_progress: boolean }>('/client-portal/access'),
 
   uploadToClientPortal: (
     orderId: number,
     files: File[],
     jobOrderId?: string,
     onUploadProgress?: (progress: number) => void,
+    options?: { forceReupload?: boolean; projectId?: number },
   ) => {
     const payload = () => {
       const formData = new FormData();
       files.forEach(file => formData.append('files[]', file, file.name));
       if (jobOrderId) formData.append('job_order_id', jobOrderId);
+      if (options?.forceReupload) formData.append('force_reupload', '1');
+      if (options?.projectId) formData.append('project_id', String(options.projectId));
       return formData;
     };
 
@@ -285,9 +334,10 @@ export const workflowService = {
     );
   },
 
-  submitClientPortalOrder: (orderId: number) =>
+  submitClientPortalOrder: (orderId: number, projectId?: number) =>
     api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
       `/client-portal/orders/${orderId}/submit`,
+      projectId ? { project_id: projectId } : undefined,
     ),
 
   // Management: Receive new order

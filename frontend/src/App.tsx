@@ -30,6 +30,7 @@ const ImportOrders = lazy(() => import('./pages/Workflow/ImportOrders'));
 const RejectedOrders = lazy(() => import('./pages/Workflow/RejectedOrders'));
 const OrderAssetLinks = lazy(() => import('./pages/Workflow/OrderAssetLinks'));
 const ClientUpload = lazy(() => import('./pages/Workflow/ClientUpload'));
+const ClientPortalInProgress = lazy(() => import('./pages/Workflow/ClientPortalInProgress'));
 const SupervisorAssignment = lazy(() => import('./pages/Workflow/SupervisorAssignment'));
 const PMAssignment = lazy(() => import('./pages/Workflow/PMAssignment'));
 const PMProjectAssignment = lazy(() => import('./pages/Management/PMProjectAssignment'));
@@ -215,8 +216,17 @@ function App() {
             <Route
               path="client-upload/:orderId"
               element={
-                <ProtectedRoute allowedRoles={['qa']}>
+                <ProtectedRoute allowedRoles={['operations_manager', 'project_manager', 'qa']}>
                   <ClientUpload />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="client-portal-in-progress/*"
+              element={
+                <ProtectedRoute allowedRoles={['operations_manager', 'project_manager', 'qa']}>
+                  <ClientPortalInProgress />
                 </ProtectedRoute>
               }
             />
