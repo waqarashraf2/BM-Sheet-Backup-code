@@ -20,6 +20,8 @@ class FocalClientPortalUploadService
     private const IN_PROGRESS_PRODUCTS = [
         'photography',
         'drone photography',
+        'drone photography',
+        'prestige photography',
         'streetscape',
         'additional photo',
         'photo enhancement',

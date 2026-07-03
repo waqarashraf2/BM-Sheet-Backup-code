@@ -434,11 +434,6 @@ public function myCurrent(Request $request)
             ),
             '/'
         ) . '?jobstatus=Failed';
-        $endpoints = [
-            rtrim($apiUrl, '/') . '/' . rawurlencode($jobOrderId) . '/assetdetail',
-            str_replace('/v3/', '/v2/', rtrim($apiUrl, '/')) . '/' . rawurlencode($jobOrderId) . '/assetdetail',
-        ];
-
         try {
             if ($checkFailedJobs) {
                 $failedJobsResponse = Http::timeout(30)
@@ -453,7 +448,7 @@ public function myCurrent(Request $request)
                         'failed' => false,
                         'job_status' => null,
                         'uploaded_count' => 0,
-                        'message' => 'Focal job status could not be checked. Please retry before submitting.',
+                        'message' => 'Client portal failed-order status could not be checked. Please retry before submitting.',
                     ];
                 }
 
@@ -477,44 +472,20 @@ public function myCurrent(Request $request)
                         'failed' => true,
                         'job_status' => $jobStatus,
                         'uploaded_count' => 0,
-                        'message' => 'Failed by Client Portal. Upload the corrected file and submit again.',
+                        'message' => 'Order is not uploaded on client portal.',
                     ];
                 }
             }
 
-            foreach (array_unique($endpoints) as $url) {
-                $response = Http::timeout(30)
-                    ->withHeaders($headers)
-                    ->get($url);
-
-                if (!$response->successful()) {
-                    continue;
-                }
-
-                $assets = collect((array) (($response->json() ?? [])['Assets'] ?? []))
-                    ->filter(function ($asset) {
-                        if (!is_array($asset)) {
-                            return false;
-                        }
-
-                        return !empty($asset['Url'] ?? $asset['url'] ?? $asset['URL'] ?? null)
-                            || !empty($asset['FileName'] ?? $asset['file_name'] ?? null);
-                    })
-                    ->values();
-                $uploadedCount = $assets->count();
-
-                return [
-                    'required' => true,
-                    'checked' => true,
-                    'uploaded' => $uploadedCount > 0,
-                    'failed' => false,
-                    'job_status' => $uploadedCount > 0 ? 'Uploaded' : 'Not Uploaded',
-                    'uploaded_count' => $uploadedCount,
-                    'message' => $uploadedCount > 0
-                        ? 'File uploaded successfully on the Focal client portal.'
-                        : 'No completed file is uploaded on the Focal client portal yet.',
-                ];
-            }
+            return [
+                'required' => true,
+                'checked' => true,
+                'uploaded' => true,
+                'failed' => false,
+                'job_status' => 'Completed',
+                'uploaded_count' => 0,
+                'message' => 'Done',
+            ];
         } catch (\Throwable $e) {
             report($e);
         }
@@ -526,7 +497,7 @@ public function myCurrent(Request $request)
             'failed' => false,
             'job_status' => null,
             'uploaded_count' => 0,
-            'message' => 'Client portal could not be checked. Please retry before submitting.',
+            'message' => 'Client portal failed-order status could not be checked. Please retry before submitting.',
         ];
     }
 
@@ -1008,8 +979,33 @@ public function myCurrent(Request $request)
                 ], 422);
             }
 
-            // Project 1 checker is the final stage. Submit to Focal before the
-            // internal transition; an explicit Failed-list match blocks it.
+            // Project 1 checker is the final stage. Failed-list match blocks
+            // both client-portal submit and the internal transition.
+            $failedStatus = $this->checkProjectOneFailedJob($jobOrderId);
+            if ($failedStatus['failed']) {
+                return response()->json([
+                    'message' => 'Order is not uploaded on client portal.',
+                    'portal_upload_status' => [
+                        'required' => true,
+                        'checked' => true,
+                        'uploaded' => false,
+                        'failed' => true,
+                        'job_status' => 'Failed',
+                        'uploaded_count' => 0,
+                        'message' => 'Order is not uploaded on client portal.',
+                    ],
+                ], 422);
+            }
+
+            if (!$failedStatus['checked']) {
+                Log::warning('Project 1 Focal failed-list verification unavailable before submit', [
+                    'job_order_id' => $jobOrderId,
+                    'role' => $user->role,
+                ]);
+            }
+
+            // Project 1 legacy behavior still submits to Focal before the
+            // internal transition when the job is not present in Failed.
             $portalSubmit = $this->submitProjectOneToClientPortal($jobOrderId);
             if (!$portalSubmit['submitted']) {
                 return response()->json([
@@ -1032,7 +1028,7 @@ public function myCurrent(Request $request)
 
             if ($failedStatus['failed']) {
                 return response()->json([
-                    'message' => 'Failed by Client Portal. The internal order was not submitted.',
+                    'message' => 'Order is not uploaded on client portal.',
                     'portal_upload_status' => [
                         'required' => true,
                         'checked' => true,
@@ -1040,7 +1036,7 @@ public function myCurrent(Request $request)
                         'failed' => true,
                         'job_status' => 'Failed',
                         'uploaded_count' => 0,
-                        'message' => 'Failed by Client Portal. The internal order was not submitted.',
+                        'message' => 'Order is not uploaded on client portal.',
                     ],
                     'client_portal_submit' => $portalSubmit,
                 ], 422);

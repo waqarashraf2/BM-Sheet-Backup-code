@@ -33,7 +33,28 @@ interface ChecklistItem {
   checked: boolean;
 }
 
-type ImageCountStateKey = 'totalImages' | 'normalImages' | 'hdrImages' | 'editImages' | 'finalImages';
+type ImageCountStateKey =
+  | 'totalImages'
+  | 'totalOutputs'
+  | 'singleExposureImages'
+  | 'jpegToHdr'
+  | 'rawToHdrWithoutEdit'
+  | 'rawToHdrWithBaseEdit'
+  | 'duskImages'
+  | 'objectRemovalJpegHdrLessThan45'
+  | 'objectRemovalJpegHdrMoreThan45'
+  | 'objectRemovalJpegHdrAdvanceDeclutter'
+  | 'objectRemovalRawHdrLessThan45'
+  | 'objectRemovalRawHdrMoreThan45'
+  | 'objectRemovalRawHdrAdvanceDeclutter'
+  | 'aerialBoundriesSingleProperty'
+  | 'aerialAddingMultipleLocationPins'
+  | 'aerialBoundriesMultipleProperties'
+  | 'vfImages'
+  | 'normalImages'
+  | 'hdrImages'
+  | 'editImages'
+  | 'finalImages';
 type ImageCountPayloadKey =
   | 'total_raw_files'
   | 'hdr_images_count'
@@ -81,6 +102,25 @@ const PROJECT_IMAGE_COUNT_FIELDS: Record<number, ImageCountFieldConfig[]> = {
     { stateKey: 'finalImages', label: 'GDPR', commentLabels: ['GDPR', 'Final'], metadataKeys: ['final_images_count', 'finalImages'], payloadKey: 'final_images_count' },
     { stateKey: 'editImages', label: 'Edited Images', commentLabels: ['Edited Images', 'Edited', 'Edit'], metadataKeys: ['edited_images_count', 'editImages'], payloadKey: 'edited_images_count' },
   ],
+  50: [
+    { stateKey: 'totalImages', label: 'Total RAW Files', commentLabels: ['Total RAW Files', 'Total Raw Files', 'Total Images', 'Total'], metadataKeys: ['project_50_total_raw_files', 'total_raw_files', 'totalImages'] },
+    { stateKey: 'totalOutputs', label: 'Total Outputs', commentLabels: ['Total Outputs'], metadataKeys: ['project_50_total_outputs', 'total_outputs'] },
+    { stateKey: 'singleExposureImages', label: 'Single Exposure Images', commentLabels: ['Single Exposure Images'], metadataKeys: ['project_50_single_exposure_images', 'single_exposure_images'] },
+    { stateKey: 'jpegToHdr', label: 'Jpeg to HDR', commentLabels: ['Jpeg to HDR', 'JPEG to HDR'], metadataKeys: ['project_50_jpeg_to_hdr', 'jpeg_to_hdr'] },
+    { stateKey: 'rawToHdrWithoutEdit', label: 'RAW to HDR Without Edit', commentLabels: ['RAW to HDR Without Edit'], metadataKeys: ['project_50_raw_to_hdr_without_edit', 'raw_to_hdr_without_edit'] },
+    { stateKey: 'rawToHdrWithBaseEdit', label: 'RAW to HDR With Base Edit', commentLabels: ['RAW to HDR With Base Edit'], metadataKeys: ['project_50_raw_to_hdr_with_base_edit', 'raw_to_hdr_with_base_edit'] },
+    { stateKey: 'duskImages', label: 'Dusk Images', commentLabels: ['Dusk Images'], metadataKeys: ['project_50_dusk_images', 'dusk_images'] },
+    { stateKey: 'objectRemovalJpegHdrLessThan45', label: 'Object Removal (Jpeg - HDR) Less than 45 minutes', commentLabels: ['Object Removal (Jpeg - HDR) Less than 45 minutes'], metadataKeys: ['project_50_object_removal_jpeg_hdr_less_than_45'] },
+    { stateKey: 'objectRemovalJpegHdrMoreThan45', label: 'Object Removal (Jpeg - HDR) More than 45 minutes', commentLabels: ['Object Removal (Jpeg - HDR) More than 45 minutes'], metadataKeys: ['project_50_object_removal_jpeg_hdr_more_than_45'] },
+    { stateKey: 'objectRemovalJpegHdrAdvanceDeclutter', label: 'Object Removal (Jpeg - HDR) Advance Declutter', commentLabels: ['Object Removal (Jpeg - HDR) Advance Declutter'], metadataKeys: ['project_50_object_removal_jpeg_hdr_advance_declutter'] },
+    { stateKey: 'objectRemovalRawHdrLessThan45', label: 'Object Removal (RAW - HDR) Less than 45 minutes', commentLabels: ['Object Removal (RAW - HDR) Less than 45 minutes'], metadataKeys: ['project_50_object_removal_raw_hdr_less_than_45'] },
+    { stateKey: 'objectRemovalRawHdrMoreThan45', label: 'Object Removal (RAW - HDR) More than 45 minutes', commentLabels: ['Object Removal (RAW - HDR) More than 45 minutes'], metadataKeys: ['project_50_object_removal_raw_hdr_more_than_45'] },
+    { stateKey: 'objectRemovalRawHdrAdvanceDeclutter', label: 'Object Removal (RAW - HDR) Advance Declutter', commentLabels: ['Object Removal (RAW - HDR) Advance Declutter'], metadataKeys: ['project_50_object_removal_raw_hdr_advance_declutter'] },
+    { stateKey: 'aerialBoundriesSingleProperty', label: 'Aerial Shots Boundries Single Property', commentLabels: ['Aerial Shots Boundries Single Property'], metadataKeys: ['project_50_aerial_boundries_single_property'] },
+    { stateKey: 'aerialAddingMultipleLocationPins', label: 'Aerial Shots Adding Multiple Location Pins', commentLabels: ['Aerial Shots Adding Multiple Location Pins'], metadataKeys: ['project_50_aerial_adding_multiple_location_pins'] },
+    { stateKey: 'aerialBoundriesMultipleProperties', label: 'Aerial Shots Boundries Multiple Properties', commentLabels: ['Aerial Shots Boundries Multiple Properties'], metadataKeys: ['project_50_aerial_boundries_multiple_properties'] },
+    { stateKey: 'vfImages', label: 'VF Images', commentLabels: ['VF Images'], metadataKeys: ['project_50_vf_images', 'vf_count'] },
+  ],
 };
 
 type ImageCountSyncPayload = {
@@ -116,11 +156,11 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   // PH_2_LAYER image counts
   const isPh2Layer = order.workflow_type === 'PH_2_LAYER';
   const imageCountFields = PROJECT_IMAGE_COUNT_FIELDS[order.project_id] ?? DEFAULT_IMAGE_COUNT_FIELDS;
-  const [totalImages, setTotalImages] = useState('');
-  const [normalImages, setNormalImages] = useState('');
-  const [hdrImages, setHdrImages] = useState('');
-  const [editImages, setEditImages] = useState('');
-  const [finalImages, setFinalImages] = useState('');
+  const [imageCounts, setImageCounts] = useState<Partial<Record<ImageCountStateKey, string>>>({});
+  const getImageCountValue = (stateKey: ImageCountStateKey) => imageCounts[stateKey] ?? '';
+  const setImageCountValue = (stateKey: ImageCountStateKey, value: string) => {
+    setImageCounts((prev) => ({ ...prev, [stateKey]: value }));
+  };
 
   // Timer
   const [elapsed, setElapsed] = useState(0);
@@ -180,7 +220,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
           }
           return '';
         };
-        const countsByState: Record<ImageCountStateKey, string> = {
+        const countsByState: Partial<Record<ImageCountStateKey, string>> = {
           totalImages: '',
           normalImages: '',
           hdrImages: '',
@@ -206,11 +246,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
           }
         });
 
-        setTotalImages(countsByState.totalImages);
-        setHdrImages(countsByState.hdrImages);
-        setEditImages(countsByState.editImages);
-        setNormalImages(countsByState.normalImages);
-        setFinalImages(countsByState.finalImages);
+        setImageCounts(countsByState);
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -233,20 +269,15 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
 
   const handleApprove = async () => {
     if (!isPh2Layer && !allChecked) return;
-    if (isPh2Layer && !(totalImages || normalImages || hdrImages || editImages || finalImages)) return;
+    const hasAnyImageCount = imageCountFields.some((field) => getImageCountValue(field.stateKey));
+    if (isPh2Layer && !hasAnyImageCount) return;
     if (clientPortalStatus?.required && !clientPortalStatus.submitted) return;
     setSubmitting(true);
     try {
       const checklistSummary = !isPh2Layer ? checklist.map(c => `✓ ${c.label}`).join('\n') : '';
       const areaSummary = editableArea.trim() ? `\nArea: ${editableArea.trim()}` : '';
-      const imageCountValues: Record<ImageCountStateKey, string> = {
-        totalImages,
-        normalImages,
-        hdrImages,
-        editImages,
-        finalImages,
-      };
-      const imageCountSummary = isPh2Layer && (totalImages || normalImages || hdrImages || editImages || finalImages)
+      const imageCountValues = imageCounts;
+      const imageCountSummary = isPh2Layer && hasAnyImageCount
         ? `\nPhoto Selections - ${imageCountFields.map((field) => `${field.label}: ${imageCountValues[field.stateKey] || 0}`).join(', ')}`
         : '';
       const comment = `QA Approved${checklistSummary ? `\n\nChecklist:\n${checklistSummary}` : ''}${areaSummary}${imageCountSummary}${notes ? `\n\nNotes: ${notes}` : ''}`;
@@ -271,13 +302,13 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
           return Number.isFinite(count) ? count : null;
         };
 
-        const parsedTotalImages = parseOptionalCount(totalImages);
-        const parsedNormalImages = parseOptionalCount(normalImages);
-        const parsedHdrImages = parseOptionalCount(hdrImages);
-        const parsedEditImages = parseOptionalCount(editImages);
-        const parsedFinalImages = parseOptionalCount(finalImages);
+        const parsedTotalImages = parseOptionalCount(getImageCountValue('totalImages'));
+        const parsedNormalImages = parseOptionalCount(getImageCountValue('normalImages'));
+        const parsedHdrImages = parseOptionalCount(getImageCountValue('hdrImages'));
+        const parsedEditImages = parseOptionalCount(getImageCountValue('editImages'));
+        const parsedFinalImages = parseOptionalCount(getImageCountValue('finalImages'));
 
-        const parsedByState: Record<ImageCountStateKey, number | null> = {
+        const parsedByState: Partial<Record<ImageCountStateKey, number | null>> = {
           totalImages: parsedTotalImages,
           normalImages: parsedNormalImages,
           hdrImages: parsedHdrImages,
@@ -290,7 +321,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
 
           nextValues[field.payloadKey] = field.payloadKey === 'total_raw_files'
             ? (parsedByState[field.stateKey] === null ? null : String(parsedByState[field.stateKey]))
-            : parsedByState[field.stateKey];
+            : (parsedByState[field.stateKey] ?? null);
           return nextValues;
         }, {} as Record<ImageCountPayloadKey, string | number | null>);
 
@@ -554,15 +585,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                       <label className="mb-2 block text-xs font-semibold text-slate-700">Photo Selections</label>
                       <div className="grid grid-cols-3 gap-3 md:grid-cols-5">
-                        {[
-                          { stateKey: 'totalImages' as const, value: totalImages, setter: setTotalImages },
-                          { stateKey: 'normalImages' as const, value: normalImages, setter: setNormalImages },
-                          { stateKey: 'hdrImages' as const, value: hdrImages, setter: setHdrImages },
-                          { stateKey: 'editImages' as const, value: editImages, setter: setEditImages },
-                          { stateKey: 'finalImages' as const, value: finalImages, setter: setFinalImages },
-                        ].filter((stateField) => imageCountFields.some((field) => field.stateKey === stateField.stateKey)).map((stateField) => {
-                          const field = imageCountFields.find((item) => item.stateKey === stateField.stateKey)!;
-
+                        {imageCountFields.map((field) => {
                           return (
                             <div key={field.label}>
                               <label className="block text-xs text-slate-500 mb-1">{field.label}</label>
@@ -571,8 +594,8 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                                 min="0"
                                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                                 placeholder="0"
-                                value={stateField.value}
-                                onChange={e => stateField.setter(e.target.value)}
+                                value={getImageCountValue(field.stateKey)}
+                                onChange={e => setImageCountValue(field.stateKey, e.target.value)}
                               />
                             </div>
                           );
@@ -770,7 +793,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
               onClick={handleApprove}
               loading={submitting}
               disabled={
-                (isPh2Layer ? !(totalImages || normalImages || hdrImages || editImages || finalImages) : !allChecked)
+                (isPh2Layer ? !imageCountFields.some((field) => getImageCountValue(field.stateKey)) : !allChecked)
                 || (clientPortalStatus?.required === true && !clientPortalStatus.submitted)
               }
               icon={<Send className="h-4 w-4" />}

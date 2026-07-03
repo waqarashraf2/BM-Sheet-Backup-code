@@ -24,6 +24,25 @@ const TEAM_NAME_COLUMN_PROJECT_IDS = [3, 16, 42];
 const DIRECT_CHECKER_ASSIGNMENT_PROJECT_IDS = [3, 16, 42];
 const TEAM_CHECKER_ASSIGNMENT_PROJECT_IDS = [3, 16];
 const QA_WAIT_DURING_FILLER_PROJECT_IDS = [12];
+const PROJECT_50_REPORT_COLUMNS = [
+  { key: 'project_50_total_raw_files', label: 'Total RAW Files' },
+  { key: 'project_50_total_outputs', label: 'Total Outputs' },
+  { key: 'project_50_single_exposure_images', label: 'Single Exposure Images' },
+  { key: 'project_50_jpeg_to_hdr', label: 'Jpeg to HDR' },
+  { key: 'project_50_raw_to_hdr_without_edit', label: 'RAW to HDR Without Edit' },
+  { key: 'project_50_raw_to_hdr_with_base_edit', label: 'RAW to HDR With Base Edit' },
+  { key: 'project_50_dusk_images', label: 'Dusk Images' },
+  { key: 'project_50_object_removal_jpeg_hdr_less_than_45', label: 'Object Removal (Jpeg - HDR) Less than 45 minutes' },
+  { key: 'project_50_object_removal_jpeg_hdr_more_than_45', label: 'Object Removal (Jpeg - HDR) More than 45 minutes' },
+  { key: 'project_50_object_removal_jpeg_hdr_advance_declutter', label: 'Object Removal (Jpeg - HDR) Advance Declutter' },
+  { key: 'project_50_object_removal_raw_hdr_less_than_45', label: 'Object Removal (RAW - HDR) Less than 45 minutes' },
+  { key: 'project_50_object_removal_raw_hdr_more_than_45', label: 'Object Removal (RAW - HDR) More than 45 minutes' },
+  { key: 'project_50_object_removal_raw_hdr_advance_declutter', label: 'Object Removal (RAW - HDR) Advance Declutter' },
+  { key: 'project_50_aerial_boundries_single_property', label: 'Aerial Shots Boundries Single Property' },
+  { key: 'project_50_aerial_adding_multiple_location_pins', label: 'Aerial Shots Adding Multiple Location Pins' },
+  { key: 'project_50_aerial_boundries_multiple_properties', label: 'Aerial Shots Boundries Multiple Properties' },
+  { key: 'project_50_vf_images', label: 'VF Images' },
+];
 const isValidTimeZone = (timeZone?: string | null) => {
   if (typeof timeZone !== 'string' || timeZone.trim() === '') {
     return false;
@@ -185,6 +204,7 @@ export default function SupervisorAssignment() {
   const dashboardFilterKeyRef = useRef<string | null>(null);
 
   const isProject16 = projectId === 16;
+  const isProject50 = projectId === 50;
   const showTeamNameColumn = projectId != null && TEAM_NAME_COLUMN_PROJECT_IDS.includes(projectId);
   const allowDirectCheckerAssignment = projectId != null && DIRECT_CHECKER_ASSIGNMENT_PROJECT_IDS.includes(projectId);
   const selectedQueueInfo = useMemo(
@@ -1808,6 +1828,15 @@ export default function SupervisorAssignment() {
       );
     }
 
+    if (isProject50) {
+      const existingKeys = new Set(primaryColumns.map((column) => column.key));
+      PROJECT_50_REPORT_COLUMNS.forEach((column) => {
+        if (!existingKeys.has(column.key)) {
+          primaryColumns.push(column);
+        }
+      });
+    }
+
     return [
       { key: '__received_at_datetime', label: 'Received At Date Time' },
       { key: '__due_in_datetime', label: 'Due In Date Time' },
@@ -1816,7 +1845,7 @@ export default function SupervisorAssignment() {
       ...visibleRoleColumns.map((column) => ({ key: column.key, label: column.label })),
       { key: 'workflow_state', label: 'Status' },
     ];
-  }, [dynamicPrimaryColumns, isPhotoEnhancementQueue, showTeamNameColumn, visibleRoleColumns]);
+  }, [dynamicPrimaryColumns, isPhotoEnhancementQueue, isProject50, showTeamNameColumn, visibleRoleColumns]);
 
   const ASSIGNMENT_EXPORT_PAGE_RETRIES = 5;
   const ASSIGNMENT_EXPORT_RETRY_DELAY_MS = 800;
@@ -2101,6 +2130,12 @@ export default function SupervisorAssignment() {
       case 'ph_final_images':
         return getPhotoEnhancementExportParts(order).final;
       default: {
+        if (key.startsWith('project_50_')) {
+          const metadata = (((order as any).metadata || {}) as Record<string, unknown>);
+          const value = (order as any)[key] ?? metadata[key];
+          return value == null || value === '' ? '0' : String(value);
+        }
+
         const value = (order as any)[key];
         return value == null || value === '' ? '-' : String(value);
       }

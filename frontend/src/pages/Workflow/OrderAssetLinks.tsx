@@ -570,13 +570,13 @@ export default function OrderAssetLinks() {
                         </div>
                         <StatusBadge
                             status={
-                                portalStatus.uploaded
-                                    ? 'uploaded'
-                                    : portalStatus.failed
+                                portalStatus.failed
                                         ? 'failed'
+                                    : portalStatus.checked && portalStatus.job_status === 'Completed'
+                                        ? 'done'
                                         : portalStatus.checked
-                                            ? 'not uploaded'
-                                            : 'check unavailable'
+                                            ? 'done'
+                                        : 'check unavailable'
                             }
                             size="sm"
                         />

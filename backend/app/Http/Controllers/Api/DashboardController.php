@@ -5210,6 +5210,11 @@ if ($useDueInFirstOrdering) {
             $order->area = $commentMeta['area'] ?? null;
             $order->total_images = $commentMeta['total_images'] ?? null;
             $order->final_images = $commentMeta['final_images'] ?? null;
+            if ((int) $order->project_id === 50) {
+                foreach ($this->project50ReportCountKeys() as $project50Key) {
+                    $order->{$project50Key} = $commentMeta[$project50Key] ?? 0;
+                }
+            }
 
             if ($order->fixing_time_seconds === null && $order->fixing_started_at && $order->fixing_completed_at) {
                 try {
@@ -5912,16 +5917,19 @@ if ($useDueInFirstOrdering) {
             $area = $this->extractAreaFromAssignmentComment($workItem->comments);
             $totalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Total');
             $finalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Final');
+            $project50Counts = (int) $workItem->project_id === 50
+                ? $this->extractProject50ReportCountsFromAssignmentComment($workItem->comments)
+                : [];
 
-            if ($area === null && $totalImages === null && $finalImages === null) {
+            if ($area === null && $totalImages === null && $finalImages === null && empty($project50Counts)) {
                 continue;
             }
 
-            $commentMap[$key] = [
+            $commentMap[$key] = array_merge([
                 'area' => $area,
                 'total_images' => $totalImages,
                 'final_images' => $finalImages,
-            ];
+            ], $project50Counts);
         }
 
         return $commentMap;
@@ -5998,6 +6006,56 @@ if ($useDueInFirstOrdering) {
         }
 
         return (int) $matches[1];
+    }
+
+    private function extractProject50ReportCountsFromAssignmentComment(?string $comments): array
+    {
+        if (empty($comments)) {
+            return [];
+        }
+
+        $fields = $this->project50ReportCountLabelMap();
+
+        $counts = [];
+        foreach ($fields as $field => $labels) {
+            foreach ($labels as $label) {
+                $count = $this->extractImageCountFromAssignmentComment($comments, $label);
+                if ($count !== null) {
+                    $counts[$field] = $count;
+                    break;
+                }
+            }
+        }
+
+        return $counts;
+    }
+
+    private function project50ReportCountKeys(): array
+    {
+        return array_keys($this->project50ReportCountLabelMap());
+    }
+
+    private function project50ReportCountLabelMap(): array
+    {
+        return [
+            'project_50_total_raw_files' => ['Total RAW Files', 'Total Raw Files'],
+            'project_50_total_outputs' => ['Total Outputs'],
+            'project_50_single_exposure_images' => ['Single Exposure Images'],
+            'project_50_jpeg_to_hdr' => ['Jpeg to HDR', 'JPEG to HDR'],
+            'project_50_raw_to_hdr_without_edit' => ['RAW to HDR Without Edit'],
+            'project_50_raw_to_hdr_with_base_edit' => ['RAW to HDR With Base Edit'],
+            'project_50_dusk_images' => ['Dusk Images'],
+            'project_50_object_removal_jpeg_hdr_less_than_45' => ['Object Removal (Jpeg - HDR) Less than 45 minutes'],
+            'project_50_object_removal_jpeg_hdr_more_than_45' => ['Object Removal (Jpeg - HDR) More than 45 minutes'],
+            'project_50_object_removal_jpeg_hdr_advance_declutter' => ['Object Removal (Jpeg - HDR) Advance Declutter'],
+            'project_50_object_removal_raw_hdr_less_than_45' => ['Object Removal (RAW - HDR) Less than 45 minutes'],
+            'project_50_object_removal_raw_hdr_more_than_45' => ['Object Removal (RAW - HDR) More than 45 minutes'],
+            'project_50_object_removal_raw_hdr_advance_declutter' => ['Object Removal (RAW - HDR) Advance Declutter'],
+            'project_50_aerial_boundries_single_property' => ['Aerial Shots Boundries Single Property'],
+            'project_50_aerial_adding_multiple_location_pins' => ['Aerial Shots Adding Multiple Location Pins'],
+            'project_50_aerial_boundries_multiple_properties' => ['Aerial Shots Boundries Multiple Properties'],
+            'project_50_vf_images' => ['VF Images'],
+        ];
     }
     
 
