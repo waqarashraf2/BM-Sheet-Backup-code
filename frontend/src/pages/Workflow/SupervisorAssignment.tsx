@@ -231,13 +231,9 @@ export default function SupervisorAssignment() {
       && !workflowState.includes('PENDING_BY_DRAWER')
       && !workflowState.includes('REJECTED');
   }, []);
-  const isCompletedOrder = useCallback((order: AssignmentOrder) => {
-    const workflowState = (order.workflow_state || '').toUpperCase();
-    return workflowState.includes('COMPLETE') || workflowState.includes('DELIVER');
+  const canOpenProjectOneAssetLinks = useCallback((order: AssignmentOrder) => {
+    return Number(order.project_id) === 1 && !!String(order.order_number || '').trim();
   }, []);
-  const canOpenCompletedAssetLinks = useCallback((order: AssignmentOrder) => {
-    return Number(order.project_id) === 1 && isCompletedOrder(order) && !!String(order.order_number || '').trim();
-  }, [isCompletedOrder]);
   const openCompletedAssetLinks = useCallback((order: AssignmentOrder) => {
     const jobOrderId = String(order.order_number || '').trim();
     if (!jobOrderId) return;
@@ -3927,7 +3923,7 @@ export default function SupervisorAssignment() {
                                   }`}>
                                   {getStatusLabel(o.workflow_state)}
                                 </span>
-                                {canOpenCompletedAssetLinks(o) && (
+                                {canOpenProjectOneAssetLinks(o) && (
                                   <button
                                     type="button"
                                     onClick={(event) => {
