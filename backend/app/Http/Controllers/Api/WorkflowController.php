@@ -979,33 +979,9 @@ public function myCurrent(Request $request)
                 ], 422);
             }
 
-            // Project 1 checker is the final stage. Failed-list match blocks
-            // both client-portal submit and the internal transition.
-            $failedStatus = $this->checkProjectOneFailedJob($jobOrderId);
-            if ($failedStatus['failed']) {
-                return response()->json([
-                    'message' => 'Order is not uploaded on client portal.',
-                    'portal_upload_status' => [
-                        'required' => true,
-                        'checked' => true,
-                        'uploaded' => false,
-                        'failed' => true,
-                        'job_status' => 'Failed',
-                        'uploaded_count' => 0,
-                        'message' => 'Order is not uploaded on client portal.',
-                    ],
-                ], 422);
-            }
-
-            if (!$failedStatus['checked']) {
-                Log::warning('Project 1 Focal failed-list verification unavailable before submit', [
-                    'job_order_id' => $jobOrderId,
-                    'role' => $user->role,
-                ]);
-            }
-
-            // Project 1 legacy behavior still submits to Focal before the
-            // internal transition when the job is not present in Failed.
+            // Project 1 checker is the final stage. Match legacy behavior:
+            // submit to Focal first, then verify the Failed list before the
+            // internal transition.
             $portalSubmit = $this->submitProjectOneToClientPortal($jobOrderId);
             if (!$portalSubmit['submitted']) {
                 return response()->json([

@@ -1232,6 +1232,7 @@ const ProjectsView: React.FC = () => {
                                                                                             <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Pending {batchTotals?.pending ?? 0}</span>
                                                                                             <span className="rounded-md bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Draw Orders {batchTotals?.drawing_process ?? 0}</span>
                                                                                             <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Fixing {batchTotals?.sent_to_fixing ?? 0}</span>
+                                                                                            <span className="rounded-md bg-orange-50 px-2 py-0.5 text-[10px] font-semibold text-orange-700">Untouched {batchTotals?.untouched_orders ?? 0}</span>
                                                                                             {batchTopPlans.map((item) => (
                                                                                                 <span
                                                                                                     key={`batch-header-${item.label}`}
