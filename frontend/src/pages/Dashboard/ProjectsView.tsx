@@ -1028,27 +1028,27 @@ const ProjectsView: React.FC = () => {
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {project.received_orders_today > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-semibold text-slate-700">{project.received_orders_today.toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">-</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {project.pending_orders > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-medium text-slate-500">{project.pending_orders.toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">-</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {(project.delayed_pending_orders ?? 0) > 0
                                                             ? <span className="inline-flex items-center justify-center rounded-md bg-slate-100 px-2 py-0.5 text-[11px] md:text-xs font-bold text-slate-600 ring-1 ring-slate-200">{(project.delayed_pending_orders ?? 0).toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">-</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {completedTodayCount > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-semibold text-[#2AA7A0]">{Number(completedTodayCount).toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">-</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums border-r border-slate-100">
                                                         {(project.delayed_done_orders ?? 0) > 0
                                                             ? <span className="inline-flex items-center justify-center rounded-md bg-slate-100 px-2 py-0.5 text-[11px] md:text-xs font-bold text-slate-600 ring-1 ring-slate-200">{(project.delayed_done_orders ?? 0).toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">-</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         <span className="text-[12px] md:text-[13px] font-medium text-slate-600">{project.total_staff.toLocaleString()}</span>
@@ -1067,12 +1067,12 @@ const ProjectsView: React.FC = () => {
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {project.present_staff > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-medium text-slate-600">{project.present_staff.toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">-</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {project.absent_staff > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-semibold text-rose-500">{project.absent_staff.toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">-</span>}
                                                     </td>
                                                 </tr>
 
@@ -1419,9 +1419,9 @@ const ProjectsView: React.FC = () => {
                                                                                                         <div className="flex items-center gap-2 ml-auto">
                                                                                                             <div className="flex items-center gap-1">
                                                                                                                 <span style={{ fontSize: '11px', fontWeight: '600', color: '#64748b' }}>{teamAssigned} assigned</span>
-                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>Â·</span>
+                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>/</span>
                                                                                                                 <span style={{ fontSize: '11px', fontWeight: '700', color: '#0f766e', background: '#ccfbf1', borderRadius: '4px', padding: '1px 6px' }}>{teamDone} Done</span>
-                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>Â·</span>
+                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>/</span>
                                                                                                                 <span style={{ fontSize: '11px', fontWeight: '700', color: teamPending > 0 ? '#b45309' : '#94a3b8', background: teamPending > 0 ? '#fef3c7' : 'transparent', borderRadius: '4px', padding: teamPending > 0 ? '1px 6px' : '0' }}>{teamPending} pend</span>
                                                                                                             </div>
                                                                                                             <svg xmlns="http://www.w3.org/2000/svg" style={{ width: '14px', height: '14px', color: '#94a3b8', transform: expandedTeam === team.team_id ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
