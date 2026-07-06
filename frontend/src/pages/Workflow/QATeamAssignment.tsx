@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../store/store';
-import { columnService, workflowService, projectService } from '../../services';
+import { columnService, workflowService, projectService, userService } from '../../services';
 import { useSmartPolling } from '../../hooks/useSmartPolling';
 import { useNewOrderHighlight } from '../../hooks/useNewOrderHighlight';
 import type { Order, ProjectColumn, User } from '../../types';
@@ -16,6 +16,8 @@ type AssignmentTableColumn = {
   headerClassName?: string;
   cellClassName?: string;
 };
+
+const FILLER_COLUMN_PROJECT_IDS = [12];
 
 function getProjectTime(tz: string): string {
   return new Date().toLocaleString('en-AU', {
@@ -39,12 +41,13 @@ export default function QATeamAssignment() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [drawers, setDrawers] = useState<User[]>([]);
   const [checkers, setCheckers] = useState<User[]>([]);
+  const [fillers, setFillers] = useState<User[]>([]);
   const [projectColumns, setProjectColumns] = useState<ProjectColumn[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   /* ── Inline assign dropdown state ── */
-  const [assignDropdown, setAssignDropdown] = useState<{ orderId: number; role: 'drawer' | 'checker'; anchorRect?: DOMRect } | null>(null);
+  const [assignDropdown, setAssignDropdown] = useState<{ orderId: number; role: 'drawer' | 'checker' | 'filler'; anchorRect?: DOMRect } | null>(null);
   const [assignSearch, setAssignSearch] = useState('');
   const [assigning, setAssigning] = useState(false);
 
@@ -54,6 +57,7 @@ export default function QATeamAssignment() {
     () => orders.find((order) => order.project_id != null)?.project_id ?? user?.project_id ?? null,
     [orders, user?.project_id]
   );
+  const showFillerColumn = activeProjectId != null && FILLER_COLUMN_PROJECT_IDS.includes(Number(activeProjectId));
 
   /* ── Project timezone ── */
   const [projectTz, setProjectTz] = useState('Australia/Sydney');
@@ -105,12 +109,21 @@ export default function QATeamAssignment() {
         workflowService.qaOrders(),
         workflowService.qaTeamMembers(),
       ]);
-      setOrders(ordersRes.data?.orders || []);
+      const fetchedOrders = ordersRes.data?.orders || [];
+      const fetchedProjectId = fetchedOrders.find((order) => order.project_id != null)?.project_id ?? user?.project_id ?? null;
+      setOrders(fetchedOrders);
       setDrawers(teamRes.data?.drawers || []);
       setCheckers(teamRes.data?.checkers || []);
+      if (fetchedProjectId != null && FILLER_COLUMN_PROJECT_IDS.includes(Number(fetchedProjectId))) {
+        const fillerRes = await userService.list({ role: 'filler', project_id: Number(fetchedProjectId) });
+        const fillerData = fillerRes.data?.data || fillerRes.data;
+        setFillers(Array.isArray(fillerData) ? fillerData : []);
+      } else {
+        setFillers([]);
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [canAccess]);
+  }, [canAccess, user?.project_id]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -125,13 +138,18 @@ export default function QATeamAssignment() {
   /* ── Inline assign logic ── */
   const assignableWorkers = useMemo(() => {
     if (!assignDropdown) return [];
-    const list = assignDropdown.role === 'drawer' ? drawers.filter(d => !d.is_absent) : checkers.filter(c => !c.is_absent);
+    const roleWorkers = assignDropdown.role === 'drawer'
+      ? drawers
+      : assignDropdown.role === 'checker'
+        ? checkers
+        : fillers;
+    const list = roleWorkers.filter(worker => !worker.is_absent);
     if (!assignSearch) return list;
     const q = assignSearch.toLowerCase();
     return list.filter(w => w.name.toLowerCase().includes(q) || w.email.toLowerCase().includes(q) || String(w.id).includes(q));
-  }, [assignDropdown, drawers, checkers, assignSearch]);
+  }, [assignDropdown, drawers, checkers, fillers, assignSearch]);
 
-  const openAssignDropdown = (e: React.MouseEvent, orderId: number, role: 'drawer' | 'checker') => {
+  const openAssignDropdown = (e: React.MouseEvent, orderId: number, role: 'drawer' | 'checker' | 'filler') => {
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setAssignDropdown({ orderId, role, anchorRect: rect });
@@ -141,7 +159,7 @@ export default function QATeamAssignment() {
   const handleAssign = async (orderId: number, role: string, userId: number) => {
     try {
       setAssigning(true);
-      const worker = [...drawers, ...checkers].find((w: User) => w.id === userId);
+      const worker = [...drawers, ...checkers, ...fillers].find((w: User) => w.id === userId);
       // Find order's project_id to avoid cross-project ID collision
       const orderProjectId = orders.find(o => o.id === orderId)?.project_id;
       let res;
@@ -155,8 +173,8 @@ export default function QATeamAssignment() {
 
       // Optimistic update
       if (worker) {
-        const roleColMap: Record<string, string> = { drawer: 'drawer_name', checker: 'checker_name' };
-        const roleIdMap: Record<string, string> = { drawer: 'drawer_id', checker: 'checker_id' };
+        const roleColMap: Record<string, string> = { drawer: 'drawer_name', checker: 'checker_name', filler: 'file_uploader_name' };
+        const roleIdMap: Record<string, string> = { drawer: 'drawer_id', checker: 'checker_id', filler: 'file_uploader_id' };
         setOrders(prev => prev.map(o => o.id === orderId ? { ...o, [roleColMap[role]]: worker.name, [roleIdMap[role]]: worker.id, assigned_to: role === 'drawer' ? worker.id : o.assigned_to } as any : o));
       }
 
@@ -199,12 +217,26 @@ export default function QATeamAssignment() {
   };
 
   /* ── Reusable cell renderer ── */
-  const RoleCell = ({ order, role, color, startTime, endTime }: { order: Order; role: 'drawer' | 'checker'; color: string; startTime?: string | null; endTime?: string | null }) => {
-    const name = role === 'drawer' ? ((order as any).drawer_name || order.assignedUser?.name || null) : ((order as any).checker_name || null);
+  const RoleCell = ({ order, role, color, startTime, endTime }: { order: Order; role: 'drawer' | 'checker' | 'filler'; color: string; startTime?: string | null; endTime?: string | null }) => {
+    const name = role === 'drawer'
+      ? ((order as any).drawer_name || order.assignedUser?.name || null)
+      : role === 'checker'
+        ? ((order as any).checker_name || null)
+        : ((order as any).file_uploader_name || (order as any).filler_name || null);
     const isDrawerRole = role === 'drawer';
-    const doneCol = role === 'drawer' ? 'drawer_done' : 'checker_done';
-    const isDone = (order as any)[doneCol] === 'yes';
-    const canAssign = !isDone && (order.workflow_state === 'PENDING_QA_REVIEW' || order.workflow_state === 'QUEUED_DRAW' || (isDrawerRole && !order.assigned_to));
+    const doneValue = role === 'drawer'
+      ? (order as any).drawer_done
+      : role === 'checker'
+        ? (order as any).checker_done
+        : (order as any).file_uploaded;
+    const isDone = ['yes', '1', 'true'].includes(String(doneValue || '').toLowerCase());
+    const workflowState = (order.workflow_state || '').toUpperCase();
+    const isClosed = workflowState.includes('COMPLETE') || workflowState.includes('DELIVER') || workflowState.includes('CANCEL');
+    const canAssign = !isDone && !isClosed && (
+      role === 'filler'
+        ? showFillerColumn
+        : (order.workflow_state === 'PENDING_QA_REVIEW' || order.workflow_state === 'QUEUED_DRAW' || (isDrawerRole && !order.assigned_to))
+    );
     const duration = fmtDuration(startTime || null, endTime || null);
     return (
       <td className="px-3 py-2">
@@ -270,8 +302,13 @@ export default function QATeamAssignment() {
   const fixedTrailingFields = useMemo(() => new Set([
     'drawer_name',
     'checker_name',
+    'file_uploader_name',
     'drawer_id',
     'checker_id',
+    'file_uploader_id',
+    'file_uploaded',
+    'fassign_time',
+    'file_upload_date',
     'workflow_state',
     'status',
   ]), []);
@@ -500,6 +537,7 @@ export default function QATeamAssignment() {
                   <col style={{ width: '7%' }} />{/* State */}
                   <col style={{ width: '14%' }} />{/* Drawer */}
                   <col style={{ width: '14%' }} />{/* Checker */}
+                  {showFillerColumn && <col style={{ width: '12%' }} />}{/* Filler */}
                   <col style={{ width: '8%' }} />{/* Status */}
                 </colgroup>
                 <thead>
@@ -519,6 +557,9 @@ export default function QATeamAssignment() {
                     <th className="px-3 py-2 text-left font-semibold">
                       <div className="flex items-center gap-1"><CheckSquare className="w-3 h-3" /> Checker</div>
                     </th>
+                    {showFillerColumn && (
+                      <th className="px-3 py-2 text-left font-semibold">Filler</th>
+                    )}
                     <th className="px-2 py-2 text-center font-semibold">Status</th>
                   </tr>
                 </thead>
@@ -544,6 +585,15 @@ export default function QATeamAssignment() {
                         <RoleCell order={o} role="drawer" color="bg-blue-600" startTime={(o as any).dassign_time} endTime={(o as any).drawer_date} />
                         {/* Checker — inline clickable */}
                         <RoleCell order={o} role="checker" color="bg-purple-600" startTime={(o as any).cassign_time} endTime={(o as any).checker_date} />
+                        {showFillerColumn && (
+                          <RoleCell
+                            order={o}
+                            role="filler"
+                            color="bg-sky-600"
+                            startTime={(o as any).fassign_time}
+                            endTime={(o as any).file_upload_date || (o as any).ausFinaldate}
+                          />
+                        )}
                         {/* Status indicator */}
                         <td className="px-2 py-2 text-center">
                           <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
@@ -616,7 +666,7 @@ export default function QATeamAssignment() {
                       disabled={(w.wip_count || 0) >= (w.wip_limit || 5)}
                       className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-brand-50 transition-colors text-left ${(w.wip_count || 0) >= (w.wip_limit || 5) ? 'opacity-40 cursor-not-allowed' : ''
                         }`}>
-                      <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${assignDropdown.role === 'drawer' ? 'bg-blue-600' : 'bg-purple-600'
+                      <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${assignDropdown.role === 'drawer' ? 'bg-blue-600' : assignDropdown.role === 'checker' ? 'bg-purple-600' : 'bg-sky-600'
                         }`}>{w.name.charAt(0)}</div>
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-medium text-slate-800 truncate">#{w.id} – {w.name}</div>
