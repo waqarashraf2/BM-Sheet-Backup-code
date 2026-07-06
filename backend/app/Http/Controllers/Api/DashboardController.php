@@ -1328,7 +1328,7 @@ if ($request->query('date')) {
         }
 
         // Cache key includes date range, selected project and role
-        $cacheKey = 'ceo_pstats:v4:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0')
+        $cacheKey = 'ceo_pstats:v5:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0')
             . ':' . ($selectedRole ?? 'all') . ':' . ($detailOnly ? 'detail' : ($summaryOnly ? 'summary_only' : 'summary'));
         if (\Illuminate\Support\Facades\Cache::has($cacheKey)) {
             return response()->json(\Illuminate\Support\Facades\Cache::get($cacheKey));
@@ -1382,8 +1382,10 @@ if ($request->query('date')) {
                         'online_users' => $this->getProjectStatsOnlineUsers([(int) $selectedProject->id], now()->subMinutes(15))->get((int) $selectedProject->id, collect())->values()->all(),
                         'client_name_counts' => $this->getProjectStatsClientNameCounts((int) $selectedProject->id, $startDate, $endDate),
                         'batch_count' => $this->getProjectStatsBatchCount((int) $selectedProject->id, $endDate),
+                    ], [
+                        'project_operations_report' => $this->buildProjectThreeOperationsReport((int) $selectedProject->id, $startDate, $endDate),
                     ], (int) $selectedProject->id === 3 ? [
-                        'project_3_operations_report' => $this->buildProjectThreeOperationsReport($startDate, $endDate),
+                        'project_3_operations_report' => $this->buildProjectThreeOperationsReport(3, $startDate, $endDate),
                     ] : [])
                     : null,
             ];
@@ -1955,16 +1957,17 @@ $userCounts = User::whereIn('project_id', $projectIds)
         return response()->json($responseData);
     }
 
-    private function buildProjectThreeOperationsReport(?string $startDate = null, ?string $endDate = null): array
+    private function buildProjectThreeOperationsReport(int $projectId = 3, ?string $startDate = null, ?string $endDate = null): array
     {
-        $projectId = 3;
         $project = Project::find($projectId);
         $projectTimezone = $this->resolveAssignmentDashboardProjectTimezone($project?->timezone);
         $table = \App\Services\ProjectOrderService::getTableName($projectId);
+        $projectName = $project?->name ?? "Project {$projectId}";
 
         if (!self::tableExists($table)) {
             return [
-                'project_name' => $project?->name ?? 'Focal MP',
+                'project_id' => $projectId,
+                'project_name' => $projectName,
                 'generated_at' => now($projectTimezone)->toDateTimeString(),
                 'hourly_done' => [],
                 'last_10_days_pending' => [],
@@ -1980,10 +1983,11 @@ $userCounts = User::whereIn('project_id', $projectIds)
         }
 
         return [
-            'project_name' => $project?->name ?? 'Focal MP',
+            'project_id' => $projectId,
+            'project_name' => $projectName,
             'generated_at' => now($projectTimezone)->toDateTimeString(),
             'hourly_done' => $this->buildProjectThreeHourlyDoneReport($table, $projectTimezone, $startDate),
-            'last_10_days_pending' => $this->buildProjectThreePendingDateReport($table, $projectTimezone),
+            'last_10_days_pending' => $this->buildProjectThreePendingDateReport($table, $projectTimezone, $endDate ?: $startDate),
             'previous_pending_summary' => $this->buildProjectThreePreviousPendingSummary(
                 $table,
                 $projectTimezone,
@@ -2041,14 +2045,17 @@ $userCounts = User::whereIn('project_id', $projectIds)
         return $slots;
     }
 
-    private function buildProjectThreePendingDateReport(string $table, string $projectTimezone): array
+    private function buildProjectThreePendingDateReport(string $table, string $projectTimezone, ?string $endDate = null): array
     {
         if (!self::columnExists($table, 'received_at')) {
             return [];
         }
 
-        $rangeStart = now($projectTimezone)->subDays(9)->startOfDay();
-        $rangeEnd = now($projectTimezone)->endOfDay();
+        $reportDate = $endDate
+            ? Carbon::parse($endDate, $projectTimezone)
+            : now($projectTimezone);
+        $rangeStart = $reportDate->copy()->subDays(10)->startOfDay();
+        $rangeEnd = $reportDate->copy()->endOfDay();
         $hasDueIn = self::columnExists($table, 'due_in');
 
         $query = DB::table($table)
@@ -2705,7 +2712,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             ])
             ->values();
 
-        if (in_array($roleKey, ['drawer', 'checker', 'qa'], true) && self::columnExists($table, 'team_id')) {
+        if (in_array($roleKey, ['drawer', 'designer', 'checker', 'qa', 'filler'], true) && self::columnExists($table, 'team_id')) {
             $userIdSelect = self::columnExists($table, $config['id_col'])
                 ? "{$config['id_col']} as user_id"
                 : "NULL as user_id";
@@ -2858,7 +2865,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             ->keyBy('id');
 
         $users = User::where('project_id', $projectId)
-            ->whereIn('role', ['drawer', 'checker', 'qa'])
+            ->whereIn('role', ['drawer', 'designer', 'checker', 'qa', 'filler'])
             ->get(['id', 'name', 'role', 'team_id', 'wip_count'])
             ->keyBy('id');
 
@@ -2893,14 +2900,18 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     'date_filter_type' => $startDate === $endDate ? 'single_date' : 'date_range',
                     'selected_role' => $selectedRole,
                     'drawer_done' => 0,
+                    'designer_done' => 0,
                     'checker_done' => 0,
                     'qa_done' => 0,
+                    'filler_done' => 0,
                     'total_completed_orders' => 0,
                     'total_role_done' => 0,
                     'total_done_selected_date' => 0,
                     'drawers' => [],
+                    'designers' => [],
                     'checkers' => [],
                     'qas' => [],
+                    'fillers' => [],
                 ];
             }
 
@@ -2968,7 +2979,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             $team['pending'] = (int) ($teamPendingCounts->get($team['team_id'], 0));
             $team['total_assigned'] = $team['pending'] + $team['total_done_selected_date'];
 
-            foreach (['drawers', 'checkers', 'qas'] as $memberKey) {
+            foreach (['drawers', 'designers', 'checkers', 'qas', 'fillers'] as $memberKey) {
                 $team[$memberKey] = collect($team[$memberKey])
                     ->sortByDesc('total_done')
                     ->values()
@@ -6058,7 +6069,6 @@ if ($useDueInFirstOrdering) {
         ];
     }
     
-
     /**
      * Map worker role to project table columns.
      * Returns [id_column, done_column, in_progress_state, date_column]
@@ -6074,6 +6084,5 @@ if ($useDueInFirstOrdering) {
         };
     }
 }
-
 
 

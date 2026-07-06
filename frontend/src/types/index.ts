@@ -748,7 +748,7 @@ export interface TimeWiseCountProject {
 }
 
 export interface TimeWiseCountSummary {
-  role: 'drawer' | 'designer' | 'checker' | 'qa';
+  role: 'drawer' | 'designer' | 'checker' | 'qa' | 'filler';
   done: number;
   wip: number;
   workers: number;
@@ -768,6 +768,8 @@ export interface TimeWiseCountWorker {
   }>;
 }
 
+export type TimeWiseProductionRole = 'drawer' | 'designer' | 'checker' | 'qa' | 'filler';
+
 export interface TimeWiseCountTeamStatus {
   project_id: number;
   project_name: string;
@@ -779,13 +781,16 @@ export interface TimeWiseCountTeamStatus {
   pending: number;
   delayed: number;
   drawers?: TimeWiseCountTeamMember[];
+  designers?: TimeWiseCountTeamMember[];
   checkers?: TimeWiseCountTeamMember[];
+  qas?: TimeWiseCountTeamMember[];
+  fillers?: TimeWiseCountTeamMember[];
 }
 
 export interface TimeWiseCountTeamMember {
   id: number;
   name: string;
-  role: 'drawer' | 'checker';
+  role: TimeWiseProductionRole;
   is_online?: boolean;
   total_assigned: number;
   total_done: number;
@@ -838,9 +843,13 @@ export interface TimeWiseProjectStatus {
     offline_teams: number;
     unassigned: number;
     unassigned_drawers?: number;
+    unassigned_designers?: number;
     unassigned_checkers?: number;
+    unassigned_qas?: number;
+    unassigned_fillers?: number;
   };
   team_statuses: TimeWiseCountTeamStatus[];
+  project_operations_report?: ProjectThreeOperationsReport;
   project_3_operations_report?: ProjectThreeOperationsReport;
 }
 

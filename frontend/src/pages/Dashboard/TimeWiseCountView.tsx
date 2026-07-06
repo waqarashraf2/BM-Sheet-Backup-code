@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+﻿import { Fragment, useState } from 'react';
 import {
   CalendarClock, CheckSquare, ChevronDown, ChevronUp, Eye, Loader2, Palette, Pencil,
   Search, TimerReset,
@@ -62,7 +62,41 @@ const roleMeta: Record<TimeWiseCountSummary['role'], {
     border: 'border-emerald-200',
     panel: 'bg-emerald-50/70',
   },
+  filler: {
+    label: 'Fillers',
+    icon: CheckSquare,
+    bg: 'bg-orange-50',
+    text: 'text-orange-700',
+    badge: 'bg-orange-50 text-orange-700',
+    border: 'border-orange-200',
+    panel: 'bg-orange-50/70',
+  },
 };
+
+const teamRoleDisplay = {
+  drawer: { title: 'Drawers', memberKey: 'drawers', tone: 'teal' },
+  designer: { title: 'Designers', memberKey: 'designers', tone: 'pink' },
+  checker: { title: 'Checkers', memberKey: 'checkers', tone: 'violet' },
+  qa: { title: 'QA', memberKey: 'qas', tone: 'emerald' },
+  filler: { title: 'Fillers', memberKey: 'fillers', tone: 'orange' },
+} as const;
+
+function projectTeamRoleKeys(project: { workflow_type?: string; team_statuses?: any[] }) {
+  const hasDesigners = project.workflow_type === 'PH_2_LAYER'
+    || (project.team_statuses || []).some((team) => Array.isArray(team.designers) && team.designers.length > 0);
+  const base = hasDesigners ? ['designer', 'qa'] : ['drawer', 'checker', 'qa'];
+  const hasFillers = (project.team_statuses || []).some((team) => Array.isArray(team.fillers) && team.fillers.length > 0);
+
+  return hasFillers ? [...base, 'filler'] : base;
+}
+
+function roleSectionTone(tone: string) {
+  if (tone === 'pink') return 'border-pink-100 bg-pink-50 text-pink-700';
+  if (tone === 'violet') return 'border-violet-100 bg-violet-50 text-violet-700';
+  if (tone === 'emerald') return 'border-emerald-100 bg-emerald-50 text-emerald-700';
+  if (tone === 'orange') return 'border-orange-100 bg-orange-50 text-orange-700';
+  return 'border-teal-100 bg-teal-50 text-teal-700';
+}
 
 function toDateTimeLocal(date: Date) {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -362,11 +396,22 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                   <tbody>
                     {projectStatuses.map((project) => {
                       const isOpen = openStatusProjectId === project.project_id;
-                      const report = project.project_3_operations_report;
+                      const teamRoleKeys = projectTeamRoleKeys(project);
+                      const report = project.project_operations_report ?? project.project_3_operations_report;
                       const hourly = report?.hourly_done || [];
                       const pendingDates = (report?.last_10_days_pending || [])
-                        .filter((item) => item.date !== report?.previous_pending_summary?.date);
+                        .filter((item) => item.date !== report?.previous_pending_summary?.date && Number(item.pending_orders || 0) > 0);
+                      const previousPending = Number(report?.previous_pending_summary?.pending_orders || 0) > 0
+                        ? report?.previous_pending_summary
+                        : null;
                       const maxDone = Math.max(1, ...hourly.map((item) => Number(item.done_orders || 0)));
+                      const unassignedSummary = [
+                        ['D', Number(project.team_summary?.unassigned_drawers || 0)],
+                        ['Des', Number(project.team_summary?.unassigned_designers || 0)],
+                        ['C', Number(project.team_summary?.unassigned_checkers || 0)],
+                        ['QA', Number(project.team_summary?.unassigned_qas || 0)],
+                        ['F', Number(project.team_summary?.unassigned_fillers || 0)],
+                      ].filter(([, count]) => Number(count) > 0);
 
                       return (
                         <Fragment key={project.project_id}>
@@ -395,16 +440,26 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                             <tr key={`${project.project_id}-detail`}>
                               <td colSpan={10} className="bg-slate-50/60 px-4 py-4">
                                 {report && (
-                                  <div className="mb-4 rounded-xl border border-slate-200 bg-white">
-                                    <div className="border-b border-slate-100 px-4 py-3">
-                                      <h5 className="text-sm font-bold text-slate-900">{report.project_name || project.project_name} 24 Hours Report</h5>
-                                      <p className="text-[11px] text-slate-500">Hourly done, previous pending summary, and last 10 days active pending.</p>
+                                  <div className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                                    <div className="flex flex-col gap-1 border-b border-slate-100 bg-slate-50/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                                      <div>
+                                        <h5 className="text-sm font-bold text-slate-900">{report.project_name || project.project_name} 24 Hours Report</h5>
+                                        <p className="text-[11px] text-slate-500">Done orders by selected-date completed/delivered time, previous-date summary, and last 10 days active pending.</p>
+                                      </div>
+                                      {report.generated_at && (
+                                        <span className="text-[10px] font-medium text-slate-400">Updated {report.generated_at}</span>
+                                      )}
                                     </div>
                                     <div className="grid gap-4 p-4 lg:grid-cols-2">
                                       <div>
-                                        <h6 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Done by time</h6>
+                                        <div className="mb-2 flex items-center justify-between">
+                                          <h6 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Done by time</h6>
+                                          <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-[#0f766e] ring-1 ring-teal-100">
+                                            24 hr
+                                          </span>
+                                        </div>
                                         <div className="grid gap-x-5 gap-y-1.5 sm:grid-cols-2">
-                                          {hourly.map((item) => (
+                                          {hourly.length > 0 ? hourly.map((item) => (
                                             <div key={`${item.start_at}-${item.end_at}`} className="grid grid-cols-[88px_1fr_38px] items-center gap-2 text-[11px]">
                                               <span className="font-medium text-slate-500">{item.label}</span>
                                               <div className="h-2 overflow-hidden rounded-full bg-slate-100">
@@ -412,28 +467,63 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                                               </div>
                                               <span className="text-right font-bold text-slate-700">{Number(item.done_orders || 0)}</span>
                                             </div>
-                                          ))}
+                                          )) : (
+                                            <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-400">No done orders in last 24 hours.</div>
+                                          )}
                                         </div>
                                       </div>
                                       <div>
-                                        <h6 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Pending by date</h6>
+                                        <div className="mb-2 flex items-center justify-between">
+                                          <h6 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Pending by date</h6>
+                                          <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-100">
+                                            Last 10 days
+                                          </span>
+                                        </div>
+                                        {previousPending && (
+                                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs">
+                                            <span className="font-semibold text-slate-700">{previousPending.day_label || 'Previous'}</span>
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                              <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-slate-100">
+                                                Received {Number(previousPending.total_orders || 0)}
+                                              </span>
+                                              <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
+                                                Pending {Number(previousPending.pending_orders || 0)}
+                                              </span>
+                                              <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-[#0f766e] ring-1 ring-teal-100">
+                                                Done {Number(previousPending.done_orders || 0)}
+                                              </span>
+                                              {Number(previousPending.delayed_orders || 0) > 0 && (
+                                                <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-rose-100">
+                                                  Delay {Number(previousPending.delayed_orders || 0)}
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        )}
                                         <div className="space-y-1.5">
-                                          {report.previous_pending_summary && (
-                                            <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
-                                              <span className="font-semibold text-slate-700">{report.previous_pending_summary.day_label || 'Previous'}</span>
-                                              <span className="text-[10px] font-bold text-slate-700">Received {Number(report.previous_pending_summary.total_orders || 0)}</span>
-                                              <span className="text-[10px] font-bold text-amber-700">Pending {Number(report.previous_pending_summary.pending_orders || 0)}</span>
-                                              <span className="text-[10px] font-bold text-[#0f766e]">Done {Number(report.previous_pending_summary.done_orders || 0)}</span>
-                                            </div>
-                                          )}
-                                          {pendingDates.map((item) => (
-                                            <div key={item.date || item.day_label} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2">
+                                          {pendingDates.length > 0 ? pendingDates.map((item) => (
+                                            <div key={item.date || item.day_label} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2 text-xs">
                                               <span className="font-semibold text-slate-700">{item.day_label}</span>
-                                              <span className="text-[10px] font-bold text-slate-700">Received {Number(item.total_orders || 0)}</span>
-                                              <span className="text-[10px] font-bold text-amber-700">Pending {Number(item.pending_orders || 0)}</span>
-                                              <span className="text-[10px] font-bold text-[#0f766e]">Done {Number(item.done_orders || 0)}</span>
+                                              <div className="flex flex-wrap items-center gap-1.5">
+                                                <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-slate-100">
+                                                  Received {Number(item.total_orders || 0)}
+                                                </span>
+                                                <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
+                                                  Pending {Number(item.pending_orders || 0)}
+                                                </span>
+                                                <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-[#0f766e] ring-1 ring-teal-100">
+                                                  Done {Number(item.done_orders || 0)}
+                                                </span>
+                                                {Number(item.delayed_orders || 0) > 0 && (
+                                                  <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-rose-100">
+                                                    Delay {Number(item.delayed_orders || 0)}
+                                                  </span>
+                                                )}
+                                              </div>
                                             </div>
-                                          ))}
+                                          )) : (
+                                            <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-400">No active pending orders in the last 10 days.</div>
+                                          )}
                                         </div>
                                       </div>
                                     </div>
@@ -454,9 +544,11 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                                       </span>
                                       <span className="rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-1 font-bold text-amber-700">
                                         Unassigned {Number(project.team_summary?.unassigned || 0)}
-                                        <span className="ml-1 text-[10px] font-semibold text-amber-600">
-                                          D {Number(project.team_summary?.unassigned_drawers || 0)} / C {Number(project.team_summary?.unassigned_checkers || 0)}
-                                        </span>
+                                        {unassignedSummary.length > 0 && (
+                                          <span className="ml-1 text-[10px] font-semibold text-amber-600">
+                                            {unassignedSummary.map(([label, count]) => `${label} ${count}`).join(' / ')}
+                                          </span>
+                                        )}
                                       </span>
                                     </div>
                                   </div>
@@ -476,8 +568,6 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                                         {project.team_statuses.map((team) => {
                                           const teamKey = `${project.project_id}-${team.team_id ?? 'unassigned'}`;
                                           const isTeamOpen = openStatusTeamKey === teamKey;
-                                          const drawers = Array.isArray(team.drawers) ? team.drawers : [];
-                                          const checkers = Array.isArray(team.checkers) ? team.checkers : [];
 
                                           return (
                                             <Fragment key={teamKey}>
@@ -510,23 +600,26 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                                                 <tr className="border-t border-slate-100 bg-slate-50/60">
                                                   <td colSpan={6} className="px-3 py-3">
                                                     <div className="grid gap-3 lg:grid-cols-2">
-                                                      {[
-                                                        { title: 'Drawers', people: drawers, tone: 'teal' },
-                                                        { title: 'Checkers', people: checkers, tone: 'violet' },
-                                                      ].map((section) => (
-                                                        <div key={section.title} className="rounded-lg border border-slate-200 bg-white">
-                                                          <div className={`flex items-center justify-between border-b px-3 py-2 text-[11px] font-bold uppercase tracking-wide ${section.tone === 'teal' ? 'border-teal-100 bg-teal-50 text-teal-700' : 'border-violet-100 bg-violet-50 text-violet-700'}`}>
-                                                            <span>{section.title} · {section.people.length}</span>
+                                                      {teamRoleKeys.map((roleKey) => {
+                                                        const roleDisplay = teamRoleDisplay[roleKey as keyof typeof teamRoleDisplay];
+                                                        const people = Array.isArray((team as any)[roleDisplay.memberKey])
+                                                          ? (team as any)[roleDisplay.memberKey]
+                                                          : [];
+
+                                                        return (
+                                                        <div key={roleKey} className="rounded-lg border border-slate-200 bg-white">
+                                                          <div className={`flex items-center justify-between border-b px-3 py-2 text-[11px] font-bold uppercase tracking-wide ${roleSectionTone(roleDisplay.tone)}`}>
+                                                            <span>{roleDisplay.title} · {people.length}</span>
                                                             <span>
-                                                              {section.people.reduce((total, person) => total + Number(person.total_done || 0), 0)} done
+                                                              {people.reduce((total: number, person: any) => total + Number(person.total_done || 0), 0)} done
                                                             </span>
                                                           </div>
-                                                          {section.people.length === 0 ? (
+                                                          {people.length === 0 ? (
                                                             <div className="px-3 py-4 text-center text-[11px] font-medium text-slate-400">No members found</div>
                                                           ) : (
                                                             <div className="divide-y divide-slate-100">
-                                                              {section.people.map((person) => (
-                                                                <div key={`${section.title}-${person.id}`} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-3 py-2 text-[11px]">
+                                                              {people.map((person: any) => (
+                                                                <div key={`${roleKey}-${person.id}`} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-3 py-2 text-[11px]">
                                                                   <div className="min-w-0">
                                                                     <div className="truncate font-semibold text-slate-700">{person.name}</div>
                                                                     <div className={person.is_online ? 'text-emerald-600' : 'text-slate-400'}>
@@ -547,7 +640,8 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                                                             </div>
                                                           )}
                                                         </div>
-                                                      ))}
+                                                        );
+                                                      })}
                                                     </div>
                                                   </td>
                                                 </tr>

@@ -132,7 +132,7 @@ class TimeWiseCountController extends Controller
             );
         }
 
-        $roleOrder = ['drawer' => 1, 'designer' => 2, 'checker' => 3, 'qa' => 4];
+        $roleOrder = ['drawer' => 1, 'designer' => 2, 'checker' => 3, 'qa' => 4, 'filler' => 5];
         $workers = $roleRows
             ->groupBy(fn (array $row) => $row['role'] . ':' . $row['worker_id'])
             ->map(function (Collection $rows) {
@@ -265,13 +265,10 @@ class TimeWiseCountController extends Controller
             'present_staff' => 0,
             'absent_staff' => 0,
             'online_staff' => 0,
-            'team_summary' => [
-                'total_teams' => 0,
-                'online_teams' => 0,
-                'offline_teams' => 0,
-                'unassigned' => 0,
-            ],
+            'team_summary' => $this->emptyTeamSummary(),
             'team_statuses' => [],
+            'project_operations_report' => null,
+            'project_3_operations_report' => null,
         ];
 
         $staff = DB::table('users')
@@ -355,15 +352,20 @@ class TimeWiseCountController extends Controller
         }
 
         $row = $query->first();
+        $operationsReport = $this->buildProjectThreeOperationsReport($project, $table, $startAt);
         $teamStatuses = $this->buildProjectTeamStatuses($project, $startAt, $endAt);
-        $teamSummary = [
+        $unassignedTeam = $teamStatuses->firstWhere('team_id', null);
+        $teamSummary = array_merge($this->emptyTeamSummary(), [
             'total_teams' => $teamStatuses->filter(fn (array $team) => $team['team_id'] !== null)->count(),
             'online_teams' => $teamStatuses->filter(fn (array $team) => $team['team_id'] !== null && ($team['is_online'] ?? false))->count(),
             'offline_teams' => $teamStatuses->filter(fn (array $team) => $team['team_id'] !== null && !($team['is_online'] ?? false))->count(),
-            'unassigned' => (int) ($teamStatuses->firstWhere('team_id', null)['unassigned_total'] ?? 0),
-            'unassigned_drawers' => (int) ($teamStatuses->firstWhere('team_id', null)['unassigned_drawers'] ?? 0),
-            'unassigned_checkers' => (int) ($teamStatuses->firstWhere('team_id', null)['unassigned_checkers'] ?? 0),
-        ];
+            'unassigned' => (int) ($unassignedTeam['unassigned_total'] ?? 0),
+            'unassigned_drawers' => (int) ($unassignedTeam['unassigned_drawers'] ?? 0),
+            'unassigned_designers' => (int) ($unassignedTeam['unassigned_designers'] ?? 0),
+            'unassigned_checkers' => (int) ($unassignedTeam['unassigned_checkers'] ?? 0),
+            'unassigned_qas' => (int) ($unassignedTeam['unassigned_qas'] ?? 0),
+            'unassigned_fillers' => (int) ($unassignedTeam['unassigned_fillers'] ?? 0),
+        ]);
 
         $status = array_merge($empty, [
             'received_orders' => (int) ($row->received_count ?? 0),
@@ -374,11 +376,9 @@ class TimeWiseCountController extends Controller
             'untouched_orders' => (int) ($row->untouched_count ?? 0),
             'team_summary' => $teamSummary,
             'team_statuses' => $teamStatuses->values()->all(),
+            'project_operations_report' => $operationsReport,
+            'project_3_operations_report' => (int) $project->id === 3 ? $operationsReport : null,
         ]);
-
-        if ((int) $project->id === 3) {
-            $status['project_3_operations_report'] = $this->buildProjectThreeOperationsReport($project, $table, $startAt);
-        }
 
         return $status;
     }
@@ -389,6 +389,10 @@ class TimeWiseCountController extends Controller
         if (!Schema::hasTable($table) || !Schema::hasColumn($table, 'received_at')) {
             return collect();
         }
+
+        $roleConfigs = $this->projectTeamRoleConfigs($project);
+        $memberKeys = collect($roleConfigs)->pluck('member_key')->all();
+        $productionRoles = array_keys($roleConfigs);
 
         $teams = DB::table('teams')
             ->where('project_id', (int) $project->id)
@@ -411,10 +415,10 @@ class TimeWiseCountController extends Controller
             ->mapWithKeys(fn ($user) => [(int) $user->id => (int) $user->team_id]);
 
         $onlineTeamIds = $users
-            ->filter(function ($user) use ($onlineCutoff) {
+            ->filter(function ($user) use ($onlineCutoff, $productionRoles) {
                 $role = strtolower(trim((string) ($user->role ?? '')));
                 if (
-                    !in_array($role, ['drawer', 'checker'], true)
+                    !in_array($role, $productionRoles, true)
                     || (int) ($user->team_id ?? 0) <= 0
                     || (int) ($user->is_absent ?? 0) === 1
                     || empty($user->last_activity)
@@ -433,12 +437,14 @@ class TimeWiseCountController extends Controller
             ->unique()
             ->values();
 
-        $unassignedDrawers = $users
-            ->filter(fn ($user) => strtolower(trim((string) ($user->role ?? ''))) === 'drawer' && (int) ($user->team_id ?? 0) <= 0)
-            ->count();
-        $unassignedCheckers = $users
-            ->filter(fn ($user) => strtolower(trim((string) ($user->role ?? ''))) === 'checker' && (int) ($user->team_id ?? 0) <= 0)
-            ->count();
+        $unassignedCounts = collect($productionRoles)
+            ->mapWithKeys(fn (string $role) => [
+                $role => $users
+                    ->filter(fn ($user) => strtolower(trim((string) ($user->role ?? ''))) === $role && (int) ($user->team_id ?? 0) <= 0)
+                    ->count(),
+            ]);
+
+        $emptyMembers = collect($memberKeys)->mapWithKeys(fn (string $memberKey) => [$memberKey => []])->all();
 
         $teamRows = $teams
             ->mapWithKeys(fn ($team) => [
@@ -452,9 +458,7 @@ class TimeWiseCountController extends Controller
                     'done' => 0,
                     'pending' => 0,
                     'delayed' => 0,
-                    'drawers' => [],
-                    'checkers' => [],
-                ],
+                ] + $emptyMembers,
             ])
             ->all();
 
@@ -468,16 +472,18 @@ class TimeWiseCountController extends Controller
             'done' => 0,
             'pending' => 0,
             'delayed' => 0,
-            'drawers' => [],
-            'checkers' => [],
-            'unassigned_drawers' => $unassignedDrawers,
-            'unassigned_checkers' => $unassignedCheckers,
-            'unassigned_total' => $unassignedDrawers + $unassignedCheckers,
+        ] + $emptyMembers + [
+            'unassigned_drawers' => (int) ($unassignedCounts->get('drawer') ?? 0),
+            'unassigned_designers' => (int) ($unassignedCounts->get('designer') ?? 0),
+            'unassigned_checkers' => (int) ($unassignedCounts->get('checker') ?? 0),
+            'unassigned_qas' => (int) ($unassignedCounts->get('qa') ?? 0),
+            'unassigned_fillers' => (int) ($unassignedCounts->get('filler') ?? 0),
+            'unassigned_total' => (int) $unassignedCounts->sum(),
         ];
 
         foreach ($users as $user) {
             $role = strtolower(trim((string) ($user->role ?? '')));
-            if (!in_array($role, ['drawer', 'checker'], true)) {
+            if (!isset($roleConfigs[$role])) {
                 continue;
             }
 
@@ -493,12 +499,10 @@ class TimeWiseCountController extends Controller
                     'done' => 0,
                     'pending' => 0,
                     'delayed' => 0,
-                    'drawers' => [],
-                    'checkers' => [],
-                ];
+                ] + $emptyMembers;
             }
 
-            $memberKey = $role === 'checker' ? 'checkers' : 'drawers';
+            $memberKey = $roleConfigs[$role]['member_key'];
             $teamRows[$teamId][$memberKey][(int) $user->id] = [
                 'id' => (int) $user->id,
                 'name' => $user->name,
@@ -528,6 +532,10 @@ class TimeWiseCountController extends Controller
             'due_in',
             'drawer_done',
             'checker_done',
+            'final_upload',
+            'ausFinaldate',
+            'file_uploaded',
+            'file_upload_date',
             'drawer_date',
             'checker_date',
         ] as $column) {
@@ -562,7 +570,7 @@ class TimeWiseCountController extends Controller
                     'done' => 0,
                     'pending' => 0,
                     'delayed' => 0,
-                ];
+                ] + $emptyMembers;
             }
 
             $state = strtoupper(trim((string) ($order->resolved_workflow_state ?? '')));
@@ -586,21 +594,34 @@ class TimeWiseCountController extends Controller
                 $teamRows[$teamId]['done']++;
             }
 
-            $this->countTeamMemberWork($teamRows, $teamId, $order, $users, 'drawer_id', 'drawers', 'drawer_done', 'drawer_date', $receivedInRange, $isActive, $startAt, $endAt);
-            $this->countTeamMemberWork($teamRows, $teamId, $order, $users, 'checker_id', 'checkers', 'checker_done', 'checker_date', $receivedInRange, $isActive, $startAt, $endAt);
+            foreach ($roleConfigs as $role => $config) {
+                $this->countTeamMemberWork(
+                    $teamRows,
+                    $teamId,
+                    $order,
+                    $users,
+                    $config['id_col'],
+                    $config['member_key'],
+                    $config['done_col'],
+                    $config['done_date_col'],
+                    $receivedInRange,
+                    $isActive,
+                    $startAt,
+                    $endAt,
+                    $role,
+                    (int) ($config['offset'] ?? 0)
+                );
+            }
         }
 
         foreach ($teamRows as &$teamRow) {
-            $teamRow['drawers'] = collect($teamRow['drawers'])
-                ->sortByDesc('total_done')
-                ->sortByDesc('total_assigned')
-                ->values()
-                ->all();
-            $teamRow['checkers'] = collect($teamRow['checkers'])
-                ->sortByDesc('total_done')
-                ->sortByDesc('total_assigned')
-                ->values()
-                ->all();
+            foreach ($memberKeys as $memberKey) {
+                $teamRow[$memberKey] = collect($teamRow[$memberKey] ?? [])
+                    ->sortByDesc('total_done')
+                    ->sortByDesc('total_assigned')
+                    ->values()
+                    ->all();
+            }
         }
         unset($teamRow);
 
@@ -626,7 +647,9 @@ class TimeWiseCountController extends Controller
         bool $receivedInRange,
         bool $isActive,
         Carbon $startAt,
-        Carbon $endAt
+        Carbon $endAt,
+        string $role,
+        int $doneDateOffsetHours = 0
     ): void {
         $userId = (int) ($order->{$idColumn} ?? 0);
         if ($userId <= 0) {
@@ -638,7 +661,7 @@ class TimeWiseCountController extends Controller
             $teamRows[$teamId][$memberKey][$userId] = [
                 'id' => $userId,
                 'name' => $user?->name ?? "User #{$userId}",
-                'role' => $memberKey === 'checkers' ? 'checker' : 'drawer',
+                'role' => $role,
                 'is_online' => $user ? $this->isUserOnline($user, now()->subMinutes(15)) : false,
                 'total_assigned' => 0,
                 'total_done' => 0,
@@ -657,7 +680,7 @@ class TimeWiseCountController extends Controller
 
         $doneAt = $order->{$doneDateColumn} ?? null;
         $isDone = strtolower(trim((string) ($order->{$doneColumn} ?? ''))) === 'yes';
-        if ($isDone && $this->timestampInRange($doneAt, $startAt, $endAt)) {
+        if ($isDone && $this->timestampInRange($doneAt, $startAt, $endAt, $doneDateOffsetHours)) {
             $teamRows[$teamId][$memberKey][$userId]['total_done']++;
         }
     }
@@ -691,7 +714,7 @@ class TimeWiseCountController extends Controller
         return 0;
     }
 
-    private function timestampInRange(?string $value, Carbon $startAt, Carbon $endAt): bool
+    private function timestampInRange(?string $value, Carbon $startAt, Carbon $endAt, int $offsetHours = 0): bool
     {
         if (empty($value)) {
             return false;
@@ -699,11 +722,84 @@ class TimeWiseCountController extends Controller
 
         try {
             $timestamp = Carbon::parse($value, self::REPORT_TIMEZONE);
+            if ($offsetHours !== 0) {
+                $timestamp->addHours($offsetHours);
+            }
         } catch (Throwable $exception) {
             return false;
         }
 
         return $timestamp->betweenIncluded($startAt, $endAt);
+    }
+
+    private function projectTeamRoleConfigs(Project $project): array
+    {
+        $base = $project->workflow_type === 'PH_2_LAYER'
+            ? ['designer', 'qa']
+            : ['drawer', 'checker', 'qa'];
+
+        $extraByProject = [
+            12 => ['filler'],
+        ];
+
+        $roles = array_values(array_unique(array_merge($base, $extraByProject[(int) $project->id] ?? [])));
+        $configs = [
+            'drawer' => [
+                'id_col' => 'drawer_id',
+                'member_key' => 'drawers',
+                'done_col' => 'drawer_done',
+                'done_date_col' => 'drawer_date',
+                'offset' => 0,
+            ],
+            'designer' => [
+                'id_col' => 'drawer_id',
+                'member_key' => 'designers',
+                'done_col' => 'drawer_done',
+                'done_date_col' => 'drawer_date',
+                'offset' => 0,
+            ],
+            'checker' => [
+                'id_col' => 'checker_id',
+                'member_key' => 'checkers',
+                'done_col' => 'checker_done',
+                'done_date_col' => 'checker_date',
+                'offset' => 0,
+            ],
+            'qa' => [
+                'id_col' => 'qa_id',
+                'member_key' => 'qas',
+                'done_col' => 'final_upload',
+                'done_date_col' => 'ausFinaldate',
+                'offset' => -6,
+            ],
+            'filler' => [
+                'id_col' => 'file_uploader_id',
+                'member_key' => 'fillers',
+                'done_col' => 'file_uploaded',
+                'done_date_col' => 'file_upload_date',
+                'offset' => 0,
+            ],
+        ];
+
+        return collect($roles)
+            ->filter(fn (string $role) => isset($configs[$role]))
+            ->mapWithKeys(fn (string $role) => [$role => $configs[$role]])
+            ->all();
+    }
+
+    private function emptyTeamSummary(): array
+    {
+        return [
+            'total_teams' => 0,
+            'online_teams' => 0,
+            'offline_teams' => 0,
+            'unassigned' => 0,
+            'unassigned_drawers' => 0,
+            'unassigned_designers' => 0,
+            'unassigned_checkers' => 0,
+            'unassigned_qas' => 0,
+            'unassigned_fillers' => 0,
+        ];
     }
 
     private function timestampBefore(?string $value, Carbon $before): bool
@@ -778,7 +874,7 @@ class TimeWiseCountController extends Controller
             return [];
         }
 
-        $rangeStart = $date->copy()->subDays(9)->startOfDay();
+        $rangeStart = $date->copy()->subDays(10)->startOfDay();
         $rangeEnd = $date->copy()->endOfDay();
         $hasDueIn = Schema::hasColumn($table, 'due_in');
         $now = now(self::REPORT_TIMEZONE)->toDateTimeString();

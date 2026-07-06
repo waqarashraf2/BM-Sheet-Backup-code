@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+﻿import React, { useState, useEffect, useMemo } from 'react';
 import apiClient from '../../services/api';
 import { StatCard } from '../../components/ui';
 import { Users, UserCheck, UserX, Package, ChevronDown, ChevronUp, Loader2, Activity } from 'lucide-react';
@@ -28,6 +28,7 @@ interface ProjectStats {
     online_users?: OnlineUser[];
     client_name_counts?: ClientNameCount[];
     batch_count?: number;
+    project_operations_report?: ProjectThreeOperationsReport;
     project_3_operations_report?: ProjectThreeOperationsReport;
 }
 
@@ -170,16 +171,20 @@ interface TeamBreakdown {
     date_filter_type?: 'single_date' | 'date_range' | 'start_to_today';
     selected_role?: string;
     drawer_done?: number;
+    designer_done?: number;
     checker_done?: number;
     qa_done?: number;
+    filler_done?: number;
     total_completed_orders?: number;
     completed_orders_selected_date?: number;
     total_role_done?: number;
     total_done?: number;
     total_done_selected_date?: number;
     drawers?: TeamWorkerStat[];
+    designers?: TeamWorkerStat[];
     checkers?: TeamWorkerStat[];
     qas?: TeamWorkerStat[];
+    fillers?: TeamWorkerStat[];
 }
 
 interface ProjectBreakdownResponse {
@@ -264,11 +269,32 @@ type RoleCompletionEntry = {
 
 const ProjectsView: React.FC = () => {
     const batchStatusProjectId = 16;
-    const teamBreakdownProjectIds = [16, 3];
     const canShowTeamBreakdown = (projectId?: number | null) => (
-        typeof projectId === 'number' && teamBreakdownProjectIds.includes(projectId)
+        typeof projectId === 'number' && projectId > 0
     );
     const specialClientProjectIds = [14, 9, 46];
+    const roleDisplayConfig: Record<string, {
+        label: string;
+        membersKey: 'drawers' | 'designers' | 'checkers' | 'qas' | 'fillers';
+        doneKey: 'drawer_done' | 'designer_done' | 'checker_done' | 'qa_done' | 'filler_done';
+        color: string;
+        bg: string;
+        border: string;
+        doneBg: string;
+    }> = {
+        drawer: { label: 'DRAWERS', membersKey: 'drawers', doneKey: 'drawer_done', color: '#0d9488', bg: '#f0fdfa', border: '#ccfbf1', doneBg: '#ccfbf1' },
+        designer: { label: 'DESIGNERS', membersKey: 'designers', doneKey: 'designer_done', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe', doneBg: '#dbeafe' },
+        checker: { label: 'CHECKERS', membersKey: 'checkers', doneKey: 'checker_done', color: '#7c3aed', bg: '#faf5ff', border: '#ede9fe', doneBg: '#ede9fe' },
+        qa: { label: 'QA', membersKey: 'qas', doneKey: 'qa_done', color: '#be123c', bg: '#fff1f2', border: '#ffe4e6', doneBg: '#ffe4e6' },
+        filler: { label: 'FILLERS', membersKey: 'fillers', doneKey: 'filler_done', color: '#c2410c', bg: '#fff7ed', border: '#fed7aa', doneBg: '#ffedd5' },
+    };
+    const getProjectRoleOrder = (roles: string[]) => {
+        const normalized = new Set(roles.map((role) => role.toLowerCase()));
+        if (normalized.has('designer')) {
+            return ['designer', 'qa', 'filler'].filter((role) => normalized.has(role));
+        }
+        return ['drawer', 'checker', 'qa', 'filler'].filter((role) => normalized.has(role));
+    };
 
     const roleLabelMap: Record<string, string> = {
         drawer: 'Drawer',
@@ -564,7 +590,7 @@ const ProjectsView: React.FC = () => {
     const visibleRoles = useMemo(() => {
         if (!Array.isArray(breakdown?.roles)) return [];
 
-        const orderedRoles = ['drawer', 'checker', 'filler', 'designer', 'qa'];
+        const orderedRoles = getProjectRoleOrder(breakdown.roles.map((role) => role.role));
         return breakdown.roles
             .slice()
             .sort((a, b) => {
@@ -676,29 +702,37 @@ const ProjectsView: React.FC = () => {
                     return {
                         ...bd,
                         drawers: mergeWorkers(bd.drawers, pt.users, 'drawer', pt.id, pt.name),
+                        designers: mergeWorkers(bd.designers, pt.users, 'designer', pt.id, pt.name),
                         checkers: mergeWorkers(bd.checkers, pt.users, 'checker', pt.id, pt.name),
                         qas: mergeWorkers(bd.qas, pt.users, 'qa', pt.id, pt.name),
+                        fillers: mergeWorkers(bd.fillers, pt.users, 'filler', pt.id, pt.name),
                     };
                 }
                 return {
                     team_id: pt.id,
                     team_name: pt.name,
                     drawer_done: 0,
+                    designer_done: 0,
                     checker_done: 0,
                     qa_done: 0,
+                    filler_done: 0,
                     total_done: 0,
                     total_done_selected_date: 0,
                     drawers: makeWorkers(pt.users, 'drawer', pt.id, pt.name),
+                    designers: makeWorkers(pt.users, 'designer', pt.id, pt.name),
                     checkers: makeWorkers(pt.users, 'checker', pt.id, pt.name),
                     qas: makeWorkers(pt.users, 'qa', pt.id, pt.name),
+                    fillers: makeWorkers(pt.users, 'filler', pt.id, pt.name),
                 } as TeamBreakdown;
             });
         } else {
             teams = Array.from(breakdownMap.values()).map((team) => ({
                 ...team,
                 drawers: (team.drawers ?? []).map((worker) => normalizeWorkerForDisplayedTeam(worker, Number(team.team_id))),
+                designers: (team.designers ?? []).map((worker) => normalizeWorkerForDisplayedTeam(worker, Number(team.team_id))),
                 checkers: (team.checkers ?? []).map((worker) => normalizeWorkerForDisplayedTeam(worker, Number(team.team_id))),
                 qas: (team.qas ?? []).map((worker) => normalizeWorkerForDisplayedTeam(worker, Number(team.team_id))),
+                fillers: (team.fillers ?? []).map((worker) => normalizeWorkerForDisplayedTeam(worker, Number(team.team_id))),
             }));
         }
 
@@ -711,10 +745,12 @@ const ProjectsView: React.FC = () => {
     const visibleTeams = useMemo(() => {
         return allTeams.filter((team) => {
             const drawerDone = Number(team.drawer_done ?? 0);
+            const designerDone = Number(team.designer_done ?? 0);
             const checkerDone = Number(team.checker_done ?? 0);
             const qaDone = Number(team.qa_done ?? 0);
+            const fillerDone = Number(team.filler_done ?? 0);
             const roleDone = Number(team.total_done_selected_date ?? team.total_done ?? team.total_role_done ?? 0);
-            return drawerDone + checkerDone + qaDone + roleDone > 0;
+            return drawerDone + designerDone + checkerDone + qaDone + fillerDone + roleDone > 0;
         });
     }, [allTeams]);
 
@@ -731,17 +767,25 @@ const ProjectsView: React.FC = () => {
         (selectedProject?.online_users ?? [])
             .filter((user) => {
                 const role = (user.role || '').toLowerCase();
-                return ['drawer', 'checker'].includes(role) && Boolean(user.team_id) && (user.is_online ?? user.is_active ?? true);
+                return ['drawer', 'designer', 'checker', 'qa', 'filler'].includes(role) && Boolean(user.team_id) && (user.is_online ?? user.is_active ?? true);
             })
             .map((user) => Number(user.team_id))
     ), [selectedProject?.online_users]);
 
     const teamSummary = useMemo(() => {
         const onlineProductionTeamIds = onlineTeamIds;
+        const productionRoles = ['drawer', 'designer', 'checker', 'qa', 'filler'];
+        const teamProductionMemberCount = (team: TeamBreakdown) => (
+            (team.drawers?.length ?? 0) +
+            (team.designers?.length ?? 0) +
+            (team.checkers?.length ?? 0) +
+            (team.qas?.length ?? 0) +
+            (team.fillers?.length ?? 0)
+        );
 
         const teamsWithUsers = projectTeams.length > 0
-            ? projectTeams.filter((team) => Number(team.drawer_count ?? 0) + Number(team.checker_count ?? 0) > 0)
-            : allTeams.filter((team) => (team.drawers?.length ?? 0) + (team.checkers?.length ?? 0) > 0);
+            ? projectTeams.filter((team) => (team.users ?? []).some((user) => productionRoles.includes((user.role || '').toLowerCase())))
+            : allTeams.filter((team) => teamProductionMemberCount(team) > 0);
         const configuredTeamIds = new Set((projectTeams.length > 0 ? projectTeams : allTeams).map((team) => Number('id' in team ? team.id : team.team_id)));
         const activeTeams = Array.from(onlineProductionTeamIds).filter((teamId) => configuredTeamIds.has(teamId)).length;
         const teamsWithUsersCount = teamsWithUsers.length || (projectTeams.length || allTeams.length);
@@ -751,7 +795,10 @@ const ProjectsView: React.FC = () => {
             activeTeams,
             inactiveTeams: Math.max(teamsWithUsersCount - activeTeams, 0),
             unassignedDrawers: unassignedTeam?.drawers?.length ?? 0,
+            unassignedDesigners: unassignedTeam?.designers?.length ?? 0,
             unassignedCheckers: unassignedTeam?.checkers?.length ?? 0,
+            unassignedQas: unassignedTeam?.qas?.length ?? 0,
+            unassignedFillers: unassignedTeam?.fillers?.length ?? 0,
         };
     }, [projectTeams, onlineTeamIds, unassignedTeam, allTeams]);
 
@@ -932,7 +979,7 @@ const ProjectsView: React.FC = () => {
                                         const showClientNamesAsProjects =
                                             specialClientProjectIds.includes(project.project_id) && clientNameCounts.length > 0;
                                         const showTeamBreakdown = canShowTeamBreakdown(project.project_id)
-                                            && (allTeams.length > 0 || Boolean(unassignedTeam) || Boolean(batchStatus) || projectTeams.length > 0);
+                                            && (allTeams.length > 0 || visibleTeams.length > 0 || Boolean(batchStatus) || projectTeams.length > 0);
                                         const roleCardsToRender = showTeamBreakdown ? [] : visibleRoles;
                                         const onlineUsers = getProjectOnlineUsers(detailProject);
                                         const projectOnlineCount = detailProject.online_staff ?? onlineUsers.length;
@@ -955,11 +1002,11 @@ const ProjectsView: React.FC = () => {
                                             { label: 'Untouched Top Remaining', value: batchUntouchedTopRemaining },
                                             { label: 'Fixed Top Remaining', value: batchStatus?.fixed_min?.remaining_time ?? '-' },
                                         ];
-                                        const projectThreeReport = detailProject.project_3_operations_report;
+                                        const projectThreeReport = detailProject.project_operations_report ?? detailProject.project_3_operations_report;
                                         const projectThreeHourlyDone = projectThreeReport?.hourly_done ?? [];
                                         const projectThreeAllPendingDates = projectThreeReport?.last_10_days_pending ?? [];
                                         const projectThreePreviousPending = projectThreeReport?.previous_pending_summary;
-                                        const projectThreePendingDates = projectThreeAllPendingDates.filter((item) => item.date !== projectThreePreviousPending?.date);
+                                        const projectThreePendingDates = projectThreeAllPendingDates.filter((item) => item.date !== projectThreePreviousPending?.date && Number(item.pending_orders || 0) > 0);
                                         const maxProjectThreeDone = Math.max(1, ...projectThreeHourlyDone.map((item) => Number(item.done_orders || 0)));
 
                                         return (
@@ -981,27 +1028,27 @@ const ProjectsView: React.FC = () => {
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {project.received_orders_today > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-semibold text-slate-700">{project.received_orders_today.toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">—</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {project.pending_orders > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-medium text-slate-500">{project.pending_orders.toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">—</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {(project.delayed_pending_orders ?? 0) > 0
                                                             ? <span className="inline-flex items-center justify-center rounded-md bg-slate-100 px-2 py-0.5 text-[11px] md:text-xs font-bold text-slate-600 ring-1 ring-slate-200">{(project.delayed_pending_orders ?? 0).toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">—</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {completedTodayCount > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-semibold text-[#2AA7A0]">{Number(completedTodayCount).toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">—</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums border-r border-slate-100">
                                                         {(project.delayed_done_orders ?? 0) > 0
                                                             ? <span className="inline-flex items-center justify-center rounded-md bg-slate-100 px-2 py-0.5 text-[11px] md:text-xs font-bold text-slate-600 ring-1 ring-slate-200">{(project.delayed_done_orders ?? 0).toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">—</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         <span className="text-[12px] md:text-[13px] font-medium text-slate-600">{project.total_staff.toLocaleString()}</span>
@@ -1020,12 +1067,12 @@ const ProjectsView: React.FC = () => {
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {project.present_staff > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-medium text-slate-600">{project.present_staff.toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">—</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
                                                     </td>
                                                     <td className="px-3 md:px-4 py-3 text-center tabular-nums">
                                                         {project.absent_staff > 0
                                                             ? <span className="text-[12px] md:text-[13px] font-semibold text-rose-500">{project.absent_staff.toLocaleString()}</span>
-                                                            : <span className="text-[13px] text-slate-300 select-none">—</span>}
+                                                            : <span className="text-[13px] text-slate-300 select-none">â€”</span>}
                                                     </td>
                                                 </tr>
 
@@ -1038,7 +1085,7 @@ const ProjectsView: React.FC = () => {
                                                                 </div>
                                                             ) : (
                                                                 <div className="space-y-3">
-                                                                    {project.project_id === 3 && projectThreeReport && (
+                                                                    {projectThreeReport && (
                                                                         <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                                                                             <div className="flex flex-col gap-1 border-b border-slate-100 bg-slate-50/80 px-4 py-3 md:flex-row md:items-center md:justify-between">
                                                                                 <div>
@@ -1081,16 +1128,17 @@ const ProjectsView: React.FC = () => {
                                                                                             Last 10 days
                                                                                         </span>
                                                                                     </div>
-                                                                                    {projectThreePreviousPending && (
+                                                                                    {projectThreePreviousPending && Number(projectThreePreviousPending.pending_orders || 0) > 0 && (
                                                                                         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs">
                                                                                             <span className="font-semibold text-slate-700">{projectThreePreviousPending.day_label || 'Previous'}</span>
                                                                                             <div className="flex flex-wrap items-center gap-1.5">
                                                                                                 <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-slate-100">
                                                                                                     Received {Number(projectThreePreviousPending.total_orders || 0)}
-                                                                                                </span>
-                                                                                                <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
-                                                                                                    Pending {Number(projectThreePreviousPending.pending_orders || 0)}
-                                                                                                </span>
+                                                                                                </span>                                                                                                {Number(projectThreePreviousPending.pending_orders || 0) > 0 && (
+                                                                                                    <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
+                                                                                                        Pending {Number(projectThreePreviousPending.pending_orders || 0)}
+                                                                                                    </span>
+                                                                                                )}
                                                                                                 <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-[#0f766e] ring-1 ring-teal-100">
                                                                                                     Done {Number(projectThreePreviousPending.done_orders || 0)}
                                                                                                 </span>
@@ -1109,10 +1157,11 @@ const ProjectsView: React.FC = () => {
                                                                                                 <div className="flex items-center gap-1.5">
                                                                                                     <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-700 ring-1 ring-slate-100">
                                                                                                         Received {Number(item.total_orders || 0)}
-                                                                                                    </span>
-                                                                                                    <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
-                                                                                                        Pending {Number(item.pending_orders || 0)}
-                                                                                                    </span>
+                                                                                                    </span>                                                                                                    {Number(item.pending_orders || 0) > 0 && (
+                                                                                                        <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
+                                                                                                            Pending {Number(item.pending_orders || 0)}
+                                                                                                        </span>
+                                                                                                    )}
                                                                                                     <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-[#0f766e] ring-1 ring-teal-100">
                                                                                                         Done {Number(item.done_orders || 0)}
                                                                                                     </span>
@@ -1179,9 +1228,9 @@ const ProjectsView: React.FC = () => {
                                                                                     { label: 'Offline Teams', value: teamSummary.inactiveTeams, tab: 'teams-offline' as TeamDetailTab, status: 'offline' },
                                                                                     {
                                                                                         label: 'Unassigned',
-                                                                                        value: teamSummary.unassignedDrawers + teamSummary.unassignedCheckers,
+                                                                                        value: teamSummary.unassignedDrawers + teamSummary.unassignedDesigners + teamSummary.unassignedCheckers + teamSummary.unassignedQas + teamSummary.unassignedFillers,
                                                                                         tab: 'unassigned' as TeamDetailTab,
-                                                                                        suffix: `D ${teamSummary.unassignedDrawers} / C ${teamSummary.unassignedCheckers}`,
+                                                                                        suffix: `D ${teamSummary.unassignedDrawers} / Des ${teamSummary.unassignedDesigners} / C ${teamSummary.unassignedCheckers} / QA ${teamSummary.unassignedQas} / F ${teamSummary.unassignedFillers}`,
                                                                                     },
                                                                                     ...(project.project_id === batchStatusProjectId ? [{
                                                                                         label: 'Overall Status',
@@ -1341,9 +1390,22 @@ const ProjectsView: React.FC = () => {
                                                                                 ) : (
                                                                                     <div className="grid grid-cols-1 xl:grid-cols-1 gap-3">
                                                                                         {teamsForDisplay.map((team) => {
-                                                                                            const teamDone = Number(team.checker_done ?? 0);
-                                                                                            const teamPending = (team.drawers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0)
-                                                                                                + (team.checkers ?? []).reduce((s: number, w) => s + (Number(w.wip) || 0), 0);
+                                                                                            const teamRoleKeys = getProjectRoleOrder(
+                                                                                                Object.entries(roleDisplayConfig)
+                                                                                                    .filter(([, config]) => (
+                                                                                                        ((team[config.membersKey] ?? []).length > 0) ||
+                                                                                                        Number(team[config.doneKey] ?? 0) > 0
+                                                                                                    ))
+                                                                                                    .map(([role]) => role)
+                                                                                            );
+                                                                                            const teamDone = teamRoleKeys.reduce((sum, role) => {
+                                                                                                const config = roleDisplayConfig[role];
+                                                                                                return sum + Number(team[config.doneKey] ?? 0);
+                                                                                            }, 0);
+                                                                                            const teamPending = teamRoleKeys.reduce((sum, role) => {
+                                                                                                const config = roleDisplayConfig[role];
+                                                                                                return sum + (team[config.membersKey] ?? []).reduce((roleSum: number, worker) => roleSum + (Number(worker.wip) || 0), 0);
+                                                                                            }, 0);
                                                                                             const teamAssigned = teamDone + teamPending;
                                                                                             return (
                                                                                                 <div key={`team-${team.team_id}`} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
@@ -1357,9 +1419,9 @@ const ProjectsView: React.FC = () => {
                                                                                                         <div className="flex items-center gap-2 ml-auto">
                                                                                                             <div className="flex items-center gap-1">
                                                                                                                 <span style={{ fontSize: '11px', fontWeight: '600', color: '#64748b' }}>{teamAssigned} assigned</span>
-                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>·</span>
+                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>Â·</span>
                                                                                                                 <span style={{ fontSize: '11px', fontWeight: '700', color: '#0f766e', background: '#ccfbf1', borderRadius: '4px', padding: '1px 6px' }}>{teamDone} Done</span>
-                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>·</span>
+                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1', padding: '0 2px' }}>Â·</span>
                                                                                                                 <span style={{ fontSize: '11px', fontWeight: '700', color: teamPending > 0 ? '#b45309' : '#94a3b8', background: teamPending > 0 ? '#fef3c7' : 'transparent', borderRadius: '4px', padding: teamPending > 0 ? '1px 6px' : '0' }}>{teamPending} pend</span>
                                                                                                             </div>
                                                                                                             <svg xmlns="http://www.w3.org/2000/svg" style={{ width: '14px', height: '14px', color: '#94a3b8', transform: expandedTeam === team.team_id ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -1368,69 +1430,54 @@ const ProjectsView: React.FC = () => {
                                                                                                         </div>
                                                                                                     </div>
                                                                                                     {expandedTeam === team.team_id && (
-                                                                                                        <div style={{ borderTop: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f8fafc' }}>
-                                                                                                            {/* DRAWERS col */}
-                                                                                                            <div style={{ borderRight: '1px solid #e2e8f0', background: '#fff' }}>
-                                                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: '#f0fdfa', borderBottom: '1px solid #ccfbf1', borderLeft: '3px solid #0d9488' }}>
-                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '800', color: '#0d9488', letterSpacing: '0.07em' }}>DRAWERS</span>
-                                                                                                                    <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#cbd5e1', flexShrink: 0 }} />
-                                                                                                                    <span style={{ fontSize: '10px', color: '#64748b', fontWeight: '500' }}>{(team.drawers || []).length}</span>
-                                                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginLeft: 'auto' }}>
-                                                                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', fontWeight: '600', color: '#15803d' }}>{'Online '}<span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />{getOnlineCountForWorkers(team.drawers, onlineUsers)}</span>
-                                                                                                                        <span style={{ fontSize: '10px', color: '#cbd5e1' }}>·</span>
-                                                                                                                        <span style={{ fontSize: '10px', fontWeight: '600', color: '#0f766e' }}>{Number(team.drawer_done ?? 0)} done</span>
-                                                                                                                    </div>
-                                                                                                                </div>
-                                                                                                                <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
-                                                                                                                    {(team.drawers || []).length > 0 ? (team.drawers || []).map((w, wi) => {
-                                                                                                                        const isOn = !!(w.is_online || getOnlineUserForWorker(w, onlineUsers));
-                                                                                                                        const dn = Number(w.total_done_selected_date ?? w.total_done ?? 0);
-                                                                                                                        const wip = Number(w.wip ?? 0);
-                                                                                                                        const assigned = dn + wip;
-                                                                                                                        const isGuest = Boolean(w.is_guest);
-                                                                                                                        return (
-                                                                                                                            <div key={`dr-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isGuest ? '#faf5ff' : isOn ? '#f0fdfa' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
-                                                                                                                                <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isGuest ? '#a855f7' : isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
-                                                                                                                                <span title={isGuest && w.home_team_name ? `Home team: ${w.home_team_name}` : undefined} style={{ fontSize: '11px', fontWeight: '500', color: isGuest ? '#6d28d9' : '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                                                                                                    {w.name}{isGuest ? ' (Guest)' : ''}
-                                                                                                                                </span>
-                                                                                                                                <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{assigned} assign</span>
-                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '700', color: dn > 0 ? '#0f766e' : '#94a3b8', background: dn > 0 ? '#ccfbf1' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>✓{dn}</span>
-                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>
+                                                                                                        <div
+                                                                                                            style={{
+                                                                                                                borderTop: '1px solid #e2e8f0',
+                                                                                                                display: 'grid',
+                                                                                                                gridTemplateColumns: `repeat(${Math.max(teamRoleKeys.length, 1)}, minmax(220px, 1fr))`,
+                                                                                                                background: '#f8fafc',
+                                                                                                            }}
+                                                                                                        >
+                                                                                                            {teamRoleKeys.length > 0 ? teamRoleKeys.map((role, roleIndex) => {
+                                                                                                                const config = roleDisplayConfig[role];
+                                                                                                                const workers = team[config.membersKey] ?? [];
+                                                                                                                return (
+                                                                                                                    <div key={`${team.team_id}-${role}`} style={{ borderRight: roleIndex < teamRoleKeys.length - 1 ? '1px solid #e2e8f0' : undefined, background: '#fff' }}>
+                                                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: config.bg, borderBottom: `1px solid ${config.border}`, borderLeft: `3px solid ${config.color}` }}>
+                                                                                                                            <span style={{ fontSize: '10px', fontWeight: '800', color: config.color, letterSpacing: '0.07em' }}>{config.label}</span>
+                                                                                                                            <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#cbd5e1', flexShrink: 0 }} />
+                                                                                                                            <span style={{ fontSize: '10px', color: '#64748b', fontWeight: '500' }}>{workers.length}</span>
+                                                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginLeft: 'auto' }}>
+                                                                                                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', fontWeight: '600', color: '#15803d' }}>{'Online '}<span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />{getOnlineCountForWorkers(workers, onlineUsers)}</span>
+                                                                                                                                <span style={{ fontSize: '10px', color: '#cbd5e1' }}>·</span>
+                                                                                                                                <span style={{ fontSize: '10px', fontWeight: '600', color: config.color }}>{Number(team[config.doneKey] ?? 0)} done</span>
                                                                                                                             </div>
-                                                                                                                        );
-                                                                                                                    }) : <div style={{ padding: '12px 10px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>—</div>}
-                                                                                                                </div>
-                                                                                                            </div>
-                                                                                                            {/* CHECKERS col */}
-                                                                                                            <div style={{ background: '#fff' }}>
-                                                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: '#faf5ff', borderBottom: '1px solid #ede9fe', borderLeft: '3px solid #7c3aed' }}>
-                                                                                                                    <span style={{ fontSize: '10px', fontWeight: '800', color: '#7c3aed', letterSpacing: '0.07em' }}>CHECKERS</span>
-                                                                                                                    <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#cbd5e1', flexShrink: 0 }} />
-                                                                                                                    <span style={{ fontSize: '10px', color: '#64748b', fontWeight: '500' }}>{(team.checkers || []).length}</span>
-                                                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginLeft: 'auto' }}>
-                                                                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', fontWeight: '600', color: '#15803d' }}>{'Online '}<span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />{getOnlineCountForWorkers(team.checkers, onlineUsers)}</span>
-                                                                                                                        <span style={{ fontSize: '10px', color: '#cbd5e1' }}>·</span>
-                                                                                                                        <span style={{ fontSize: '10px', fontWeight: '600', color: '#7c3aed' }}>{Number(team.checker_done ?? 0)} done</span>
+                                                                                                                        </div>
+                                                                                                                        <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                                                                                                                            {workers.length > 0 ? workers.map((worker, workerIndex) => {
+                                                                                                                                const isOn = !!(worker.is_online || getOnlineUserForWorker(worker, onlineUsers));
+                                                                                                                                const done = Number(worker.total_done_selected_date ?? worker.total_done ?? 0);
+                                                                                                                                const wip = Number(worker.wip ?? 0);
+                                                                                                                                const assigned = done + wip;
+                                                                                                                                const isGuest = Boolean(worker.is_guest);
+                                                                                                                                return (
+                                                                                                                                    <div key={`${role}-${team.team_id}-${workerIndex}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isGuest ? '#faf5ff' : isOn ? config.bg : '#fff', borderBottom: '1px solid #f1f5f9' }}>
+                                                                                                                                        <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isGuest ? '#a855f7' : isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
+                                                                                                                                        <span title={isGuest && worker.home_team_name ? `Home team: ${worker.home_team_name}` : undefined} style={{ fontSize: '11px', fontWeight: '500', color: isGuest ? '#6d28d9' : '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                                                                                            {worker.name}{isGuest ? ' (Guest)' : ''}
+                                                                                                                                        </span>
+                                                                                                                                        <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{assigned} assign</span>
+                                                                                                                                        <span style={{ fontSize: '11px', fontWeight: '700', color: done > 0 ? config.color : '#94a3b8', background: done > 0 ? config.doneBg : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>?{done}</span>
+                                                                                                                                        <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>
+                                                                                                                                    </div>
+                                                                                                                                );
+                                                                                                                            }) : <div style={{ padding: '12px 10px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>-</div>}
+                                                                                                                        </div>
                                                                                                                     </div>
-                                                                                                                </div>
-                                                                                                                <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
-                                                                                                                    {(team.checkers || []).length > 0 ? (team.checkers || []).map((w, wi) => {
-                                                                                                                        const isOn = !!(w.is_online || getOnlineUserForWorker(w, onlineUsers));
-                                                                                                                        const dn = Number(w.total_done_selected_date ?? w.total_done ?? 0);
-                                                                                                                        const wip = Number(w.wip ?? 0);
-                                                                                                                        return (
-                                                                                                                            <div key={`ck-${team.team_id}-${wi}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: isOn ? '#faf5ff' : '#fff', borderBottom: '1px solid #f1f5f9' }}>
-                                                                                                                                <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: isOn ? '#10b981' : '#e2e8f0', flexShrink: 0 }} />
-                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '500', color: '#1e293b', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
-                                                                                                                                <span style={{ fontSize: '10px', fontWeight: '600', color: '#64748b', whiteSpace: 'nowrap' }}>{dn + wip} assign</span>
-                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '700', color: dn > 0 ? '#7c3aed' : '#94a3b8', background: dn > 0 ? '#ede9fe' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>✓{dn}</span>
-                                                                                                                                <span style={{ fontSize: '11px', fontWeight: '600', color: wip > 0 ? '#b45309' : '#94a3b8', background: wip > 0 ? '#fef3c7' : '#f8fafc', borderRadius: '4px', padding: '1px 6px', whiteSpace: 'nowrap' }}>{wip} wip</span>
-                                                                                                                            </div>
-                                                                                                                        );
-                                                                                                                    }) : <div style={{ padding: '12px 10px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>—</div>}
-                                                                                                                </div>
-                                                                                                            </div>
+                                                                                                                );
+                                                                                                            }) : (
+                                                                                                                <div style={{ padding: '14px', fontSize: '11px', color: '#94a3b8', textAlign: 'center', background: '#fff' }}>No team members found.</div>
+                                                                                                            )}
                                                                                                         </div>
                                                                                                     )}
                                                                                                 </div>
@@ -1548,3 +1595,7 @@ const ProjectsView: React.FC = () => {
 };
 
 export default ProjectsView;
+
+
+
+
