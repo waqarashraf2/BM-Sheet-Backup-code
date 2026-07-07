@@ -24,6 +24,8 @@ class TimeWiseCountController extends Controller
         16 => 2,
         2 => 0,
     ];
+    private const IMAGE_COUNT_PROJECT_IDS = [22, 23, 25, 26, 52];
+    private const IMAGE_COUNT_ROLES = ['designer', 'qa'];
 
     public function index(Request $request)
     {
@@ -151,6 +153,7 @@ class TimeWiseCountController extends Controller
                     'role' => $first['role'],
                     'done' => $rows->sum('done'),
                     'wip' => $rows->sum('wip'),
+                    'image_count' => $rows->sum('image_count'),
                     'projects' => $rows
                         ->filter(fn (array $row) => $row['done'] > 0 || $row['wip'] > 0)
                         ->map(fn (array $row) => [
@@ -158,6 +161,7 @@ class TimeWiseCountController extends Controller
                             'project_name' => $row['project_name'],
                             'done' => $row['done'],
                             'wip' => $row['wip'],
+                            'image_count' => $row['image_count'],
                         ])
                         ->values(),
                 ];
@@ -175,6 +179,7 @@ class TimeWiseCountController extends Controller
                 'role' => $role,
                 'done' => $roleWorkers->sum('done'),
                 'wip' => $roleWorkers->sum('wip'),
+                'image_count' => $roleWorkers->sum('image_count'),
                 'workers' => $roleWorkers->count(),
             ];
         })->values();
@@ -189,6 +194,7 @@ class TimeWiseCountController extends Controller
             'totals' => [
                 'done' => $summary->sum('done'),
                 'wip' => $summary->sum('wip'),
+                'image_count' => $summary->sum('image_count'),
             ],
         ]);
     }
@@ -217,11 +223,19 @@ class TimeWiseCountController extends Controller
             $doneExpression = $this->overlayExpression($table, $columns['done'], true);
             $dateExpression = $this->overlayExpression($table, $columns['date']);
             $stateExpression = $this->overlayExpression($table, 'workflow_state', true);
+            $usesReceivedDate = $this->usesReceivedDateForProduction($project, $table);
             $normalizedDateExpression = $columns['offset'] === 0
                 ? $dateExpression
                 : "DATE_ADD({$dateExpression}, INTERVAL {$columns['offset']} HOUR)";
+            $countDateExpression = $usesReceivedDate
+                ? 'orders.`received_at`'
+                : $normalizedDateExpression;
             $doneCondition = "LOWER(TRIM(COALESCE({$doneExpression}, ''))) = 'yes'";
             $activeCondition = "UPPER(TRIM(COALESCE({$stateExpression}, ''))) NOT IN ('DELIVERED', 'CANCELLED')";
+            $wipCondition = $usesReceivedDate
+                ? "NOT ({$doneCondition}) AND {$activeCondition} AND {$countDateExpression} BETWEEN ? AND ?"
+                : "NOT ({$doneCondition}) AND {$activeCondition}";
+            $imageCountExpression = $this->totalRawFilesExpression($project, $table, $role);
 
             $rows = DB::table("{$table} as orders")
                 ->leftJoin('crm_order_assignments as crm', function ($join) use ($project) {
@@ -232,10 +246,29 @@ class TimeWiseCountController extends Controller
                 ->selectRaw("{$idExpression} as worker_id")
                 ->selectRaw("COALESCE(MAX(NULLIF(TRIM({$nameExpression}), '')), 'Unknown') as worker_name")
                 ->selectRaw(
-                    "SUM(CASE WHEN {$doneCondition} AND {$normalizedDateExpression} BETWEEN ? AND ? THEN 1 ELSE 0 END) as done_count",
+                    "SUM(CASE WHEN {$doneCondition} AND {$countDateExpression} BETWEEN ? AND ? THEN 1 ELSE 0 END) as done_count",
                     [$startAt->toDateTimeString(), $endAt->toDateTimeString()]
-                )
-                ->selectRaw("SUM(CASE WHEN NOT ({$doneCondition}) AND {$activeCondition} THEN 1 ELSE 0 END) as wip_count")
+                );
+
+            if ($usesReceivedDate) {
+                $rows->selectRaw(
+                    "SUM(CASE WHEN {$wipCondition} THEN 1 ELSE 0 END) as wip_count",
+                    [$startAt->toDateTimeString(), $endAt->toDateTimeString()]
+                );
+            } else {
+                $rows->selectRaw("SUM(CASE WHEN {$wipCondition} THEN 1 ELSE 0 END) as wip_count");
+            }
+
+            if ($imageCountExpression !== null) {
+                $rows->selectRaw(
+                    "SUM(CASE WHEN {$doneCondition} AND {$countDateExpression} BETWEEN ? AND ? THEN {$imageCountExpression} ELSE 0 END) as image_count",
+                    [$startAt->toDateTimeString(), $endAt->toDateTimeString()]
+                );
+            } else {
+                $rows->selectRaw('0 as image_count');
+            }
+
+            $rows = $rows
                 ->groupByRaw($idExpression)
                 ->get();
 
@@ -248,10 +281,56 @@ class TimeWiseCountController extends Controller
                     'project_name' => $project->name,
                     'done' => (int) $row->done_count,
                     'wip' => (int) $row->wip_count,
+                    'image_count' => (int) ($row->image_count ?? 0),
                 ])
-                ->filter(fn (array $row) => $row['done'] > 0 || $row['wip'] > 0)
+                ->filter(fn (array $row) => $row['done'] > 0 || $row['wip'] > 0 || $row['image_count'] > 0)
                 ->values();
         });
+    }
+
+    private function usesReceivedDateForProduction(Project $project, string $table): bool
+    {
+        return in_array((int) $project->id, self::IMAGE_COUNT_PROJECT_IDS, true)
+            && Schema::hasColumn($table, 'received_at');
+    }
+
+    private function totalRawFilesExpression(Project $project, string $table, string $role): ?string
+    {
+        if (
+            !in_array((int) $project->id, self::IMAGE_COUNT_PROJECT_IDS, true)
+            || !in_array($role, self::IMAGE_COUNT_ROLES, true)
+        ) {
+            return null;
+        }
+
+        $sources = [];
+
+        if (Schema::hasTable('crm_order_assignments') && Schema::hasColumn('crm_order_assignments', 'total_raw_files')) {
+            $sources[] = "crm.`total_raw_files`";
+        }
+
+        if (Schema::hasColumn($table, 'total_raw_files')) {
+            $sources[] = "orders.`total_raw_files`";
+        }
+
+        if (Schema::hasColumn($table, 'images')) {
+            $sources[] = "orders.`images`";
+        }
+
+        if (empty($sources)) {
+            return null;
+        }
+
+        $normalizedSources = array_map(
+            fn (string $source) => "NULLIF(TRIM({$source}), '')",
+            $sources
+        );
+
+        $valueExpression = count($normalizedSources) === 1
+            ? $normalizedSources[0]
+            : 'COALESCE(' . implode(', ', $normalizedSources) . ')';
+
+        return "COALESCE(CAST(REPLACE({$valueExpression}, ',', '') AS UNSIGNED), 0)";
     }
 
     private function buildProjectStatus(Project $project, Carbon $startAt, Carbon $endAt): array
@@ -307,6 +386,7 @@ class TimeWiseCountController extends Controller
         $deliveredCondition = "UPPER(TRIM(COALESCE({$stateExpression}, ''))) = 'DELIVERED'";
         $receivedExpression = 'orders.`received_at`';
         $completionExpression = $this->completionTimestampExpression($table);
+        $usesReceivedDate = $this->usesReceivedDateForProduction($project, $table);
         $dueExpression = Schema::hasColumn($table, 'due_in') ? 'orders.`due_in`' : null;
         $assignedExpression = $this->nullableOverlayExpression($table, 'assigned_to');
         $projectDueNow = $this->projectDueNowString($project);
@@ -331,7 +411,12 @@ class TimeWiseCountController extends Controller
             $query->selectRaw('0 as untouched_count');
         }
 
-        if ($completionExpression !== null) {
+        if ($usesReceivedDate) {
+            $query->selectRaw(
+                "SUM(CASE WHEN {$deliveredCondition} AND {$receivedExpression} BETWEEN ? AND ? THEN 1 ELSE 0 END) as done_count",
+                [$startAt->toDateTimeString(), $endAt->toDateTimeString()]
+            );
+        } elseif ($completionExpression !== null) {
             $query->selectRaw(
                 "SUM(CASE WHEN {$deliveredCondition} AND {$completionExpression} BETWEEN ? AND ? THEN 1 ELSE 0 END) as done_count",
                 [$startAt->toDateTimeString(), $endAt->toDateTimeString()]

@@ -344,6 +344,8 @@ class FocalPbPhotoScraperService
             'raw_row' => $row,
         ];
 
+        $receivedAt = $this->parseDateTime($dateReceived);
+
         return [
             'order_number' => $clientPortalId,
             'clint_order_number' => $enhancementId,
@@ -364,9 +366,9 @@ class FocalPbPhotoScraperService
             'code' => $propertyId,
             'project_type' => $jobType,
             'priority' => $this->resolvePriority($timeLeft),
-            'received_at' => $this->parseDateTime($dateReceived),
+            'received_at' => $receivedAt,
             'due_date' => $this->parseDueDate($dateDue),
-            'due_in' => $this->parseDateTime($dateDue),
+            'due_in' => $this->resolveDueIn($receivedAt, $category, $dateDue),
             'import_source' => 'cron',
             'created_at' => now(),
             'updated_at' => now(),
@@ -685,6 +687,50 @@ class FocalPbPhotoScraperService
         }
 
         return 'urgent';
+    }
+
+    private function resolveDueIn(?string $receivedAt, ?string $category, ?string $portalDueDate): ?string
+    {
+        $base = $receivedAt ?: $this->parseDateTime($portalDueDate);
+        if (!$base) {
+            return null;
+        }
+
+        $dt = DateTime::createFromFormat('Y-m-d H:i:s', $base, new DateTimeZone('UTC'));
+        if (!$dt) {
+            return null;
+        }
+
+        $hours = $this->dueInHoursForCategory($category);
+        $dt->modify("+{$hours} hours");
+
+        return $dt->format('Y-m-d H:i:s');
+    }
+
+    private function dueInHoursForCategory(?string $category): int
+    {
+        $normalized = strtolower(trim((string) $category));
+
+        if ($normalized === '') {
+            return 1;
+        }
+
+        $normalized = preg_replace('/[^a-z0-9]+/', ' ', $normalized);
+        $normalized = trim(preg_replace('/\s+/', ' ', $normalized));
+
+        $isRemoval = str_contains($normalized, 'removal')
+            || str_contains($normalized, 'removel')
+            || str_contains($normalized, 'remove');
+
+        if (
+            (str_contains($normalized, 'large') && str_contains($normalized, 'object'))
+            || (str_contains($normalized, 'object') && $isRemoval)
+            || (str_contains($normalized, 'other') && $isRemoval)
+        ) {
+            return 6;
+        }
+
+        return 1;
     }
 
     private function parseTimeLeftHours(?string $raw): float

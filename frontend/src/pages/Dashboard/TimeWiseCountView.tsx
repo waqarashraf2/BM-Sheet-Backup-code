@@ -101,6 +101,7 @@ function roleSectionTone(tone: string) {
 }
 
 const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
+const RECEIVED_DATE_PROJECT_IDS = new Set([22, 23, 25, 26, 52]);
 
 function resolveProjectTimezone(project?: ProjectOption | null) {
   const timezone = String(project?.timezone || '').trim();
@@ -144,6 +145,13 @@ function apiDateTime(value: string) {
   return value.replace('T', ' ');
 }
 
+function fullDayRange(date: string) {
+  return {
+    startAt: date + 'T00:00',
+    endAt: date + 'T23:59',
+  };
+}
+
 function normalizeReport(payload: Partial<TimeWiseCountData> | null | undefined): TimeWiseCountData {
   const summary = Array.isArray(payload?.summary) ? payload.summary : [];
   const workers = Array.isArray(payload?.workers)
@@ -172,6 +180,7 @@ function normalizeReport(payload: Partial<TimeWiseCountData> | null | undefined)
     totals: {
       done: Number(payload?.totals?.done ?? summary.reduce((total, item) => total + Number(item?.done || 0), 0)),
       wip: Number(payload?.totals?.wip ?? summary.reduce((total, item) => total + Number(item?.wip || 0), 0)),
+      image_count: Number(payload?.totals?.image_count ?? summary.reduce((total, item) => total + Number(item?.image_count || 0), 0)),
       received: Number(payload?.totals?.received ?? teamStatuses.reduce((total, item) => total + Number(item?.received || 0), 0)),
       pending: Number(payload?.totals?.pending ?? teamStatuses.reduce((total, item) => total + Number(item?.pending || 0), 0)),
       delayed: Number(payload?.totals?.delayed ?? teamStatuses.reduce((total, item) => total + Number(item?.delayed || 0), 0)),
@@ -198,20 +207,33 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
     [projectId, projects]
   );
   const selectedTimezone = resolveProjectTimezone(selectedProject);
+  const usesReceivedDate = selectedProject ? RECEIVED_DATE_PROJECT_IDS.has(Number(selectedProject.id)) : false;
 
   useEffect(() => {
     const nextRange = projectTimezoneRange(selectedTimezone);
-    setStartAt(nextRange.startAt);
-    setEndAt(nextRange.endAt);
+    const resolvedRange = usesReceivedDate
+      ? fullDayRange(nextRange.startAt.slice(0, 10))
+      : nextRange;
+    setStartAt(resolvedRange.startAt);
+    setEndAt(resolvedRange.endAt);
     setData(null);
     setStatusData(null);
     setOpenStatusProjectId(null);
     setOpenStatusTeamKey(null);
-  }, [selectedTimezone]);
+  }, [selectedTimezone, usesReceivedDate]);
+
+  useEffect(() => {
+    setData(null);
+    setStatusData(null);
+    setError('');
+    setStatusError('');
+    setOpenStatusProjectId(null);
+    setOpenStatusTeamKey(null);
+  }, [projectId]);
 
   const generateReport = async () => {
     if (!startAt || !endAt) {
-      setError('Select both start and end date-time values.');
+      setError(usesReceivedDate ? 'Select a date.' : 'Select both start and end date-time values.');
       return;
     }
     if (new Date(startAt) > new Date(endAt)) {
@@ -222,11 +244,14 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
     try {
       setLoading(true);
       setError('');
+      const requestRange = usesReceivedDate
+        ? fullDayRange(startAt.slice(0, 10))
+        : { startAt, endAt };
       const response = await dashboardService.timeWiseCounts(
         dashboard,
         {
-          start_at: apiDateTime(startAt),
-          end_at: apiDateTime(endAt),
+          start_at: apiDateTime(requestRange.startAt),
+          end_at: apiDateTime(requestRange.endAt),
           ...(projectId ? { project_id: Number(projectId) } : {}),
         }
       );
@@ -251,7 +276,7 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
 
   const fetchTeamStatus = async () => {
     if (!startAt || !endAt) {
-      setStatusError('Select both start and end date-time values.');
+      setStatusError(usesReceivedDate ? 'Select a date.' : 'Select both start and end date-time values.');
       return;
     }
     if (new Date(startAt) > new Date(endAt)) {
@@ -262,11 +287,14 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
     try {
       setStatusLoading(true);
       setStatusError('');
+      const requestRange = usesReceivedDate
+        ? fullDayRange(startAt.slice(0, 10))
+        : { startAt, endAt };
       const response = await dashboardService.timeWiseCounts(
         dashboard,
         {
-          start_at: apiDateTime(startAt),
-          end_at: apiDateTime(endAt),
+          start_at: apiDateTime(requestRange.startAt),
+          end_at: apiDateTime(requestRange.endAt),
           ...(projectId ? { project_id: Number(projectId) } : {}),
           status_only: 1,
         }
@@ -312,7 +340,9 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
     if (item.role === 'drawer' || item.role === 'checker') return hasFloorPlan || item.workers > 0;
     return true;
   });
-  const projectStatuses = statusData?.project_statuses || [];
+  const projectStatuses = (statusData?.project_statuses || []).filter((project) => (
+    !projectId || String(project.project_id) === projectId
+  ));
 
   return (
     <div className="space-y-5">
@@ -324,30 +354,50 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Time-wise production count</h3>
             <p className="text-xs text-slate-500 mt-1">
-              Done counts use each layer's completion time. WIP shows current incomplete assigned work.
+              {usesReceivedDate
+                ? 'Designer and QA counts use the selected received date for this project.'
+                : "Done counts use each layer's completion time. WIP shows current incomplete assigned work."}
             </p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
-          <label className="block">
-            <span className="block text-xs font-medium text-slate-600 mb-1.5">From date & time</span>
-            <input
-              type="datetime-local"
-              value={startAt}
-              onChange={(event) => setStartAt(event.target.value)}
-              className="w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-            />
-          </label>
-          <label className="block">
-            <span className="block text-xs font-medium text-slate-600 mb-1.5">To date & time</span>
-            <input
-              type="datetime-local"
-              value={endAt}
-              onChange={(event) => setEndAt(event.target.value)}
-              className="w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-            />
-          </label>
+          {usesReceivedDate ? (
+            <label className="block sm:col-span-2">
+              <span className="block text-xs font-medium text-slate-600 mb-1.5">Date</span>
+              <input
+                type="date"
+                value={startAt.slice(0, 10)}
+                onChange={(event) => {
+                  const nextRange = fullDayRange(event.target.value);
+                  setStartAt(nextRange.startAt);
+                  setEndAt(nextRange.endAt);
+                }}
+                className="w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+              />
+            </label>
+          ) : (
+            <>
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-600 mb-1.5">From date & time</span>
+                <input
+                  type="datetime-local"
+                  value={startAt}
+                  onChange={(event) => setStartAt(event.target.value)}
+                  className="w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-600 mb-1.5">To date & time</span>
+                <input
+                  type="datetime-local"
+                  value={endAt}
+                  onChange={(event) => setEndAt(event.target.value)}
+                  className="w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                />
+              </label>
+            </>
+          )}
           <label className="block">
             <span className="block text-xs font-medium text-slate-600 mb-1.5">Project</span>
             <select
@@ -763,6 +813,8 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                   const meta = roleMeta[item.role];
                   if (!meta) return null;
                   const Icon = meta.icon;
+                  const roleImageCount = Number(item.image_count || 0);
+                  const showImageCount = roleImageCount > 0 && (item.role === 'designer' || item.role === 'qa');
                   const roleWorkers = filteredWorkers
                     .filter((worker) => worker.role === item.role)
                     .sort((a, b) => b.done - a.done || b.wip - a.wip || a.worker_name.localeCompare(b.worker_name));
@@ -778,6 +830,11 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                             <Icon className={`h-4 w-4 ${meta.text}`} />
                             <h4 className={`text-[13px] font-bold ${meta.text}`}>{meta.label}</h4>
                             <span className="text-[10px] font-medium text-slate-400">{item.workers} staff</span>
+                            {showImageCount && (
+                              <span className="rounded-md bg-white/70 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 ring-1 ring-black/[0.04]">
+                                {roleImageCount} raw images
+                              </span>
+                            )}
                           </div>
                           <span className={`text-lg font-bold leading-none ${meta.text}`}>{item.done}</span>
                         </div>
@@ -811,6 +868,11 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                                   <div className={`truncate text-[12px] font-medium ${meta.text}`}>
                                     {worker.worker_name || 'Unknown'}
                                   </div>
+                                  {Number(worker.image_count || 0) > 0 && (
+                                    <div className="mt-0.5 text-[9px] font-semibold text-slate-500">
+                                      {Number(worker.image_count || 0)} raw images
+                                    </div>
+                                  )}
                                   {data.projects.length > 1 && projectNames && (
                                     <div className="mt-0.5 truncate text-[9px] text-slate-400">{projectNames}</div>
                                   )}
@@ -827,7 +889,9 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
 
                       <div className="flex items-center justify-between border-t border-black/[0.05] px-3.5 py-2 text-[10px] font-semibold">
                         <span className="text-slate-500">{roleWorkers.length} shown</span>
-                        <span className="text-amber-700">{item.wip} total WIP</span>
+                        <span className="text-amber-700">
+                          {showImageCount ? `${roleImageCount} raw images / ` : ''}{item.wip} total WIP
+                        </span>
                       </div>
                     </section>
                   );

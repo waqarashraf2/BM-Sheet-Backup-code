@@ -751,6 +751,7 @@ export interface TimeWiseCountSummary {
   role: 'drawer' | 'designer' | 'checker' | 'qa' | 'filler';
   done: number;
   wip: number;
+  image_count?: number;
   workers: number;
 }
 
@@ -760,11 +761,13 @@ export interface TimeWiseCountWorker {
   role: TimeWiseCountSummary['role'];
   done: number;
   wip: number;
+  image_count?: number;
   projects: Array<{
     project_id: number;
     project_name: string;
     done: number;
     wip: number;
+    image_count?: number;
   }>;
 }
 
@@ -865,6 +868,7 @@ export interface TimeWiseCountData {
   totals: {
     done: number;
     wip: number;
+    image_count?: number;
     received?: number;
     pending?: number;
     delayed?: number;
