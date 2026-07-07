@@ -1,4 +1,4 @@
-﻿import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   CalendarClock, CheckSquare, ChevronDown, ChevronUp, Eye, Loader2, Palette, Pencil,
   Search, TimerReset,
@@ -10,6 +10,8 @@ interface ProjectOption {
   id: number;
   code: string;
   name: string;
+  country?: string;
+  timezone?: string;
 }
 
 interface TimeWiseCountViewProps {
@@ -98,9 +100,44 @@ function roleSectionTone(tone: string) {
   return 'border-teal-100 bg-teal-50 text-teal-700';
 }
 
-function toDateTimeLocal(date: Date) {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
+const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
+
+function resolveProjectTimezone(project?: ProjectOption | null) {
+  const timezone = String(project?.timezone || '').trim();
+  if (!timezone) return DEFAULT_PROJECT_TIMEZONE;
+
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date());
+    return timezone;
+  } catch {
+    return DEFAULT_PROJECT_TIMEZONE;
+  }
+}
+
+function toDateTimeInTimezone(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return value.year + '-' + value.month + '-' + value.day + 'T' + value.hour + ':' + value.minute;
+}
+
+function projectTimezoneRange(timezone: string) {
+  const now = new Date();
+  const endAt = toDateTimeInTimezone(now, timezone);
+
+  return {
+    startAt: endAt.slice(0, 10) + 'T00:00',
+    endAt,
+  };
 }
 
 function apiDateTime(value: string) {
@@ -143,12 +180,9 @@ function normalizeReport(payload: Partial<TimeWiseCountData> | null | undefined)
 }
 
 export default function TimeWiseCountView({ projects = [], dashboard }: TimeWiseCountViewProps) {
-  const now = new Date();
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
-
-  const [startAt, setStartAt] = useState(toDateTimeLocal(todayStart));
-  const [endAt, setEndAt] = useState(toDateTimeLocal(now));
+  const initialRange = projectTimezoneRange(DEFAULT_PROJECT_TIMEZONE);
+  const [startAt, setStartAt] = useState(initialRange.startAt);
+  const [endAt, setEndAt] = useState(initialRange.endAt);
   const [projectId, setProjectId] = useState('');
   const [search, setSearch] = useState('');
   const [data, setData] = useState<TimeWiseCountData | null>(null);
@@ -159,6 +193,21 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
   const [statusError, setStatusError] = useState('');
   const [openStatusProjectId, setOpenStatusProjectId] = useState<number | null>(null);
   const [openStatusTeamKey, setOpenStatusTeamKey] = useState<string | null>(null);
+  const selectedProject = useMemo(
+    () => (projects || []).find((project) => String(project.id) === projectId) || null,
+    [projectId, projects]
+  );
+  const selectedTimezone = resolveProjectTimezone(selectedProject);
+
+  useEffect(() => {
+    const nextRange = projectTimezoneRange(selectedTimezone);
+    setStartAt(nextRange.startAt);
+    setEndAt(nextRange.endAt);
+    setData(null);
+    setStatusData(null);
+    setOpenStatusProjectId(null);
+    setOpenStatusTeamKey(null);
+  }, [selectedTimezone]);
 
   const generateReport = async () => {
     if (!startAt || !endAt) {
@@ -609,7 +658,7 @@ export default function TimeWiseCountView({ projects = [], dashboard }: TimeWise
                                                         return (
                                                         <div key={roleKey} className="rounded-lg border border-slate-200 bg-white">
                                                           <div className={`flex items-center justify-between border-b px-3 py-2 text-[11px] font-bold uppercase tracking-wide ${roleSectionTone(roleDisplay.tone)}`}>
-                                                            <span>{roleDisplay.title} · {people.length}</span>
+                                                            <span>{roleDisplay.title} - {people.length}</span>
                                                             <span>
                                                               {people.reduce((total: number, person: any) => total + Number(person.total_done || 0), 0)} done
                                                             </span>

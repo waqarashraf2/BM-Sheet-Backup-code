@@ -31,7 +31,7 @@ class FocalCrmService
     /**
      * Fetch jobs from FocalCRM API and import PropertyVision jobs
      */
-    public function import(): array
+    public function import(?array $jobs = null): array
     {
         try {
             Log::info('FocalCRM import started for Project 1');
@@ -40,7 +40,7 @@ class FocalCrmService
             $this->ensureImagesTableExists();
 
             // Fetch from API
-            $jobs = $this->fetchJobsFromApi();
+            $jobs = $jobs ?? $this->fetchJobsFromApi();
             
             if (empty($jobs)) {
                 Log::warning('No jobs returned from FocalCRM API');
@@ -187,8 +187,9 @@ class FocalCrmService
     protected function filterPropertyVisionJobs(array $jobs): array
     {
         return array_filter($jobs, function ($job) {
-            return isset($job['ProductOption']) && 
-                   strtolower($job['ProductOption']) === strtolower($this->productFilter);
+            $productOption = strtolower(trim((string) ($job['ProductOption'] ?? '')));
+
+            return $productOption === strtolower($this->productFilter);
         });
     }
 
@@ -941,15 +942,7 @@ class FocalCrmService
     {
         $this->ensureImagesTableExists();
 
-        $orders = DB::table($this->tableName . ' as o')
-            ->leftJoin($this->imagesTable . ' as i', 'i.job_order_id', '=', 'o.client_portal_id')
-            ->whereNotNull('o.client_portal_id')
-            ->where(function ($q) {
-                $q->whereNull('i.id');
-            })
-            ->orderByDesc('o.id')
-            ->limit($limit)
-            ->get(['o.client_portal_id', 'o.check_assets']);
+        $orders = $this->getRecentOrdersWithoutImages($limit, ['client_portal_id', 'check_assets']);
 
         foreach ($orders as $order) {
             $jobOrderId = (string) ($order->client_portal_id ?? '');
@@ -965,6 +958,65 @@ class FocalCrmService
         }
 
         return $orders->count();
+    }
+
+    /**
+     * Find recent orders missing image rows without comparing differently
+     * collated string columns in SQL.
+     */
+    protected function getRecentOrdersWithoutImages(int $limit, array $columns)
+    {
+        $limit = max(1, $limit);
+        $pageSize = min(max($limit * 2, 50), 500);
+        $offset = 0;
+        $missing = collect();
+
+        do {
+            $orders = DB::table($this->tableName)
+                ->whereNotNull('client_portal_id')
+                ->orderByDesc('id')
+                ->offset($offset)
+                ->limit($pageSize)
+                ->get($columns);
+
+            if ($orders->isEmpty()) {
+                break;
+            }
+
+            $portalIds = $orders
+                ->pluck('client_portal_id')
+                ->map(fn($id) => trim((string) $id))
+                ->filter()
+                ->unique()
+                ->values();
+
+            $existingImageIds = $portalIds->isEmpty()
+                ? collect()
+                : DB::table($this->imagesTable)
+                    ->whereIn('job_order_id', $portalIds->all())
+                    ->pluck('job_order_id')
+                    ->map(fn($id) => trim((string) $id))
+                    ->filter()
+                    ->flip();
+
+            foreach ($orders as $order) {
+                $jobOrderId = trim((string) ($order->client_portal_id ?? ''));
+
+                if ($jobOrderId === '' || $existingImageIds->has($jobOrderId)) {
+                    continue;
+                }
+
+                $missing->push($order);
+
+                if ($missing->count() >= $limit) {
+                    break 2;
+                }
+            }
+
+            $offset += $orders->count();
+        } while ($orders->count() === $pageSize);
+
+        return $missing;
     }
 
     /**

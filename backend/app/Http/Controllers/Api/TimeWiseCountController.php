@@ -17,6 +17,13 @@ use Throwable;
 class TimeWiseCountController extends Controller
 {
     private const REPORT_TIMEZONE = 'Asia/Karachi';
+    private const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
+    private const VIETNAM_PROJECT_ID = 16;
+    private const VIETNAM_PROJECT_TIMEZONE = 'Asia/Ho_Chi_Minh';
+    private const DUE_IN_OFFSETS = [
+        16 => 2,
+        2 => 0,
+    ];
 
     public function index(Request $request)
     {
@@ -93,7 +100,7 @@ class TimeWiseCountController extends Controller
             ->whereIn('id', $managedProjectIds)
             ->when($selectedProjectId, fn ($query) => $query->whereKey($selectedProjectId))
             ->orderBy('name')
-            ->get(['id', 'code', 'name', 'workflow_type']);
+            ->get(['id', 'code', 'name', 'country', 'timezone', 'workflow_type']);
 
         $statusOnly = filter_var($validated['status_only'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
@@ -302,7 +309,7 @@ class TimeWiseCountController extends Controller
         $completionExpression = $this->completionTimestampExpression($table);
         $dueExpression = Schema::hasColumn($table, 'due_in') ? 'orders.`due_in`' : null;
         $assignedExpression = $this->nullableOverlayExpression($table, 'assigned_to');
-        $now = now(self::REPORT_TIMEZONE)->toDateTimeString();
+        $projectDueNow = $this->projectDueNowString($project);
 
         $query = $this->queryWithOptionalCrmOverlay($table, $project)
             ->selectRaw(
@@ -334,25 +341,22 @@ class TimeWiseCountController extends Controller
         }
 
         if ($dueExpression !== null) {
+            $dueInPastCondition = $this->dueInPastSqlCondition($dueExpression, $project);
             $query->selectRaw(
-                "SUM(CASE WHEN {$activeCondition} AND {$receivedExpression} BETWEEN ? AND ? AND {$dueExpression} IS NOT NULL AND {$dueExpression} < ? THEN 1 ELSE 0 END) as delayed_pending_count",
-                [$startAt->toDateTimeString(), $endAt->toDateTimeString(), $now]
+                "SUM(CASE WHEN {$activeCondition} AND {$receivedExpression} BETWEEN ? AND ? AND {$dueExpression} IS NOT NULL AND {$dueInPastCondition} THEN 1 ELSE 0 END) as delayed_pending_count",
+                [$startAt->toDateTimeString(), $endAt->toDateTimeString(), $projectDueNow]
             );
-            if ($completionExpression !== null) {
-                $query->selectRaw(
-                    "SUM(CASE WHEN {$deliveredCondition} AND {$completionExpression} BETWEEN ? AND ? AND {$dueExpression} IS NOT NULL AND {$completionExpression} > {$dueExpression} THEN 1 ELSE 0 END) as delayed_done_count",
-                    [$startAt->toDateTimeString(), $endAt->toDateTimeString()]
-                );
-            } else {
-                $query->selectRaw('0 as delayed_done_count');
-            }
+            $query->selectRaw('0 as delayed_done_count');
         } else {
             $query->selectRaw('0 as delayed_pending_count');
             $query->selectRaw('0 as delayed_done_count');
         }
 
         $row = $query->first();
-        $operationsReport = $this->buildProjectThreeOperationsReport($project, $table, $startAt);
+        $delayedDoneCount = $dueExpression !== null && $completionExpression !== null
+            ? $this->countDelayedDoneOrders($project, $table, $startAt, $endAt, $completionExpression, $deliveredCondition)
+            : 0;
+        $operationsReport = $this->buildProjectThreeOperationsReport($project, $table, $startAt, $endAt);
         $teamStatuses = $this->buildProjectTeamStatuses($project, $startAt, $endAt);
         $unassignedTeam = $teamStatuses->firstWhere('team_id', null);
         $teamSummary = array_merge($this->emptyTeamSummary(), [
@@ -372,7 +376,7 @@ class TimeWiseCountController extends Controller
             'pending_orders' => (int) ($row->pending_count ?? 0),
             'delayed_pending_orders' => (int) ($row->delayed_pending_count ?? 0),
             'done_orders' => (int) ($row->done_count ?? 0),
-            'delayed_done_orders' => (int) ($row->delayed_done_count ?? 0),
+            'delayed_done_orders' => $delayedDoneCount,
             'untouched_orders' => (int) ($row->untouched_count ?? 0),
             'team_summary' => $teamSummary,
             'team_statuses' => $teamStatuses->values()->all(),
@@ -555,8 +559,6 @@ class TimeWiseCountController extends Controller
                 ->whereBetween('orders.received_at', [$startAt->toDateTimeString(), $endAt->toDateTimeString()]);
         }
 
-        $now = now(self::REPORT_TIMEZONE);
-
         foreach ($query->get() as $order) {
             $teamId = $this->resolveOrderTeamId($order, $userTeamMap);
             if (!isset($teamRows[$teamId])) {
@@ -585,7 +587,7 @@ class TimeWiseCountController extends Controller
 
             if ($receivedInRange && $isActive) {
                 $teamRows[$teamId]['pending']++;
-                if (!empty($order->due_in) && $this->timestampBefore($order->due_in, $now)) {
+                if ($this->isDueInPastForProject($order->due_in ?? null, $project)) {
                     $teamRows[$teamId]['delayed']++;
                 }
             }
@@ -802,39 +804,141 @@ class TimeWiseCountController extends Controller
         ];
     }
 
-    private function timestampBefore(?string $value, Carbon $before): bool
+    private function countDelayedDoneOrders(
+        Project $project,
+        string $table,
+        Carbon $startAt,
+        Carbon $endAt,
+        string $completionExpression,
+        string $deliveredCondition
+    ): int {
+        $rows = $this->queryWithOptionalCrmOverlay($table, $project)
+            ->whereRaw($deliveredCondition)
+            ->whereNotNull('orders.due_in')
+            ->whereBetween(DB::raw($completionExpression), [
+                $startAt->toDateTimeString(),
+                $endAt->toDateTimeString(),
+            ])
+            ->selectRaw('orders.`due_in` as due_in')
+            ->selectRaw("{$completionExpression} as completed_time")
+            ->get();
+
+        return $rows->filter(function ($row) use ($project) {
+            $dueAt = $this->parseProjectDueIn($row->due_in ?? null, $project);
+            if ($dueAt === null || empty($row->completed_time)) {
+                return false;
+            }
+
+            try {
+                $completedAt = Carbon::parse($row->completed_time, self::REPORT_TIMEZONE);
+            } catch (Throwable $exception) {
+                return false;
+            }
+
+            return $completedAt->gt($dueAt);
+        })->count();
+    }
+
+    private function isDueInPastForProject(?string $value, Project $project): bool
+    {
+        $dueAt = $this->parseProjectDueIn($value, $project);
+
+        return $dueAt !== null && $dueAt->lt(now(self::REPORT_TIMEZONE));
+    }
+
+    private function parseProjectDueIn(?string $value, Project $project): ?Carbon
     {
         if (empty($value)) {
-            return false;
+            return null;
         }
 
         try {
-            return Carbon::parse($value, self::REPORT_TIMEZONE)->lt($before);
+            $offsetHours = $this->dueInOffsetHours($project);
+            if ($offsetHours !== 0) {
+                return Carbon::parse($value, self::REPORT_TIMEZONE)->addHours($offsetHours);
+            }
+
+            return Carbon::parse($value, $this->projectDueTimezone($project))
+                ->setTimezone(self::REPORT_TIMEZONE);
         } catch (Throwable $exception) {
-            return false;
+            return null;
         }
     }
 
-    private function buildProjectThreeOperationsReport(Project $project, string $table, Carbon $date): array
+    private function dueInPastSqlCondition(string $dueExpression, Project $project): string
     {
+        $offsetHours = $this->dueInOffsetHours($project);
+
+        if ($offsetHours !== 0) {
+            return "DATE_ADD({$dueExpression}, INTERVAL {$offsetHours} HOUR) < ?";
+        }
+
+        return "{$dueExpression} < ?";
+    }
+
+    private function projectDueNowString(Project $project): string
+    {
+        if ((int) $project->id === self::VIETNAM_PROJECT_ID) {
+            return now(self::REPORT_TIMEZONE)->format('Y-m-d H:i:s');
+        }
+
+        return now($this->projectDueTimezone($project))->format('Y-m-d H:i:s');
+    }
+
+    private function projectDueTimezone(Project $project): string
+    {
+        if ((int) $project->id === self::VIETNAM_PROJECT_ID) {
+            return self::VIETNAM_PROJECT_TIMEZONE;
+        }
+
+        return $this->resolveProjectTimezone($project->timezone ?? null);
+    }
+
+    private function resolveProjectTimezone(?string $timezone): string
+    {
+        $timezone = trim((string) $timezone);
+
+        if ($timezone === '') {
+            return self::DEFAULT_PROJECT_TIMEZONE;
+        }
+
+        try {
+            new \DateTimeZone($timezone);
+
+            return $timezone;
+        } catch (Throwable $exception) {
+            return self::DEFAULT_PROJECT_TIMEZONE;
+        }
+    }
+
+    private function dueInOffsetHours(Project $project): int
+    {
+        return self::DUE_IN_OFFSETS[(int) $project->id] ?? 0;
+    }
+
+    private function buildProjectThreeOperationsReport(Project $project, string $table, Carbon $startAt, Carbon $endAt): array
+    {
+        $projectTimezone = $this->projectDueTimezone($project);
+
         return [
             'project_name' => $project->name,
-            'generated_at' => now(self::REPORT_TIMEZONE)->toDateTimeString(),
-            'hourly_done' => $this->buildProjectThreeHourlyDoneReport($table, $date),
-            'last_10_days_pending' => $this->buildProjectThreePendingDateReport($table, $date),
-            'previous_pending_summary' => $this->buildProjectThreePreviousPendingSummary($table, $date),
+            'generated_at' => now($projectTimezone)->toDateTimeString(),
+            'hourly_done' => $this->buildProjectThreeHourlyDoneReport($table, $projectTimezone, $startAt),
+            'last_10_days_pending' => $this->buildProjectThreePendingDateReport($project, $table, $projectTimezone, $endAt),
+            'previous_pending_summary' => $this->buildProjectThreePreviousPendingSummary($project, $table, $projectTimezone, $startAt),
         ];
     }
 
-    private function buildProjectThreeHourlyDoneReport(string $table, Carbon $date): array
+    private function buildProjectThreeHourlyDoneReport(string $table, string $projectTimezone, Carbon $date): array
     {
         $completionExpression = $this->completionTimestampExpression($table);
         if ($completionExpression === null) {
             return [];
         }
 
-        $rangeStart = $date->copy()->startOfDay();
-        $rangeEnd = $date->copy()->addDay()->startOfDay();
+        $reportDate = Carbon::parse($date->format('Y-m-d H:i:s'), $projectTimezone);
+        $rangeStart = $reportDate->copy()->startOfDay();
+        $rangeEnd = $reportDate->copy()->addDay()->startOfDay();
         $rows = DB::table("{$table} as orders")
             ->whereNotNull(DB::raw($completionExpression))
             ->whereBetween(DB::raw($completionExpression), [
@@ -847,9 +951,9 @@ class TimeWiseCountController extends Controller
         $slots = [];
         for ($slotStart = $rangeStart->copy(); $slotStart->lt($rangeEnd); $slotStart->addHours(2)) {
             $slotEnd = $slotStart->copy()->addHours(2);
-            $doneCount = $rows->filter(function ($row) use ($slotStart, $slotEnd) {
+            $doneCount = $rows->filter(function ($row) use ($slotStart, $slotEnd, $projectTimezone) {
                 try {
-                    $completedAt = Carbon::parse($row->completed_time, self::REPORT_TIMEZONE);
+                    $completedAt = Carbon::parse($row->completed_time, $projectTimezone);
                 } catch (Throwable $exception) {
                     return false;
                 }
@@ -868,16 +972,17 @@ class TimeWiseCountController extends Controller
         return $slots;
     }
 
-    private function buildProjectThreePendingDateReport(string $table, Carbon $date): array
+    private function buildProjectThreePendingDateReport(Project $project, string $table, string $projectTimezone, Carbon $date): array
     {
         if (!Schema::hasColumn($table, 'received_at')) {
             return [];
         }
 
-        $rangeStart = $date->copy()->subDays(10)->startOfDay();
-        $rangeEnd = $date->copy()->endOfDay();
+        $reportDate = Carbon::parse($date->format('Y-m-d H:i:s'), $projectTimezone);
+        $rangeStart = $reportDate->copy()->subDays(10)->startOfDay();
+        $rangeEnd = $reportDate->copy()->endOfDay();
         $hasDueIn = Schema::hasColumn($table, 'due_in');
-        $now = now(self::REPORT_TIMEZONE)->toDateTimeString();
+        $projectDueNow = $this->projectDueNowString($project);
 
         $query = DB::table($table)
             ->whereBetween('received_at', [
@@ -893,9 +998,10 @@ class TimeWiseCountController extends Controller
             );
 
         if ($hasDueIn) {
+            $dueInPastCondition = $this->dueInPastSqlCondition('due_in', $project);
             $query->selectRaw(
-                "SUM(CASE WHEN workflow_state NOT IN ('PENDING_BY_DRAWER', 'REJECTED_BY_CHECK', 'REJECTED BY CHECK', 'COMPLETED', 'DELIVERED', 'CANCELLED') AND due_in IS NOT NULL AND due_in < ? THEN 1 ELSE 0 END) as delayed_count",
-                [$now]
+                "SUM(CASE WHEN workflow_state NOT IN ('PENDING_BY_DRAWER', 'REJECTED_BY_CHECK', 'REJECTED BY CHECK', 'COMPLETED', 'DELIVERED', 'CANCELLED') AND due_in IS NOT NULL AND {$dueInPastCondition} THEN 1 ELSE 0 END) as delayed_count",
+                [$projectDueNow]
             );
         } else {
             $query->selectRaw('0 as delayed_count');
@@ -906,8 +1012,8 @@ class TimeWiseCountController extends Controller
             ->orderBy('received_date')
             ->get()
             ->filter(fn ($row) => (int) $row->pending_count > 0)
-            ->map(function ($row) {
-                $receivedDate = Carbon::parse($row->received_date, self::REPORT_TIMEZONE);
+            ->map(function ($row) use ($projectTimezone) {
+                $receivedDate = Carbon::parse($row->received_date, $projectTimezone);
 
                 return [
                     'date' => $receivedDate->toDateString(),
@@ -922,7 +1028,7 @@ class TimeWiseCountController extends Controller
             ->all();
     }
 
-    private function buildProjectThreePreviousPendingSummary(string $table, Carbon $date): array
+    private function buildProjectThreePreviousPendingSummary(Project $project, string $table, string $projectTimezone, Carbon $startAt): array
     {
         if (!Schema::hasColumn($table, 'received_at')) {
             return [
@@ -935,9 +1041,10 @@ class TimeWiseCountController extends Controller
             ];
         }
 
-        $previousDate = $date->copy()->subDay();
+        $baseDate = Carbon::parse($startAt->format('Y-m-d H:i:s'), $projectTimezone);
+        $previousDate = $baseDate->copy()->subDay();
         $hasDueIn = Schema::hasColumn($table, 'due_in');
-        $now = now(self::REPORT_TIMEZONE)->toDateTimeString();
+        $projectDueNow = $this->projectDueNowString($project);
         $query = DB::table($table)
             ->whereBetween('received_at', [
                 $previousDate->copy()->startOfDay()->toDateTimeString(),
@@ -952,9 +1059,10 @@ class TimeWiseCountController extends Controller
             );
 
         if ($hasDueIn) {
+            $dueInPastCondition = $this->dueInPastSqlCondition('due_in', $project);
             $query->selectRaw(
-                "SUM(CASE WHEN workflow_state NOT IN ('PENDING_BY_DRAWER', 'REJECTED_BY_CHECK', 'REJECTED BY CHECK', 'COMPLETED', 'DELIVERED', 'CANCELLED') AND due_in IS NOT NULL AND due_in < ? THEN 1 ELSE 0 END) as delayed_orders",
-                [$now]
+                "SUM(CASE WHEN workflow_state NOT IN ('PENDING_BY_DRAWER', 'REJECTED_BY_CHECK', 'REJECTED BY CHECK', 'COMPLETED', 'DELIVERED', 'CANCELLED') AND due_in IS NOT NULL AND {$dueInPastCondition} THEN 1 ELSE 0 END) as delayed_orders",
+                [$projectDueNow]
             );
         } else {
             $query->selectRaw('0 as delayed_orders');

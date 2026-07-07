@@ -20,7 +20,7 @@ class ImportFocalCrmJobs extends Command
      *
      * @var string
      */
-    protected $description = 'Import PropertyVision jobs from FocalCRM API (Project 1)';
+    protected $description = 'Import all jobs from FocalCRM API (Project 1)';
 
     /**
      * Execute the console command.
@@ -61,8 +61,8 @@ class ImportFocalCrmJobs extends Command
             }
 
             // Step 2: Import
-            $this->info('Step 2: Importing PropertyVision jobs...');
-            $result = $service->import();
+            $this->info('Step 2: Importing all FocalCRM jobs...');
+            $result = $service->import($allJobs);
 
             if ($result['success']) {
                 $this->info('✓ Import completed successfully!');
