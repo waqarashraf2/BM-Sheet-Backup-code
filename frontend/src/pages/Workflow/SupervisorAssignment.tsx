@@ -1065,8 +1065,12 @@ export default function SupervisorAssignment() {
 
   const bulkRoleOptions = useMemo<Array<{ value: BulkAssignmentRole; label: string }>>(() => {
     const options: Array<{ value: BulkAssignmentRole; label: string }> = isPhotoEnhancementQueue
-      ? [{ value: 'designer', label: 'Designer' }]
+      ? [{ value: 'designer', label: 'Designer' }, { value: 'qa', label: 'QA' }]
       : [{ value: 'drawer', label: 'Drawer' }];
+
+    if (isPhotoEnhancementQueue) {
+      return options;
+    }
 
     options.push({ value: 'checker', label: 'Checker' });
 
@@ -1078,6 +1082,69 @@ export default function SupervisorAssignment() {
 
     return options;
   }, [hasFillerColumn, isPhotoEnhancementQueue, workers.file_uploader, workers.filler]);
+
+  const isBulkDoneValue = useCallback((value: unknown) => {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return normalized === 'yes'
+      || normalized === '1'
+      || normalized === 'true'
+      || normalized === 'done'
+      || normalized === 'ok';
+  }, []);
+
+  const isDesignerDoneForBulk = useCallback((order: AssignmentOrder) => {
+    const state = String(order.workflow_state || '').toUpperCase();
+    return isBulkDoneValue(order.drawer_done)
+      || state.includes('QUEUED_QA')
+      || state.includes('IN_QA')
+      || state.includes('APPROVED_QA')
+      || state.includes('DELIVER')
+      || state.includes('COMPLETE');
+  }, [isBulkDoneValue]);
+
+  const isDrawerDoneForBulk = useCallback((order: AssignmentOrder) => {
+    const state = String(order.workflow_state || '').toUpperCase();
+    return isBulkDoneValue(order.drawer_done)
+      || state.includes('QUEUED_CHECK')
+      || state.includes('IN_CHECK')
+      || state.includes('SUBMITTED_CHECK')
+      || state.includes('QUEUED_FILLER')
+      || state.includes('IN_FILLER')
+      || state.includes('SUBMITTED_FILLER')
+      || state.includes('QUEUED_QA')
+      || state.includes('IN_QA')
+      || state.includes('APPROVED_QA')
+      || state.includes('DELIVER')
+      || state.includes('COMPLETE');
+  }, [isBulkDoneValue]);
+
+  const isCheckerDoneForBulk = useCallback((order: AssignmentOrder) => {
+    const state = String(order.workflow_state || '').toUpperCase();
+    return isBulkDoneValue(order.checker_done)
+      || state.includes('QUEUED_FILLER')
+      || state.includes('IN_FILLER')
+      || state.includes('SUBMITTED_FILLER')
+      || state.includes('QUEUED_QA')
+      || state.includes('IN_QA')
+      || state.includes('APPROVED_QA')
+      || state.includes('DELIVER')
+      || state.includes('COMPLETE');
+  }, [isBulkDoneValue]);
+
+  const isFillerDoneForBulk = useCallback((order: AssignmentOrder) => {
+    const state = String(order.workflow_state || '').toUpperCase();
+    const fileUploaded = (order as any).file_uploaded
+      ?? ((order.metadata || {}) as Record<string, unknown>).file_uploaded
+      ?? order.final_upload;
+
+    return isBulkDoneValue(fileUploaded)
+      || state.includes('SUBMITTED_FILLER')
+      || state.includes('QUEUED_QA')
+      || state.includes('IN_QA')
+      || state.includes('APPROVED_QA')
+      || state.includes('DELIVER')
+      || state.includes('COMPLETE');
+  }, [isBulkDoneValue]);
 
   const isBulkAssignableOrder = useCallback((order: AssignmentOrder, role: BulkAssignmentRole) => {
     const roleForChecks = role === 'designer' ? 'drawer' : role;
@@ -1103,8 +1170,35 @@ export default function SupervisorAssignment() {
       return false;
     }
 
+    if (isPhotoEnhancementQueue) {
+      return role === 'designer' || (role === 'qa' && isDesignerDoneForBulk(order));
+    }
+
+    if (role === 'checker' && !isDrawerDoneForBulk(order)) {
+      return false;
+    }
+
+    if (role === 'filler' && !isCheckerDoneForBulk(order)) {
+      return false;
+    }
+
+    if (role === 'qa') {
+      return order.project_id === 12
+        ? isFillerDoneForBulk(order)
+        : isCheckerDoneForBulk(order);
+    }
+
     return true;
-  }, [canReassignDoneOrders, hasAssigneeForRole, isOrderDoneForReassignmentRestriction, isPhotoEnhancementQueue]);
+  }, [
+    canReassignDoneOrders,
+    hasAssigneeForRole,
+    isCheckerDoneForBulk,
+    isDesignerDoneForBulk,
+    isDrawerDoneForBulk,
+    isFillerDoneForBulk,
+    isOrderDoneForReassignmentRestriction,
+    isPhotoEnhancementQueue,
+  ]);
 
   const bulkWorkers = useMemo(() => {
     const list = bulkRole === 'filler'
