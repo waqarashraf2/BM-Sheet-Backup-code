@@ -119,6 +119,7 @@ export default function SupervisorAssignment() {
     width?: string;
     role: 'drawer' | 'checker' | 'filler' | 'qa';
   };
+  type BulkAssignmentRole = 'drawer' | 'designer' | 'checker' | 'filler' | 'qa';
 
   /* Project time clock */
   const [projectTz, setProjectTz] = useState(DEFAULT_PROJECT_TIMEZONE);
@@ -1039,13 +1040,13 @@ export default function SupervisorAssignment() {
   const [assignSearch, setAssignSearch] = useState('');
   const [assigning, setAssigning] = useState(false);
   const [bulkMode, setBulkMode] = useState(false);
-  const [bulkRole, setBulkRole] = useState<'designer' | 'qa'>(isPhotoEnhancementQueue ? 'designer' : 'qa');
+  const [bulkRole, setBulkRole] = useState<BulkAssignmentRole>(isPhotoEnhancementQueue ? 'designer' : 'drawer');
   const [bulkUserId, setBulkUserId] = useState('');
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<Set<string>>(new Set());
   const [bulkAssigning, setBulkAssigning] = useState(false);
 
   useEffect(() => {
-    setBulkRole(isPhotoEnhancementQueue ? 'designer' : 'qa');
+    setBulkRole(isPhotoEnhancementQueue ? 'designer' : 'drawer');
     setBulkUserId('');
     setBulkSelectedKeys(new Set());
   }, [isPhotoEnhancementQueue, selectedQueue]);
@@ -1054,18 +1055,61 @@ export default function SupervisorAssignment() {
     `${order.project_id}:${order.id}`
   ), []);
 
-  const isBulkAssignableOrder = useCallback((order: AssignmentOrder, role: 'designer' | 'qa') => {
-    const state = String(order.workflow_state || '').toUpperCase();
+  const getBulkRoleLabel = useCallback((role: BulkAssignmentRole) => {
+    if (role === 'designer') return 'Designer';
+    if (role === 'qa') return 'QA';
+    if (role === 'filler') return 'Filler';
+    if (role === 'checker') return 'Checker';
+    return 'Drawer';
+  }, []);
 
-    if (role === 'designer') {
-      return isPhotoEnhancementQueue && (state === 'QUEUED_DESIGN' || state === 'RECEIVED');
+  const bulkRoleOptions = useMemo<Array<{ value: BulkAssignmentRole; label: string }>>(() => {
+    const options: Array<{ value: BulkAssignmentRole; label: string }> = isPhotoEnhancementQueue
+      ? [{ value: 'designer', label: 'Designer' }]
+      : [{ value: 'drawer', label: 'Drawer' }];
+
+    options.push({ value: 'checker', label: 'Checker' });
+
+    if (hasFillerColumn() || workers.filler || workers.file_uploader) {
+      options.push({ value: 'filler', label: 'Filler' });
     }
 
-    return state === 'QUEUED_QA';
-  }, [isPhotoEnhancementQueue]);
+    options.push({ value: 'qa', label: 'QA' });
+
+    return options;
+  }, [hasFillerColumn, isPhotoEnhancementQueue, workers.file_uploader, workers.filler]);
+
+  const isBulkAssignableOrder = useCallback((order: AssignmentOrder, role: BulkAssignmentRole) => {
+    const roleForChecks = role === 'designer' ? 'drawer' : role;
+    const hasAssignee = hasAssigneeForRole(order, roleForChecks);
+
+    if (hasAssignee && !canReassignDoneOrders) {
+      return false;
+    }
+
+    if (!canReassignDoneOrders && isOrderDoneForReassignmentRestriction(order) && hasAssignee) {
+      return false;
+    }
+
+    if (role === 'designer' && !isPhotoEnhancementQueue) {
+      return false;
+    }
+
+    if (role === 'drawer' && isPhotoEnhancementQueue) {
+      return false;
+    }
+
+    if (role === 'filler' && order.project_id !== 12) {
+      return false;
+    }
+
+    return true;
+  }, [canReassignDoneOrders, hasAssigneeForRole, isOrderDoneForReassignmentRestriction, isPhotoEnhancementQueue]);
 
   const bulkWorkers = useMemo(() => {
-    const list = workers[bulkRole] || [];
+    const list = bulkRole === 'filler'
+      ? (workers.filler || workers.file_uploader || [])
+      : (workers[bulkRole] || []);
     return list.filter((worker) => worker.is_active !== false && !worker.is_absent);
   }, [bulkRole, workers]);
   const bulkAssignableOrders = useMemo(
@@ -1073,8 +1117,8 @@ export default function SupervisorAssignment() {
     [bulkRole, isBulkAssignableOrder, sortedOrders]
   );
   const selectedBulkOrders = useMemo(
-    () => sortedOrders.filter((order) => bulkSelectedKeys.has(getBulkOrderKey(order))),
-    [bulkSelectedKeys, getBulkOrderKey, sortedOrders]
+    () => sortedOrders.filter((order) => bulkSelectedKeys.has(getBulkOrderKey(order)) && isBulkAssignableOrder(order, bulkRole)),
+    [bulkRole, bulkSelectedKeys, getBulkOrderKey, isBulkAssignableOrder, sortedOrders]
   );
   const allBulkVisibleSelected = bulkAssignableOrders.length > 0
     && bulkAssignableOrders.every((order) => bulkSelectedKeys.has(getBulkOrderKey(order)));
@@ -3562,15 +3606,18 @@ export default function SupervisorAssignment() {
                   <select
                     value={bulkRole}
                     onChange={(event) => {
-                      setBulkRole(event.target.value as 'designer' | 'qa');
+                      setBulkRole(event.target.value as BulkAssignmentRole);
                       setBulkUserId('');
                       setBulkSelectedKeys(new Set());
                     }}
                     className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                     aria-label="Bulk assignment role"
                   >
-                    <option value="qa">QA</option>
-                    {isPhotoEnhancementQueue && <option value="designer">Designer</option>}
+                    {bulkRoleOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
 
                   <select
@@ -3579,7 +3626,7 @@ export default function SupervisorAssignment() {
                     className="h-9 min-w-[180px] rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                     aria-label="Bulk assignment worker"
                   >
-                    <option value="">Select {bulkRole === 'designer' ? 'Designer' : 'QA'}</option>
+                    <option value="">Select {getBulkRoleLabel(bulkRole)}</option>
                     {bulkWorkers.map((worker) => (
                       <option key={worker.id} value={worker.id}>
                         #{worker.id} - {worker.name}

@@ -54,7 +54,8 @@ const BROWSER_PREVIEW_EXTENSIONS = [
     '.tiff',
     '.svg',
 ];
-const ZIP_CHUNK_SIZE = 150;
+const DEFAULT_ZIP_CHUNK_SIZE = 150;
+const LARGE_RAW_PROJECT_ZIP_CHUNK_SIZE = 5;
 const ORDER_INFO_FIELD_ALIASES: Record<string, string[]> = {
     order_number: ['order_number'],
     client_name: ['client_name'],
@@ -88,6 +89,18 @@ function downloadBlob(blob: Blob, fileName: string) {
     anchor.click();
     anchor.remove();
     window.URL.revokeObjectURL(blobUrl);
+}
+
+function downloadDirectLink(url: string, fileName: string) {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.download = fileName;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
 }
 
 function fileNameFromDisposition(disposition: unknown): string | null {
@@ -225,6 +238,11 @@ export default function OrderAssetLinks() {
     };
 
     const downloadFile = async (url: string, name: string) => {
+        if (Number(projectIdFromQuery) === 26 || !canPreviewInBrowser(name, url)) {
+            downloadDirectLink(url, name || 'image');
+            return;
+        }
+
         try {
             const response = await fetch(url, { mode: 'cors' });
             if (!response.ok) {
@@ -261,15 +279,7 @@ export default function OrderAssetLinks() {
 
         for (let index = 0; index < imageLinks.length; index += 1) {
             const link = imageLinks[index];
-            const anchor = document.createElement('a');
-            anchor.href = link.url;
-            anchor.target = '_blank';
-            anchor.rel = 'noopener noreferrer';
-            anchor.download = zipSafeFileName(link.name, `image-${index + 1}`);
-            anchor.style.display = 'none';
-            document.body.appendChild(anchor);
-            anchor.click();
-            anchor.remove();
+            downloadDirectLink(link.url, zipSafeFileName(link.name, `image-${index + 1}`));
 
             const completed = index + 1;
             setZipDownload({
@@ -300,7 +310,10 @@ export default function OrderAssetLinks() {
         const requestedProjectId = Number.isFinite(parsedProjectId) && parsedProjectId > 0
             ? parsedProjectId
             : undefined;
-        const totalChunks = Math.ceil(imageLinks.length / ZIP_CHUNK_SIZE);
+        const zipChunkSize = requestedProjectId === 26
+            ? LARGE_RAW_PROJECT_ZIP_CHUNK_SIZE
+            : DEFAULT_ZIP_CHUNK_SIZE;
+        const totalChunks = Math.ceil(imageLinks.length / zipChunkSize);
         const zipBaseName = zipSafeFileName(orderNumberFromQuery || displayOrder || jobOrderId || 'order-images', 'order-images');
 
         setZipDownload({
@@ -316,7 +329,7 @@ export default function OrderAssetLinks() {
 
         try {
             for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
-                const offset = chunkIndex * ZIP_CHUNK_SIZE;
+                const offset = chunkIndex * zipChunkSize;
                 const chunkStartPercent = Math.round((offset / imageLinks.length) * 100);
 
                 setZipDownload({
@@ -335,12 +348,12 @@ export default function OrderAssetLinks() {
                     {
                         projectId: requestedProjectId,
                         offset,
-                        limit: ZIP_CHUNK_SIZE,
+                        limit: zipChunkSize,
                         displayOrder: zipBaseName,
                     },
                     (downloadPercent) => {
                         const weightedPercent = Math.round(
-                            ((offset + ((downloadPercent / 100) * Math.min(ZIP_CHUNK_SIZE, imageLinks.length - offset))) / imageLinks.length) * 100
+                            ((offset + ((downloadPercent / 100) * Math.min(zipChunkSize, imageLinks.length - offset))) / imageLinks.length) * 100
                         );
 
                         setZipDownload({
@@ -356,7 +369,7 @@ export default function OrderAssetLinks() {
                     },
                 );
 
-                const completed = Math.min(offset + ZIP_CHUNK_SIZE, imageLinks.length);
+                const completed = Math.min(offset + zipChunkSize, imageLinks.length);
                 const headerName = fileNameFromDisposition(response.headers['content-disposition']);
                 const fallbackName = totalChunks > 1
                     ? `${zipBaseName}-images-part-${chunkIndex + 1}.zip`

@@ -371,7 +371,7 @@ export const workflowService = {
       ...(options?.qc_portal_account_id ? { qc_portal_account_id: options.qc_portal_account_id } : {}),
     }),
 
-  bulkAssignRole: (role: 'designer' | 'qa', userId: number, orders: Array<{ id: number; project_id: number }>) =>
+  bulkAssignRole: (role: 'drawer' | 'designer' | 'checker' | 'filler' | 'qa', userId: number, orders: Array<{ id: number; project_id: number }>) =>
     api.post<{
       message: string;
       assigned_count: number;

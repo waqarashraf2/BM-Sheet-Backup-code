@@ -17,6 +17,7 @@ class OrderAssetZipDownloadController extends Controller
 {
     private const DEFAULT_LIMIT = 150;
     private const MAX_LIMIT = 200;
+    private const DOWNLOAD_TIMEOUT_SECONDS = 1800;
 
     public function __invoke(Request $request, string $jobOrderId)
     {
@@ -88,7 +89,7 @@ class OrderAssetZipDownloadController extends Controller
             $tmpFile = storage_path('app/tmp/' . Str::uuid() . '.asset');
 
             try {
-                $response = Http::timeout(300)
+                $response = Http::timeout(self::DOWNLOAD_TIMEOUT_SECONDS)
                     ->connectTimeout(30)
                     ->retry(1, 500)
                     ->sink($tmpFile)
@@ -185,7 +186,11 @@ class OrderAssetZipDownloadController extends Controller
     {
         $value = strtolower($name . ' ' . $url);
 
-        foreach (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.svg'] as $extension) {
+        foreach ([
+            '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tif', '.tiff', '.svg',
+            '.nef', '.cr2', '.cr3', '.arw', '.dng', '.raf', '.rw2', '.orf', '.srw',
+            '.heic', '.heif', '.avif',
+        ] as $extension) {
             if (str_contains($value, $extension)) {
                 return true;
             }
