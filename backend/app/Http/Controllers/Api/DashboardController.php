@@ -5220,6 +5220,7 @@ if ($useDueInFirstOrdering) {
             $commentMeta = $assignmentCommentMap[$orderKey] ?? [];
             $order->area = $commentMeta['area'] ?? null;
             $order->total_images = $commentMeta['total_images'] ?? null;
+            $order->edited_images = $commentMeta['edited_images'] ?? null;
             $order->final_images = $commentMeta['final_images'] ?? null;
             if ((int) $order->project_id === 50) {
                 foreach ($this->project50ReportCountKeys() as $project50Key) {
@@ -5927,18 +5928,20 @@ if ($useDueInFirstOrdering) {
 
             $area = $this->extractAreaFromAssignmentComment($workItem->comments);
             $totalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Total');
+            $editedImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Edited');
             $finalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Final');
             $project50Counts = (int) $workItem->project_id === 50
                 ? $this->extractProject50ReportCountsFromAssignmentComment($workItem->comments)
                 : [];
 
-            if ($area === null && $totalImages === null && $finalImages === null && empty($project50Counts)) {
+            if ($area === null && $totalImages === null && $editedImages === null && $finalImages === null && empty($project50Counts)) {
                 continue;
             }
 
             $commentMap[$key] = array_merge([
                 'area' => $area,
                 'total_images' => $totalImages,
+                'edited_images' => $editedImages,
                 'final_images' => $finalImages,
             ], $project50Counts);
         }

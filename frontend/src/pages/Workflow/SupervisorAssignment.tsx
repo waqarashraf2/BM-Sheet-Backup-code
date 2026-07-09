@@ -1962,6 +1962,7 @@ export default function SupervisorAssignment() {
     if (isPhotoEnhancementQueue) {
       primaryColumns.push(
         { key: 'ph_total_images', label: 'Total Images' },
+        { key: 'ph_edited_images', label: 'Edited Images' },
         { key: 'ph_final_images', label: 'Final Images' },
       );
     } else {
@@ -2184,12 +2185,16 @@ export default function SupervisorAssignment() {
     const total = getOrderFieldValue('total_raw_files', 'total_images', 'totalImages')
       || getValue('total_images', 'totalImages')
       || extractFromInstruction(/Total\s*:\s*(\d+)/i);
+    const edited = getOrderFieldValue('edited_images_count', 'edited_images', 'editedImages')
+      || getValue('edited_images_count', 'edited_images', 'editedImages')
+      || extractFromInstruction(/Edited\s*:\s*(\d+)/i);
     const final = getOrderFieldValue('final_images_count', 'final_images', 'finalImages')
       || getValue('final_images', 'finalImages')
       || extractFromInstruction(/Final\s*:\s*(\d+)/i);
 
     return {
       total: total || '-',
+      edited: edited || '-',
       final: final || '-',
     };
   }, [getOrderInstructionValue]);
@@ -2270,6 +2275,8 @@ export default function SupervisorAssignment() {
         return getAreaExportParts(order).meter;
       case 'ph_total_images':
         return getPhotoEnhancementExportParts(order).total;
+      case 'ph_edited_images':
+        return getPhotoEnhancementExportParts(order).edited;
       case 'ph_final_images':
         return getPhotoEnhancementExportParts(order).final;
       default: {
