@@ -542,9 +542,9 @@ class FocalRtvService
         return [
             'order_number' => $focalJobId,
             'project_id' => $this->projectId,
-            'client_portal_id' => $focalJobId,
+            'client_reference' => $focalJobId,
             'clint_order_number' => $focalJobId,
-            'client_reference' => isset($job['ExternalJobId']) ? (string) $job['ExternalJobId'] : null,
+            'client_portal_id' => isset($job['ExternalJobId']) ? (string) $job['ExternalJobId'] : null,
             'address' => $property['Address'] ?? null,
             'plan_type' => $job['Product'] ?? 'Photography',
             'order_type' => 'photo',

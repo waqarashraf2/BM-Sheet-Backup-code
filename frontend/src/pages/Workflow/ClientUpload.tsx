@@ -10,6 +10,7 @@ import type { RootState } from '../../store/store';
 
 type UploadOrderInfo = {
     jobOrderId: string;
+    clientPortalId: string;
     projectId: string;
     orderNumber: string;
     displayOrder: string;
@@ -25,9 +26,10 @@ function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
     const raw = (order || {}) as Order & Record<string, unknown>;
     const metadata = (raw.metadata || {}) as Record<string, unknown>;
     const clientReference = String(raw.client_reference || metadata.client_reference || '').trim();
+    const clientPortalId = String(raw.client_portal_id || metadata.client_portal_id || '').trim();
     const jobOrderId = String(
         clientReference
-        || raw.client_portal_id
+        || clientPortalId
         || raw.client_order_number
         || raw.clint_order_number
         || raw.client_order_no
@@ -51,6 +53,7 @@ function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
 
     return {
         jobOrderId,
+        clientPortalId,
         projectId: raw.project_id ? String(raw.project_id) : '',
         orderNumber,
         displayOrder: jobOrderId || orderNumber,
@@ -169,6 +172,10 @@ export default function ClientUpload() {
             || ''
         ).trim(),
         [orderInfo, queryCustomerParentCompany, status]
+    );
+    const displayClientPortalId = useMemo(
+        () => String(status?.client_portal_id || orderInfo?.clientPortalId || '').trim(),
+        [orderInfo, status]
     );
     const canUpload = !!orderLookup && status?.can_upload !== false;
     const canSubmitRole = ['operations_manager', 'project_manager', 'qa'].includes(user?.role || '');
@@ -332,6 +339,7 @@ export default function ClientUpload() {
                                 <div>Internal Order ID #{status.order_id || numericOrderId}</div>
                                 <div>Client Name: {displayClientName || 'Not available'}</div>
                                 <div>Customer Parent Company: {displayCustomerParentCompany || 'Not available'}</div>
+                                <div>Client Portal ID: {displayClientPortalId || 'Not available'}</div>
                                 <div>Upload Order Reference: {orderLookup || 'Not available'}</div>
                                 <div>Client Portal Job ID: {status.client_portal_job_id || status.order_number || queryOrderNumber || 'Not available'}</div>
                             </div>

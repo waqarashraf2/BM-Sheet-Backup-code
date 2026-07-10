@@ -81,6 +81,7 @@ class FocalClientPortalUploadService
             'order_id' => (int) $order->id,
             'project_id' => (int) $order->project_id,
             'job_order_id' => $jobOrderId !== '' ? $jobOrderId : null,
+            'client_portal_id' => $order->client_portal_id ?: null,
             'client_portal_job_id' => $clientPortalJobId !== '' ? $clientPortalJobId : null,
             'order_number' => $order->order_number,
             'client_name' => $order->client_name,
