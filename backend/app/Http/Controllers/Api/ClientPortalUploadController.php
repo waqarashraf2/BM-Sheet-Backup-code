@@ -27,7 +27,7 @@ class ClientPortalUploadController extends Controller
 
         $data = $request->validate([
             'status' => 'nullable|string|in:InProgress,Failed',
-            'project_id' => 'nullable|integer|in:22,23,25',
+            'project_id' => 'nullable|integer|in:22,23,25,26',
         ]);
 
         return response()->json($this->service->inProgressOrdersForUser(
@@ -128,7 +128,7 @@ class ClientPortalUploadController extends Controller
             default => [],
         };
 
-        $enabledProjectIds = [22, 23, 25];
+        $enabledProjectIds = [22, 23, 25, 26];
         $allowedProjectIds = array_values(array_intersect($allowedProjectIds, $enabledProjectIds));
         abort_unless(!empty($allowedProjectIds), 403, 'Client portal upload is not enabled for your projects.');
 

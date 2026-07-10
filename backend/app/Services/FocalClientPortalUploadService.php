@@ -16,7 +16,7 @@ use Illuminate\Validation\ValidationException;
 
 class FocalClientPortalUploadService
 {
-    private const DEFAULT_ENABLED_PROJECT_IDS = [22, 23, 25];
+    private const DEFAULT_ENABLED_PROJECT_IDS = [22, 23, 25, 26];
     private const IN_PROGRESS_PRODUCTS = [
         'photography',
         'drone photography',

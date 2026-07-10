@@ -18,11 +18,11 @@ class FocalRtvService
     protected int $projectId = 26;
     protected string $tableName = 'project_26_orders';
     protected string $imagesTable = 'job_detail_26_images';
+    protected bool $imagesTableStorageChecked = false;
     protected string $timezone = 'Europe/London';
 
     public function __construct()
     {
-        
         $this->apiUrl = (string) env('FOCAL_RTV_API_URL', 'https://api.focalagent.com/fesp-int/v3/jobs');
         $this->clientSecret = (string) env('FOCAL_RTV_CLIENT_SECRET', 'Str0ngP@ss!987');
         $this->subscriptionKey = (string) env('FOCAL_RTV_SUBSCRIPTION_KEY', 'c7e961fc3a1c4b5d84bb26195f768780');
@@ -37,6 +37,7 @@ class FocalRtvService
             if (empty($jobs)) {
                 $result = $this->emptyResult('No jobs returned from API');
                 $result['image_backfill_checked'] = $this->backfillMissingImagesForExistingOrders(50);
+                $result['success'] = true;
                 return $result;
             }
 
@@ -44,6 +45,7 @@ class FocalRtvService
             if (empty($filteredJobs)) {
                 $result = $this->emptyResult('No Photography jobs found');
                 $result['image_backfill_checked'] = $this->backfillMissingImagesForExistingOrders(50);
+                $result['success'] = true;
                 return $result;
             }
 
@@ -137,15 +139,38 @@ class FocalRtvService
     protected function ensureImagesTableExists(): void
     {
         if (Schema::hasTable($this->imagesTable)) {
+            $this->ensureImagesTableCanStoreLongLinks();
             return;
         }
 
         Schema::create($this->imagesTable, function ($table) {
             $table->increments('id');
-            $table->string('images_url', 500)->nullable();
-            $table->string('file_name', 500)->nullable();
+            $table->longText('images_url')->nullable();
+            $table->longText('file_name')->nullable();
             $table->string('job_order_id', 500)->nullable()->index();
         });
+
+        $this->imagesTableStorageChecked = true;
+    }
+
+    protected function ensureImagesTableCanStoreLongLinks(): void
+    {
+        if ($this->imagesTableStorageChecked) {
+            return;
+        }
+
+        try {
+            DB::statement("ALTER TABLE {$this->imagesTable} MODIFY images_url LONGTEXT NULL");
+            DB::statement("ALTER TABLE {$this->imagesTable} MODIFY file_name LONGTEXT NULL");
+            $this->imagesTableStorageChecked = true;
+        } catch (Exception $e) {
+            $this->imagesTableStorageChecked = true;
+
+            Log::warning('Unable to widen Focal RTV image link columns', [
+                'table' => $this->imagesTable,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     protected function filterPhotographyJobs(array $jobs): array
@@ -518,7 +543,7 @@ class FocalRtvService
             'order_number' => $focalJobId,
             'project_id' => $this->projectId,
             'client_portal_id' => $focalJobId,
-            'clint_order_number' => isset($job['ExternalJobId']) ? (string) $job['ExternalJobId'] : null,
+            'clint_order_number' => $focalJobId,
             'client_reference' => isset($job['ExternalJobId']) ? (string) $job['ExternalJobId'] : null,
             'address' => $property['Address'] ?? null,
             'plan_type' => $job['Product'] ?? 'Photography',

@@ -27,17 +27,17 @@ class ImportFocalRtvJobs extends Command
             if (empty($allJobs)) {
                 $this->warn('API returned no jobs. Raw response:');
                 $this->line(json_encode($raw, JSON_PRETTY_PRINT));
-                return 1;
-            }
+                $this->warn('Continuing with existing DB order image backfill...');
+            } else {
+                $productCounts = [];
+                foreach ($allJobs as $job) {
+                    $product = $job['Product'] ?? 'NULL';
+                    $productCounts[$product] = ($productCounts[$product] ?? 0) + 1;
+                }
 
-            $productCounts = [];
-            foreach ($allJobs as $job) {
-                $product = $job['Product'] ?? 'NULL';
-                $productCounts[$product] = ($productCounts[$product] ?? 0) + 1;
-            }
-
-            foreach ($productCounts as $product => $count) {
-                $this->line("  -> Product [{$product}]: {$count} jobs");
+                foreach ($productCounts as $product => $count) {
+                    $this->line("  -> Product [{$product}]: {$count} jobs");
+                }
             }
 
             if ($this->option('debug')) {
@@ -57,7 +57,8 @@ class ImportFocalRtvJobs extends Command
                         ['Inserted', $result['inserted']],
                         ['Updated', $result['updated']],
                         ['Skipped', $result['skipped']],
-                        ['Total', $result['total_processed']],
+                        ['Total', $result['total_processed'] ?? 0],
+                        ['Image backfill checked', $result['image_backfill_checked'] ?? 0],
                     ]
                 );
                 return 0;

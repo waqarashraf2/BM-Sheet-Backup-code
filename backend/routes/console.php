@@ -133,9 +133,9 @@ Schedule::command('focalai:import')
 
     
 // Focal RTV - Project 26 (Photography)
-// Schedule::command('focalrtv:import')
-//     ->everyTenMinutes()
-//     ->withoutOverlapping()
-//     ->runInBackground();
+Schedule::command('focalrtv:import')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
 
 

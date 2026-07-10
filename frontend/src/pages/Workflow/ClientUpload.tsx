@@ -18,7 +18,7 @@ type UploadOrderInfo = {
     clientReference: string;
 };
 
-const ORDER_NUMBER_ASSET_PROJECT_IDS = [22, 23, 25];
+const ORDER_NUMBER_ASSET_PROJECT_IDS = [22, 23, 25, 26];
 const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 600 * 1024 * 1024;
 
 function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
