@@ -85,6 +85,11 @@ Schedule::command('app:saphoto-import')
     ->everyTenMinutes()
     ->withoutOverlapping()
     ->runInBackground();
+
+Schedule::command('app:savideo-import')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
     
     Schedule::command('scrape:focalpb2')
     ->everyTenMinutes()
