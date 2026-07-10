@@ -16,6 +16,7 @@ use Illuminate\Validation\ValidationException;
 
 class FocalClientPortalUploadService
 {
+    private const FESP_PROJECT_ID = 26;
     private const DEFAULT_ENABLED_PROJECT_IDS = [22, 23, 25, 26];
     private const IN_PROGRESS_PRODUCTS = [
         'photography',
@@ -54,7 +55,7 @@ class FocalClientPortalUploadService
     {
         return strtoupper((string) $order->workflow_type) === 'PH_2_LAYER'
             && $this->isRequiredForProject((int) $order->project_id)
-            && $this->uploadJobId($order) !== '';
+            && $this->clientPortalJobId($order) !== '';
     }
 
     public function status(Order $order): array
@@ -62,7 +63,7 @@ class FocalClientPortalUploadService
         $required = $this->isRequiredForOrder($order);
         $canUpload = $this->canUploadForOrder($order);
         $jobOrderId = $this->fileReference($order);
-        $clientPortalJobId = $this->uploadJobId($order);
+        $clientPortalJobId = $this->clientPortalJobId($order);
         $customerParentCompany = $this->customerParentCompany($order);
         $upload = $canUpload && Schema::hasTable('client_portal_uploads')
             ? $this->latestUploadForStatus($order)
@@ -107,7 +108,7 @@ class FocalClientPortalUploadService
             ]);
         }
 
-        $jobOrderId = $this->uploadJobId($order);
+        $jobOrderId = $this->clientPortalJobId($order);
         $fileReference = $this->fileReference($order);
         $this->validateRequestedJobOrderId($requestedJobOrderId, $jobOrderId, $fileReference);
         $fileNames = collect($files)
@@ -150,24 +151,28 @@ class FocalClientPortalUploadService
 
         try {
             $lastResponse = null;
-            foreach ($files as $file) {
-                $stream = fopen($file->getRealPath(), 'rb');
-                if ($stream === false) {
-                    throw new \RuntimeException("Unable to read {$file->getClientOriginalName()}.");
-                }
-
-                try {
-                    $lastResponse = $this->client()
-                        ->attach('files', $stream, $file->getClientOriginalName())
-                        ->post($this->uploadUrl($jobOrderId));
-                } finally {
-                    if (is_resource($stream)) {
-                        fclose($stream);
+            if ($projectId === self::FESP_PROJECT_ID) {
+                $lastResponse = $this->uploadFespFinals($jobOrderId, $files);
+            } else {
+                foreach ($files as $file) {
+                    $stream = fopen($file->getRealPath(), 'rb');
+                    if ($stream === false) {
+                        throw new \RuntimeException("Unable to read {$file->getClientOriginalName()}.");
                     }
-                }
 
-                if (!$lastResponse->successful() && !$this->isAlreadyDoneResponse($lastResponse, ['uploaded', 'exists', 'duplicate'])) {
-                    throw new \RuntimeException($this->responseMessage($lastResponse, 'Client portal upload failed.'));
+                    try {
+                        $lastResponse = $this->client()
+                            ->attach('files', $stream, $file->getClientOriginalName())
+                            ->post($this->uploadUrl($jobOrderId));
+                    } finally {
+                        if (is_resource($stream)) {
+                            fclose($stream);
+                        }
+                    }
+
+                    if (!$lastResponse->successful() && !$this->isAlreadyDoneResponse($lastResponse, ['uploaded', 'exists', 'duplicate'])) {
+                        throw new \RuntimeException($this->responseMessage($lastResponse, 'Client portal upload failed.'));
+                    }
                 }
             }
 
@@ -229,7 +234,9 @@ class FocalClientPortalUploadService
         }
 
         try {
-            $response = $this->client()->post($this->submitUrl($record->job_order_id), []);
+            $response = (int) $record->project_id === self::FESP_PROJECT_ID
+                ? $this->fespClient()->send('POST', $this->fespSubmitUrl($record->job_order_id))
+                : $this->client()->post($this->submitUrl($record->job_order_id), []);
             $payload = $response->json();
             $acceptanceStatus = data_get($payload, 'Statuses.AcceptanceStatus');
             $alreadySubmitted = $this->isAlreadyDoneResponse($response, ['submitted', 'completed', 'accepted']);
@@ -272,7 +279,7 @@ class FocalClientPortalUploadService
 
     public function clientPortalJobStatus(Order $order): ?string
     {
-        $jobOrderId = $this->uploadJobId($order);
+        $jobOrderId = $this->clientPortalJobId($order);
         if ($jobOrderId === '') {
             return null;
         }
@@ -331,7 +338,7 @@ class FocalClientPortalUploadService
 
         $localRows = $orders
             ->map(function ($order) use ($jobsById, $status) {
-                $clientPortalJobId = $this->uploadJobId($order);
+                $clientPortalJobId = $this->clientPortalJobId($order);
                 $job = $clientPortalJobId !== '' ? $jobsById->get(strtolower($clientPortalJobId)) : null;
                 $latestUpload = Schema::hasTable('client_portal_uploads')
                     ? $this->latestUploadForStatus($order)
@@ -484,6 +491,19 @@ class FocalClientPortalUploadService
         return trim((string) (DB::table($table)->where('id', $order->id)->value('clint_order_number') ?? ''));
     }
 
+    private function clientPortalJobId(Order $order): string
+    {
+        if ((int) $order->project_id === self::FESP_PROJECT_ID) {
+            return trim((string) (
+                $order->client_portal_id
+                ?: $order->order_number
+                ?: $this->uploadJobId($order)
+            ));
+        }
+
+        return $this->uploadJobId($order);
+    }
+
     private function customerParentCompany(Order $order): ?string
     {
         $value = trim((string) (
@@ -575,6 +595,28 @@ class FocalClientPortalUploadService
                 'Accept' => '*/*',
                 'Supplier-Secret' => (string) config('services.focal_client_portal.supplier_secret'),
                 'Ocp-Apim-Subscription-Key' => (string) config('services.focal_client_portal.subscription_key'),
+            ]);
+    }
+
+    private function fespClient()
+    {
+        if (
+            blank(config('services.focal_client_portal.fesp_client_secret'))
+            || blank(config('services.focal_client_portal.fesp_subscription_key'))
+        ) {
+            throw new \RuntimeException(
+                'Focal FESP credentials are not configured on the server.'
+            );
+        }
+
+        return Http::timeout((int) config('services.focal_client_portal.timeout', 120))
+            ->retry(2, 500)
+            ->withOptions(['verify' => false])
+            ->withHeaders([
+                'Accept' => '*/*',
+                'Content-Type' => 'application/json',
+                'client-secret' => (string) config('services.focal_client_portal.fesp_client_secret'),
+                'Ocp-Apim-Subscription-Key' => (string) config('services.focal_client_portal.fesp_subscription_key'),
             ]);
     }
 
@@ -767,10 +809,77 @@ class FocalClientPortalUploadService
             . '/' . rawurlencode($jobOrderId) . '/assetupload';
     }
 
+    /**
+     * @param array<int, UploadedFile> $files
+     */
+    private function uploadFespFinals(string $jobOrderId, array $files): Response
+    {
+        if (count($files) !== 1) {
+            throw ValidationException::withMessages([
+                'files' => 'Project 26 client portal upload expects one final ZIP file.',
+            ]);
+        }
+
+        $file = reset($files);
+        if (!$file instanceof UploadedFile) {
+            throw ValidationException::withMessages([
+                'files' => 'Select a valid final ZIP file.',
+            ]);
+        }
+        if (strtolower($file->getClientOriginalExtension()) !== 'zip') {
+            throw ValidationException::withMessages([
+                'files' => 'Project 26 client portal upload expects a .zip file.',
+            ]);
+        }
+
+        $uploadUrlResponse = $this->fespClient()->post($this->fespUploadFinalsUrl($jobOrderId));
+        if (!$uploadUrlResponse->successful()) {
+            throw new \RuntimeException($this->responseMessage($uploadUrlResponse, 'FESP upload URL request failed.'));
+        }
+
+        $assetUploadUrl = trim((string) data_get($uploadUrlResponse->json(), 'AssetUploadUrl'));
+        if ($assetUploadUrl === '') {
+            throw new \RuntimeException('FESP upload URL response did not include AssetUploadUrl.');
+        }
+
+        $stream = fopen($file->getRealPath(), 'rb');
+        if ($stream === false) {
+            throw new \RuntimeException("Unable to read {$file->getClientOriginalName()}.");
+        }
+
+        try {
+            $response = Http::timeout((int) config('services.focal_client_portal.timeout', 120))
+                ->withHeaders(['x-ms-blob-type' => 'BlockBlob'])
+                ->send('PUT', $assetUploadUrl, ['body' => $stream]);
+        } finally {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }
+
+        if (!$response->successful()) {
+            throw new \RuntimeException($this->responseMessage($response, 'FESP final file upload failed.'));
+        }
+
+        return $response;
+    }
+
+    private function fespUploadFinalsUrl(string $jobOrderId): string
+    {
+        return rtrim((string) config('services.focal_client_portal.fesp_api_url'), '/')
+            . '/' . rawurlencode(strtolower($jobOrderId)) . '/uploadfinals';
+    }
+
     private function submitUrl(string $jobOrderId): string
     {
         return rtrim((string) config('services.focal_client_portal.api_url'), '/')
             . '/' . rawurlencode($jobOrderId) . '/submit';
+    }
+
+    private function fespSubmitUrl(string $jobOrderId): string
+    {
+        return rtrim((string) config('services.focal_client_portal.fesp_api_url'), '/')
+            . '/' . rawurlencode(strtolower($jobOrderId)) . '/submitjob';
     }
 
     private function responseMessage(Response $response, string $fallback): string
