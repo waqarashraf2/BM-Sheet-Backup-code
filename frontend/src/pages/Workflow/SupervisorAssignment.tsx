@@ -23,6 +23,7 @@ const PROJECT_16_DUE_IN_TIMEZONE = 'Asia/Karachi';
 const DIRECT_CHECKER_ASSIGNMENT_PROJECT_IDS = [3, 16, 42];
 const TEAM_CHECKER_ASSIGNMENT_PROJECT_IDS = [3, 16];
 const QA_WAIT_DURING_FILLER_PROJECT_IDS = [12];
+const ORDER_ASSET_LINK_PROJECT_IDS = [1, 22, 25, 26];
 const PROJECT_50_REPORT_COLUMNS = [
   { key: 'project_50_total_raw_files', label: 'Total RAW Files' },
   { key: 'project_50_total_outputs', label: 'Total Outputs' },
@@ -231,8 +232,8 @@ export default function SupervisorAssignment() {
       && !workflowState.includes('PENDING_BY_DRAWER')
       && !workflowState.includes('REJECTED');
   }, []);
-  const canOpenProjectOneAssetLinks = useCallback((order: AssignmentOrder) => {
-    return Number(order.project_id) === 1 && !!String(order.order_number || '').trim();
+  const canOpenOrderAssetLinks = useCallback((order: AssignmentOrder) => {
+    return ORDER_ASSET_LINK_PROJECT_IDS.includes(Number(order.project_id)) && !!String(order.order_number || '').trim();
   }, []);
   const openCompletedAssetLinks = useCallback((order: AssignmentOrder) => {
     const jobOrderId = String(order.order_number || '').trim();
@@ -4080,7 +4081,7 @@ export default function SupervisorAssignment() {
                                   }`}>
                                   {getStatusLabel(o.workflow_state)}
                                 </span>
-                                {canOpenProjectOneAssetLinks(o) && (
+                                {canOpenOrderAssetLinks(o) && (
                                   <button
                                     type="button"
                                     onClick={(event) => {

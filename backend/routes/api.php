@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProjectController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\ClosingReportController;
 use App\Http\Controllers\Api\TimeWiseCountController;
 use App\Http\Controllers\Api\ManagerOrderAssetLinkController;
 use App\Http\Controllers\Api\AssignmentController;
@@ -202,6 +203,8 @@ Route::prefix('assignments')->group(function () {
         Route::middleware('role:ceo,director,operations_manager')->get('/dashboard/project-stats', [DashboardController::class, 'projectStats']);
     Route::middleware('role:ceo,director,operations_manager')->get('/dashboard/operations', [DashboardController::class, 'operations']);
     Route::middleware('role:project_manager')->get('/dashboard/project-manager', [DashboardController::class, 'projectManager']);
+    Route::middleware('role:operations_manager,project_manager')->get('/dashboard/closing-report', [ClosingReportController::class, 'index']);
+    Route::middleware('role:operations_manager,project_manager')->put('/dashboard/closing-report/remarks', [ClosingReportController::class, 'saveRemark']);
     Route::middleware('role:operations_manager,project_manager')->get('/dashboard/time-wise-counts', [TimeWiseCountController::class, 'index']);
     Route::middleware('role:operations_manager,project_manager')->get('/dashboard/order-asset-links', [ManagerOrderAssetLinkController::class, 'index']);
     Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa')->get('/dashboard/queues', [DashboardController::class, 'queues']);

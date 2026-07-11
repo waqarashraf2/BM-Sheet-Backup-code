@@ -875,6 +875,42 @@ export interface TimeWiseCountData {
   };
 }
 
+export interface ClosingReportProjectRow {
+  project_id: number;
+  project_code: string;
+  project_name: string;
+  country: string;
+  department: string;
+  workflow_type: WorkflowType;
+  total_orders: number;
+  uploaded_orders: number;
+  pending_orders: number;
+  remarks: string;
+  remarks_updated_at: string | null;
+  remarks_updated_by: number | null;
+}
+
+export interface ClosingReportCountry {
+  country: string;
+  project_count: number;
+  total_orders: number;
+  uploaded_orders: number;
+  pending_orders: number;
+  projects: ClosingReportProjectRow[];
+}
+
+export interface ClosingReportData {
+  date: string;
+  timezone: string;
+  countries: ClosingReportCountry[];
+  totals: {
+    project_count: number;
+    total_orders: number;
+    uploaded_orders: number;
+    pending_orders: number;
+  };
+}
+
 export interface QueueHealth {
   project_id: number;
   workflow_type: WorkflowType;

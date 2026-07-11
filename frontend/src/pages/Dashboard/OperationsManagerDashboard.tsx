@@ -3,11 +3,12 @@ import { dashboardService, projectService } from '../../services';
 import { useSmartPolling } from '../../hooks/useSmartPolling';
 import type { DashboardTeamPerformance, OpsDashboardData, OpsProjectItem } from '../../types';
 import { AnimatedPage, PageHeader, StatCard, StatusBadge, OpsManagerDashboardSkeleton } from '../../components/ui';
-import { Users, AlertTriangle, Package, TrendingUp, ChevronRight, ChevronDown, Pencil, CheckSquare, Eye, Palette, Calendar, Shield, LayoutDashboard, Briefcase, UserCheck, Search, Target, Timer, Info, Plus, Trash2, X, CalendarClock } from 'lucide-react';
+import { Users, AlertTriangle, Package, TrendingUp, ChevronRight, ChevronDown, Pencil, CheckSquare, Eye, Palette, Calendar, Shield, LayoutDashboard, Briefcase, UserCheck, Search, Target, Timer, Info, Plus, Trash2, X, CalendarClock, ClipboardList } from 'lucide-react';
 import DailyOperationsView from './DailyOperationsView';
 import TimeWiseCountView from './TimeWiseCountView';
+import ClosingReportView from './ClosingReportView';
 
-type OMTab = 'overview' | 'projects' | 'teams' | 'staff' | 'daily-operations' | 'time-wise';
+type OMTab = 'overview' | 'projects' | 'teams' | 'staff' | 'daily-operations' | 'time-wise' | 'closing-report';
 
 export default function OperationsManagerDashboard() {
   const [data, setData] = useState<OpsDashboardData | null>(null);
@@ -148,6 +149,7 @@ export default function OperationsManagerDashboard() {
     { id: 'staff' as OMTab, label: 'Staff Report', icon: Users },
     { id: 'daily-operations' as OMTab, label: 'Daily Operations', icon: Calendar },
     { id: 'time-wise' as OMTab, label: 'Time-wise Count', icon: CalendarClock },
+    { id: 'closing-report' as OMTab, label: 'Closing Report', icon: ClipboardList },
   ];
 
   if (loading) return (
@@ -218,6 +220,10 @@ export default function OperationsManagerDashboard() {
               dashboard="operations"
               projects={(data.projects || []).map((item) => item.project)}
             />
+          )}
+
+          {activeTab === 'closing-report' && (
+            <ClosingReportView />
           )}
 
           {/* Overview Tab */}

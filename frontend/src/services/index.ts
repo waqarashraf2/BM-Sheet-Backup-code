@@ -4,7 +4,7 @@ import type {
   Project, ProjectInput, Team,
   Order, WorkItem, MonthLock, Invoice, InvoiceInput, InvoiceMonthlyQuantity,
   MasterDashboard, ProjectDashboard, WorkerDashboardData, OpsDashboardData, QueueHealth,
-  DailyOperationsData, PMDashboardData, AssignmentDashboardData,
+  DailyOperationsData, PMDashboardData, AssignmentDashboardData, ClosingReportData,
   PaginatedResponse, Notification,
   OrderImportSource, OrderImportLog, ChecklistTemplate, OrderChecklist,
   WorkflowState, InvoiceStatus,
@@ -459,6 +459,12 @@ export const dashboardService = {
 
   // Project Manager
   projectManager: () => api.get<PMDashboardData>('/dashboard/project-manager'),
+
+  closingReport: (params?: { date?: string; country?: string }) =>
+    api.get<ClosingReportData>('/dashboard/closing-report', { params }),
+
+  saveClosingReportRemark: (data: { date: string; country: string; project_id: number; remarks: string }) =>
+    api.put<{ message: string }>('/dashboard/closing-report/remarks', data),
 
   // OM/PM: role completion counts within a date-time range and current WIP
   timeWiseCounts: (

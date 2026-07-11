@@ -36,7 +36,7 @@ class FocalRtvService
             $jobs = $this->fetchJobsFromApi();
             if (empty($jobs)) {
                 $result = $this->emptyResult('No jobs returned from API');
-                $result['image_backfill_checked'] = $this->backfillMissingImagesForExistingOrders(50);
+                $result['image_backfill_checked'] = $this->backfillMissingImagesForExistingOrders(10);
                 $result['success'] = true;
                 return $result;
             }
@@ -44,13 +44,13 @@ class FocalRtvService
             $filteredJobs = $this->filterPhotographyJobs($jobs);
             if (empty($filteredJobs)) {
                 $result = $this->emptyResult('No Photography jobs found');
-                $result['image_backfill_checked'] = $this->backfillMissingImagesForExistingOrders(50);
+                $result['image_backfill_checked'] = $this->backfillMissingImagesForExistingOrders(10);
                 $result['success'] = true;
                 return $result;
             }
 
             $result = $this->importJobs($filteredJobs);
-            $result['image_backfill_checked'] = $this->backfillMissingImagesForExistingOrders(50);
+            $result['image_backfill_checked'] = $this->backfillMissingImagesForExistingOrders(10);
             Log::info('Focal RTV import completed', $result);
 
             return $result;
@@ -124,7 +124,7 @@ class FocalRtvService
 
     protected function requestFocalGet(string $url)
     {
-        return Http::timeout(60)
+        return Http::timeout(120)
             ->withOptions([
                 'verify' => false,
             ])
@@ -261,11 +261,15 @@ class FocalRtvService
             return;
         }
 
-        $details = $this->fetchJobDetails($focalJobId);
-        $images = $this->dedupeImages(array_merge(
-            $this->extractImagesFromPayload($job),
-            $this->extractImagesFromPayload($details)
-        ));
+        $detailPayloads = $this->fetchJobAssetPayloads($focalJobId);
+        $details = $this->selectJobDetailsPayload($detailPayloads);
+        $images = $this->extractImagesFromPayload($job);
+
+        foreach ($detailPayloads as $payload) {
+            $images = array_merge($images, $this->extractImagesFromPayload($payload));
+        }
+
+        $images = $this->dedupeImages($images);
 
         $this->updateOrderMetadataFromDetails($focalJobId, $details);
 
@@ -285,6 +289,7 @@ class FocalRtvService
             ->flip()
             ->all();
 
+        $rows = [];
         foreach ($images as $image) {
             $url = trim((string) ($image['url'] ?? ''));
 
@@ -292,21 +297,31 @@ class FocalRtvService
                 continue;
             }
 
+            $rows[] = [
+                'images_url' => $url,
+                'file_name' => $image['file_name'] ?? null,
+                'job_order_id' => $focalJobId,
+            ];
+            $existingUrls[$url] = true;
+        }
+
+        foreach (array_chunk($rows, 500) as $chunk) {
             try {
-                DB::table($this->imagesTable)->insert([
-                    'images_url' => $url,
-                    'file_name' => $image['file_name'] ?? null,
-                    'job_order_id' => $focalJobId,
-                ]);
-                $existingUrls[$url] = true;
+                DB::table($this->imagesTable)->insert($chunk);
             } catch (Exception $e) {
-                Log::error('Failed to save Focal RTV job image', [
+                Log::error('Failed to save Focal RTV job image chunk', [
                     'focal_job_id' => $focalJobId,
-                    'url' => $url,
+                    'chunk_count' => count($chunk),
                     'error' => $e->getMessage(),
                 ]);
             }
         }
+
+        Log::info('Focal RTV image store completed', [
+            'focal_job_id' => $focalJobId,
+            'found_links' => count($images),
+            'new_links' => count($rows),
+        ]);
     }
 
     protected function orderExists(string $focalJobId): bool
@@ -318,26 +333,43 @@ class FocalRtvService
 
     protected function fetchJobDetails(string $focalJobId): array
     {
+        return $this->selectJobDetailsPayload($this->fetchJobAssetPayloads($focalJobId));
+    }
+
+    protected function fetchJobAssetPayloads(string $focalJobId): array
+    {
         $endpoints = [
+            rtrim($this->apiUrl, '/') . '/' . $focalJobId . '/assetdetail',
             rtrim($this->apiUrl, '/') . '/' . $focalJobId . '/details',
+            str_replace('/v3/', '/v2/', rtrim($this->apiUrl, '/')) . '/' . $focalJobId . '/assetdetail',
             str_replace('/v3/', '/v2/', rtrim($this->apiUrl, '/')) . '/' . $focalJobId . '/details',
         ];
+        $payloads = [];
+        $seenPayloads = [];
 
         foreach ($endpoints as $url) {
             try {
                 $response = $this->requestFocalGet($url);
 
                 if ($response->successful()) {
-                    return $response->json() ?? [];
+                    $payload = $response->json() ?? [];
+                    $signature = md5(json_encode($payload));
+
+                    if (!isset($seenPayloads[$signature])) {
+                        $payloads[] = $payload;
+                        $seenPayloads[$signature] = true;
+                    }
+
+                    continue;
                 }
 
-                Log::debug('Focal RTV details endpoint unavailable', [
+                Log::debug('Focal RTV asset endpoint unavailable', [
                     'focal_job_id' => $focalJobId,
                     'status' => $response->status(),
                     'url' => $url,
                 ]);
             } catch (Exception $e) {
-                Log::warning('Focal RTV details fetch failed', [
+                Log::warning('Focal RTV asset fetch failed', [
                     'focal_job_id' => $focalJobId,
                     'url' => $url,
                     'error' => $e->getMessage(),
@@ -345,7 +377,18 @@ class FocalRtvService
             }
         }
 
-        return [];
+        return $payloads;
+    }
+
+    protected function selectJobDetailsPayload(array $payloads): array
+    {
+        foreach ($payloads as $payload) {
+            if (is_array($payload) && isset($payload['Job']) && is_array($payload['Job'])) {
+                return $payload;
+            }
+        }
+
+        return $payloads[0] ?? [];
     }
 
     protected function updateOrderMetadataFromDetails(string $focalJobId, array $details): void
@@ -434,11 +477,43 @@ class FocalRtvService
             }
         }
 
-        if (!empty($images)) {
-            return $images;
+        if (!empty($payload['AdditionalLinks']) && is_array($payload['AdditionalLinks'])) {
+            foreach ($payload['AdditionalLinks'] as $asset) {
+                if (!is_array($asset)) {
+                    continue;
+                }
+
+                $url = $asset['Href'] ?? $asset['href'] ?? $asset['Url'] ?? $asset['url'] ?? null;
+                $name = $asset['Description'] ?? $asset['description'] ?? ($url ? basename(parse_url($url, PHP_URL_PATH) ?: $url) : null);
+
+                if ($url) {
+                    $images[] = [
+                        'url' => $url,
+                        'file_name' => $name,
+                    ];
+                }
+            }
         }
 
-        return $this->extractImagesRecursively($payload);
+        if (!empty($payload['DownloadUrls']) && is_array($payload['DownloadUrls'])) {
+            foreach ($payload['DownloadUrls'] as $url) {
+                if (is_string($url) && $url !== '') {
+                    $images[] = [
+                        'url' => $url,
+                        'file_name' => basename(parse_url($url, PHP_URL_PATH) ?: $url),
+                    ];
+                }
+            }
+        }
+
+        if (!empty($payload['DownloadUrl']) && is_string($payload['DownloadUrl'])) {
+            $images[] = [
+                'url' => $payload['DownloadUrl'],
+                'file_name' => basename(parse_url($payload['DownloadUrl'], PHP_URL_PATH) ?: $payload['DownloadUrl']),
+            ];
+        }
+
+        return array_merge($images, $this->extractImagesRecursively($payload));
     }
 
     protected function extractImagesRecursively($data): array
@@ -496,7 +571,7 @@ class FocalRtvService
         return $unique;
     }
 
-    protected function backfillMissingImagesForExistingOrders(int $limit = 50): int
+    protected function backfillMissingImagesForExistingOrders(int $limit = 10): int
     {
         if (!Schema::hasTable($this->tableName)) {
             return 0;
@@ -505,12 +580,22 @@ class FocalRtvService
         $this->ensureImagesTableExists();
 
         $orders = DB::table($this->tableName . ' as o')
-            ->leftJoin($this->imagesTable . ' as i', 'i.job_order_id', '=', 'o.client_portal_id')
             ->whereNotNull('o.client_portal_id')
-            ->whereNull('i.id')
             ->orderByDesc('o.id')
             ->limit($limit)
             ->get(['o.client_portal_id']);
+
+        $existingImageIds = $orders->isEmpty()
+            ? collect()
+            : DB::table($this->imagesTable)
+                ->whereIn('job_order_id', $orders->pluck('client_portal_id')->map(fn ($id) => trim((string) $id))->filter()->unique()->values()->all())
+                ->pluck('job_order_id')
+                ->map(fn ($id) => trim((string) $id))
+                ->filter()
+                ->flip();
+
+        $fetched = 0;
+        $skippedAlreadyStored = 0;
 
         foreach ($orders as $order) {
             $focalJobId = trim((string) ($order->client_portal_id ?? ''));
@@ -519,13 +604,21 @@ class FocalRtvService
                 continue;
             }
 
+            if ($existingImageIds->has($focalJobId)) {
+                $skippedAlreadyStored++;
+                continue;
+            }
+
             $this->storeJobAssets([
                 'FocalJobId' => $focalJobId,
             ]);
+            $fetched++;
         }
 
         Log::info('Focal RTV image backfill completed', [
             'checked' => $orders->count(),
+            'fetched_missing' => $fetched,
+            'skipped_already_stored' => $skippedAlreadyStored,
             'limit' => $limit,
         ]);
 

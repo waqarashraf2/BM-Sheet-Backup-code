@@ -7,9 +7,12 @@ import { AnimatedPage, PageHeader, StatCard, PMDashboardSkeleton } from '../../c
 import {
   Package, TrendingUp, Clock, Users, ChevronDown, ChevronRight,
   Pencil, CheckSquare, Eye, Palette, CircleDot, UserCheck, AlertTriangle, Info,
-  Plus, Trash2, X, Timer, Target, Search, CalendarClock,
+  Plus, Trash2, X, Timer, Target, Search, CalendarClock, ClipboardList,
 } from 'lucide-react';
 import TimeWiseCountView from './TimeWiseCountView';
+import ClosingReportView from './ClosingReportView';
+
+type PMTab = 'projects' | 'staff' | 'teams' | 'time-wise' | 'closing-report';
 
 export default function ProjectManagerDashboard() {
   const [data, setData] = useState<PMDashboardData | null>(null);
@@ -18,7 +21,7 @@ export default function ProjectManagerDashboard() {
   const [expandedStaff, setExpandedStaff] = useState<number | null>(null);
   const [staffRoleFilter, setStaffRoleFilter] = useState<string>('all');
   const [staffSearch, setStaffSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'projects' | 'staff' | 'teams' | 'time-wise'>('projects');
+  const [activeTab, setActiveTab] = useState<PMTab>('projects');
   const [showCreateTeam, setShowCreateTeam] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
   const [creatingTeam, setCreatingTeam] = useState(false);
@@ -183,10 +186,11 @@ export default function ProjectManagerDashboard() {
   );
 
   const tabs = [
-    { key: 'projects' as const, label: 'My Projects', count: (data.projects || []).length },
-    { key: 'staff' as const, label: 'Staff Report', count: filteredStaff.length },
-    { key: 'teams' as const, label: 'Teams', count: (data.team_performance || []).length },
-    { key: 'time-wise' as const, label: 'Time-wise Count', count: 0, icon: CalendarClock },
+    { key: 'projects' as PMTab, label: 'My Projects', count: (data.projects || []).length },
+    { key: 'staff' as PMTab, label: 'Staff Report', count: filteredStaff.length },
+    { key: 'teams' as PMTab, label: 'Teams', count: (data.team_performance || []).length },
+    { key: 'time-wise' as PMTab, label: 'Time-wise Count', count: 0, icon: CalendarClock },
+    { key: 'closing-report' as PMTab, label: 'Closing Report', count: 0, icon: ClipboardList },
   ];
 
   return (
@@ -240,6 +244,10 @@ export default function ProjectManagerDashboard() {
             dashboard="project-manager"
             projects={(data.projects || []).map((item) => item.project)}
           />
+        )}
+
+        {activeTab === 'closing-report' && (
+          <ClosingReportView />
         )}
 
         {/* Projects Tab */}
