@@ -84,7 +84,7 @@ return [
         'fesp_subscription_key' => env('FOCAL_CLIENT_PORTAL_FESP_SUBSCRIPTION_KEY', env('FOCAL_RTV_SUBSCRIPTION_KEY')),
         'timeout' => env('FOCAL_CLIENT_PORTAL_TIMEOUT', 600),
         'status_timeout' => env('FOCAL_CLIENT_PORTAL_STATUS_TIMEOUT', 30),
-        'max_file_kb' => env('FOCAL_CLIENT_PORTAL_MAX_FILE_KB', 614400),
+        'max_file_kb' => env('FOCAL_CLIENT_PORTAL_MAX_FILE_KB', 5242880),
     ],
 
 ];

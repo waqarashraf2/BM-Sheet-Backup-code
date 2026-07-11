@@ -50,7 +50,7 @@ class ClientPortalUploadController extends Controller
     public function upload(Request $request, int $orderId)
     {
         $order = $this->portalOrder($request, $orderId, true);
-        $maxFileKb = (int) config('services.focal_client_portal.max_file_kb', 614400);
+        $maxFileKb = (int) config('services.focal_client_portal.max_file_kb', 5242880);
         $data = $request->validate([
             'job_order_id' => 'nullable|string|max:120',
             'force_reupload' => 'sometimes|boolean',
@@ -166,6 +166,12 @@ class ClientPortalUploadController extends Controller
 
     private function formatFileSize(int $kilobytes): string
     {
+        if ($kilobytes >= 1048576) {
+            $gigabytes = $kilobytes / 1048576;
+
+            return rtrim(rtrim(number_format($gigabytes, 1), '0'), '.') . ' GB';
+        }
+
         if ($kilobytes >= 1024) {
             $megabytes = $kilobytes / 1024;
 

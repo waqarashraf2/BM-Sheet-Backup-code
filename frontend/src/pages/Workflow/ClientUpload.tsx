@@ -21,7 +21,7 @@ type UploadOrderInfo = {
 };
 
 const ORDER_NUMBER_ASSET_PROJECT_IDS = [22, 23, 25, 26];
-const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 600 * 1024 * 1024;
+const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
 
 function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
     const raw = (order || {}) as Order & Record<string, unknown>;
@@ -83,6 +83,10 @@ function fileNameContainsOrderReference(fileName: string, orderReference: string
 }
 
 function formatFileSize(bytes: number): string {
+    if (bytes >= 1024 * 1024 * 1024) {
+        return `${Math.round((bytes / (1024 * 1024 * 1024)) * 10) / 10} GB`;
+    }
+
     return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
 }
 
@@ -404,7 +408,7 @@ export default function ClientUpload() {
                         {oversizedFiles.length > 0 && (
                             <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
                                 <div className="font-semibold text-rose-800 mb-2">File size too large</div>
-                                <div>Each file must be 600 MB or less.</div>
+                                <div>Each file must be 5 GB or less.</div>
                                 <div className="mt-2 text-rose-700">
                                     {oversizedFiles.map((file) => `${file.name} (${formatFileSize(file.size)})`).join(', ')}
                                 </div>

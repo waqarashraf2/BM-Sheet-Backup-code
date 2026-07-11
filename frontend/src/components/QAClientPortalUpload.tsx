@@ -4,7 +4,7 @@ import { workflowService, type ClientPortalUploadStatus } from '../services';
 import { Button } from './ui';
 import { CheckCircle2, Loader2, Send, UploadCloud } from 'lucide-react';
 
-const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 600 * 1024 * 1024;
+const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
 
 interface QAClientPortalUploadProps {
   order: Order;
@@ -18,6 +18,10 @@ function fileNameContainsOrderReference(fileName: string, orderReference: string
 }
 
 function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${Math.round((bytes / (1024 * 1024 * 1024)) * 10) / 10} GB`;
+  }
+
   return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
 }
 
@@ -141,7 +145,7 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
 
           {oversizedFiles.length > 0 && (
             <p className="text-xs font-medium text-rose-700">
-              Each file must be 600 MB or less. Oversized: {oversizedFiles.map(file => `${file.name} (${formatFileSize(file.size)})`).join(', ')}
+              Each file must be 5 GB or less. Oversized: {oversizedFiles.map(file => `${file.name} (${formatFileSize(file.size)})`).join(', ')}
             </p>
           )}
 

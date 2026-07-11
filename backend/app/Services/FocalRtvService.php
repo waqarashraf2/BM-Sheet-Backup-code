@@ -546,7 +546,7 @@ class FocalRtvService
             
             'client_portal_id' => $focalJobId,
             'clint_order_number' => $focalJobId,
-            'client_reference' => $focalJobId,,
+            'client_reference' => $focalJobId,
             'address' => $property['Address'] ?? null,
             'plan_type' => $job['Product'] ?? 'Photography',
             'order_type' => 'photo',
