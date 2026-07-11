@@ -13,6 +13,7 @@ type UploadOrderInfo = {
     clientPortalId: string;
     projectId: string;
     orderNumber: string;
+    variantNo: string;
     displayOrder: string;
     clientName: string;
     customerParentCompany: string;
@@ -40,6 +41,17 @@ function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
         || ''
     ).trim();
     const orderNumber = String(raw.order_number || '').trim();
+    const variantNo = String(
+        raw.VARIANT_no
+        || raw.variant_no
+        || raw.variant
+        || raw.variant_number
+        || metadata.VARIANT_no
+        || metadata.variant_no
+        || metadata.variant
+        || metadata.variant_number
+        || ''
+    ).trim();
     const clientName = String(raw.client_name || metadata.client_name || '').trim();
     const customerParentCompany = String(
         raw.CustomerParentCompany
@@ -56,6 +68,7 @@ function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
         clientPortalId,
         projectId: raw.project_id ? String(raw.project_id) : '',
         orderNumber,
+        variantNo,
         displayOrder: jobOrderId || orderNumber,
         clientName,
         customerParentCompany,
@@ -175,6 +188,10 @@ export default function ClientUpload() {
     );
     const displayClientPortalId = useMemo(
         () => String(status?.client_portal_id || orderInfo?.clientPortalId || '').trim(),
+        [orderInfo, status]
+    );
+    const displayVariantNo = useMemo(
+        () => String(status?.VARIANT_no || status?.variant_no || orderInfo?.variantNo || '').trim(),
         [orderInfo, status]
     );
     const canUpload = !!orderLookup && status?.can_upload !== false;
@@ -341,7 +358,7 @@ export default function ClientUpload() {
                                 <div>Customer Parent Company: {displayCustomerParentCompany || 'Not available'}</div>
                                 <div>Client Portal ID: {displayClientPortalId || 'Not available'}</div>
                                 <div>Upload Order Reference: {orderLookup || 'Not available'}</div>
-                                <div>Client Portal Job ID: {status.client_portal_job_id || status.order_number || queryOrderNumber || 'Not available'}</div>
+                                <div>Client Portal Job ID: {displayVariantNo || 'Not available'}</div>
                             </div>
                         )}
                     </div>

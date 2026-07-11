@@ -24,6 +24,8 @@ export interface ClientPortalUploadStatus {
   client_portal_id?: string | null;
   client_portal_job_id?: string | null;
   order_number?: string | null;
+  VARIANT_no?: string | null;
+  variant_no?: string | null;
   client_name?: string | null;
   CustomerParentCompany?: string | null;
   customer_parent_company?: string | null;

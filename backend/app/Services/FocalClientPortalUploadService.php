@@ -85,6 +85,7 @@ class FocalClientPortalUploadService
             'client_portal_id' => $order->client_portal_id ?: null,
             'client_portal_job_id' => $clientPortalJobId !== '' ? $clientPortalJobId : null,
             'order_number' => $order->order_number,
+            'VARIANT_no' => $this->variantNo($order),
             'client_name' => $order->client_name,
             'CustomerParentCompany' => $customerParentCompany,
             'customer_parent_company' => $customerParentCompany,
@@ -526,6 +527,38 @@ class FocalClientPortalUploadService
                 $metadata['customer_parent_company']
                 ?? $metadata['CustomerParentCompany']
                 ?? data_get($metadata, 'raw_api_response.CustomerParentCompany')
+                ?? ''
+            ));
+        }
+
+        return $value !== '' ? $value : null;
+    }
+
+    private function variantNo(Order $order): ?string
+    {
+        $value = trim((string) (
+            $order->getAttribute('VARIANT_no')
+            ?? $order->getAttribute('variant_no')
+            ?? $order->getAttribute('variant')
+            ?? $order->getAttribute('variant_number')
+            ?? ''
+        ));
+
+        if ($value !== '') {
+            return $value;
+        }
+
+        $metadata = $order->getAttribute('metadata');
+        if (is_string($metadata)) {
+            $metadata = json_decode($metadata, true) ?: [];
+        }
+
+        if (is_array($metadata)) {
+            $value = trim((string) (
+                $metadata['VARIANT_no']
+                ?? $metadata['variant_no']
+                ?? $metadata['variant']
+                ?? $metadata['variant_number']
                 ?? ''
             ));
         }
