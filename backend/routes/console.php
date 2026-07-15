@@ -144,3 +144,15 @@ Schedule::command('focalrtv:import')
     ->runInBackground();
 
 
+
+// Realsee - Project 56
+Schedule::command('app:realsee-import')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// iGUIDE - Project 55
+Schedule::command('app:iguide-import')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
