@@ -156,3 +156,9 @@ Schedule::command('app:iguide-import')
     ->everyTenMinutes()
     ->withoutOverlapping()
     ->runInBackground();
+
+    // Faro - Project 27
+Schedule::command('app:faro-import')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
