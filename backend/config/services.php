@@ -80,8 +80,14 @@ return [
             env('FOCAL_CRM_PHOTO_SUBSCRIPTION_KEY', env('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1'))
         ),
         'fesp_api_url' => env('FOCAL_CLIENT_PORTAL_FESP_API_URL', env('FOCAL_RTV_API_URL', 'https://api.focalagent.com/fesp-int/v3/jobs')),
-        'fesp_client_secret' => env('FOCAL_CLIENT_PORTAL_FESP_CLIENT_SECRET', env('FOCAL_RTV_CLIENT_SECRET')),
-        'fesp_subscription_key' => env('FOCAL_CLIENT_PORTAL_FESP_SUBSCRIPTION_KEY', env('FOCAL_RTV_SUBSCRIPTION_KEY')),
+        'fesp_client_secret' => env(
+            'FOCAL_CLIENT_PORTAL_FESP_CLIENT_SECRET',
+            env('FOCAL_RTV_CLIENT_SECRET', 'Str0ngP@ss!987')
+        ),
+        'fesp_subscription_key' => env(
+            'FOCAL_CLIENT_PORTAL_FESP_SUBSCRIPTION_KEY',
+            env('FOCAL_RTV_SUBSCRIPTION_KEY', 'c7e961fc3a1c4b5d84bb26195f768780')
+        ),
         'timeout' => env('FOCAL_CLIENT_PORTAL_TIMEOUT', 600),
         'status_timeout' => env('FOCAL_CLIENT_PORTAL_STATUS_TIMEOUT', 30),
         'max_file_kb' => env('FOCAL_CLIENT_PORTAL_MAX_FILE_KB', 5242880),

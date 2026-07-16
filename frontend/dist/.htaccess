@@ -13,6 +13,8 @@ RewriteEngine On
   </FilesMatch>
 </IfModule>
 
+
+
 # Route all non-file, non-directory, non-apicrm requests to index.html (React SPA)
 RewriteCond %{REQUEST_URI} !^/apicrm
 RewriteCond %{REQUEST_FILENAME} !-f

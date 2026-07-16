@@ -222,8 +222,8 @@ class FocalClientPortalUploadService
             ]);
         }
 
-        $jobOrderId = $this->clientPortalJobId($order);
         $fileReference = $this->fileReference($order);
+        $jobOrderId = $this->clientPortalJobId($order);
         $this->validateRequestedJobOrderId($requestedJobOrderId, $jobOrderId, $fileReference);
         $this->validateFileNames($projectId, $fileReference, collect([$fileName]));
 
@@ -238,7 +238,9 @@ class FocalClientPortalUploadService
             ];
         }
 
-        $uploadUrlResponse = $this->fespClient()->post($this->fespUploadFinalsUrl($jobOrderId));
+        [$uploadUrlResponse, $jobOrderId] = $this->requestFespUploadUrl(
+            $this->fespUploadJobIdCandidates($order, $requestedJobOrderId)
+        );
         if (!$uploadUrlResponse->successful()) {
             throw new \RuntimeException($this->responseMessage($uploadUrlResponse, 'FESP upload URL request failed.'));
         }
@@ -734,8 +736,61 @@ class FocalClientPortalUploadService
         ) {
             throw ValidationException::withMessages([
                 'job_order_id' => 'The submitted client portal job ID does not match this order.',
+            ]); 
+        }
+    }
+
+    /**
+     * @return array{0: Response, 1: string}
+     */
+    private function requestFespUploadUrl(array $jobOrderIds): array
+    {
+        $lastResponse = null;
+        $lastJobOrderId = '';
+
+        foreach ($jobOrderIds as $jobOrderId) {
+            $jobOrderId = trim((string) $jobOrderId);
+            if ($jobOrderId === '') {
+                continue;
+            }
+
+            $response = $this->fespClient()->post($this->fespUploadFinalsUrl($jobOrderId));
+            if ($response->successful()) {
+                return [$response, $jobOrderId];
+            }
+
+            $lastResponse = $response;
+            $lastJobOrderId = $jobOrderId;
+
+            if ($response->status() !== 404) {
+                break;
+            }
+        }
+
+        if (!$lastResponse) {
+            throw ValidationException::withMessages([
+                'job_order_id' => 'The FESP client portal job ID is missing.',
             ]);
         }
+
+        return [$lastResponse, $lastJobOrderId];
+    }
+
+    private function fespUploadJobIdCandidates(Order $order, ?string $requestedJobOrderId = null): array
+    {
+        return collect([
+            $requestedJobOrderId,
+            $this->fileReference($order),
+            $order->client_portal_id,
+            $order->client_reference,
+            $order->order_number,
+            $this->uploadJobId($order),
+        ])
+            ->map(fn ($value) => trim((string) $value))
+            ->filter()
+            ->unique(fn ($value) => strtolower($value))
+            ->values()
+            ->all();
     }
 
     private function client()

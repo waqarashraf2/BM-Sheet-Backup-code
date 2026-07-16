@@ -5,6 +5,7 @@ import { Button } from './ui';
 import { CheckCircle2, Loader2, Send, UploadCloud } from 'lucide-react';
 
 const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
+const ENABLE_PROJECT_26_DIRECT_UPLOAD = false;
 
 interface QAClientPortalUploadProps {
   order: Order;
@@ -108,7 +109,7 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
   if (!status?.required) return null;
 
   const uploadFiles = async () => {
-    const isProject26 = Number(status?.project_id || order.project_id || 0) === 26;
+    const isProject26 = ENABLE_PROJECT_26_DIRECT_UPLOAD && Number(status?.project_id || order.project_id || 0) === 26;
     if (!files.length || invalidNames.length || oversizedFiles.length) return;
     if (isProject26 && (files.length !== 1 || !files[0].name.toLowerCase().endsWith('.zip'))) {
       setError('Project 26 upload expects one final ZIP file.');
@@ -162,10 +163,12 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
     } catch (e: any) {
       const statusCode = e.response?.status;
       const serverMessage = e.response?.data?.message || e.response?.data?.errors?.files?.[0];
+      const responseText = typeof e.response?.data === 'string' ? e.response.data : '';
+      const statusDetail = statusCode ? `HTTP ${statusCode}` : (e.code || '');
       setError(
         statusCode === 404 || statusCode === 405
           ? 'Upload route is not available on the backend server yet. Please deploy the latest backend routes and clear the Laravel route cache.'
-          : serverMessage || 'Upload failed.'
+          : serverMessage || responseText || (statusDetail ? `Upload failed (${statusDetail}).` : 'Upload failed.')
       );
     } finally {
       setBusy(null);

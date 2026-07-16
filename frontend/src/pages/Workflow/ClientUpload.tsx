@@ -22,6 +22,7 @@ type UploadOrderInfo = {
 
 const ORDER_NUMBER_ASSET_PROJECT_IDS = [22, 23, 25, 26];
 const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
+const ENABLE_PROJECT_26_DIRECT_UPLOAD = false;
 
 function resolveOrderInfo(order: Order | null | undefined): UploadOrderInfo {
     const raw = (order || {}) as Order & Record<string, unknown>;
@@ -232,9 +233,13 @@ export default function ClientUpload() {
         () => String(status?.VARIANT_no || status?.variant_no || orderInfo?.variantNo || '').trim(),
         [orderInfo, status]
     );
+    const displayClientPortalJobId = useMemo(
+        () => String(status?.client_portal_job_id || '').trim(),
+        [status]
+    );
     const canUpload = !!orderLookup && status?.can_upload !== false;
     const currentProjectId = Number(status?.project_id || queryProjectId || orderInfo?.projectId || 0);
-    const shouldUseDirectFespUpload = currentProjectId === 26;
+    const shouldUseDirectFespUpload = ENABLE_PROJECT_26_DIRECT_UPLOAD && currentProjectId === 26;
     const canSubmitRole = ['operations_manager', 'project_manager', 'qa'].includes(user?.role || '');
     const canSubmitClientPortal = !!status?.uploaded && (!status?.submitted || (forceReupload && reuploadCompleted));
     const uploadStatusLabel = canUpload && (!status?.status || status.status === 'not_required')
@@ -334,10 +339,12 @@ export default function ClientUpload() {
                 ? Object.entries(e.response.data.errors as Record<string, string[]>)
                     .find(([field]) => field.startsWith('files.'))?.[1]?.[0]
                 : '';
+            const responseText = typeof e.response?.data === 'string' ? e.response.data : '';
+            const statusDetail = statusCode ? `HTTP ${statusCode}` : (e.code || '');
             setError(
                 statusCode === 404 || statusCode === 405
                     ? 'Upload route is not available on the backend server yet. Please deploy the latest backend routes and clear the Laravel route cache.'
-                    : fileSizeMessage || serverMessage || 'Upload failed.'
+                    : fileSizeMessage || serverMessage || responseText || (statusDetail ? `Upload failed (${statusDetail}).` : 'Upload failed.')
             );
         } finally {
             setBusy(null);
@@ -445,7 +452,10 @@ export default function ClientUpload() {
                                 <div>Customer Parent Company: {displayCustomerParentCompany || 'Not available'}</div>
                                 <div>Client Portal ID: {displayClientPortalId || 'Not available'}</div>
                                 <div>Upload Order Reference: {orderLookup || 'Not available'}</div>
-                                <div>Client Portal Job ID: {displayVariantNo || 'Not available'}</div>
+                                <div>Client Portal Job ID: {displayClientPortalJobId || 'Not available'}</div>
+                                {displayVariantNo && displayVariantNo !== displayClientPortalJobId && (
+                                    <div>Client Order ID: {displayVariantNo}</div>
+                                )}
                             </div>
                         )}
                     </div>
