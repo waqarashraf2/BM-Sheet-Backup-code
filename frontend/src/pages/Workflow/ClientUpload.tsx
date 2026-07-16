@@ -90,6 +90,24 @@ function formatFileSize(bytes: number): string {
     return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
 }
 
+function formatElapsedTime(seconds: number): string {
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return `${hours}h ${remainingMinutes}m ${remainingSeconds}s`;
+}
+
+function formatUploadSpeed(bytes: number, progress: number, elapsedSeconds: number): string {
+    if (!bytes || !progress || !elapsedSeconds) return 'Calculating...';
+    const uploadedBytes = bytes * (progress / 100);
+    const mbPerSecond = uploadedBytes / elapsedSeconds / (1024 * 1024);
+    if (mbPerSecond >= 1) return `${mbPerSecond.toFixed(2)} MB/s`;
+    return `${(mbPerSecond * 1024).toFixed(0)} KB/s`;
+}
+
 export default function ClientUpload() {
     const navigate = useNavigate();
     const user = useSelector((state: RootState) => state.auth.user);
@@ -103,6 +121,7 @@ export default function ClientUpload() {
     const [error, setError] = useState('');
     const [uploadProgress, setUploadProgress] = useState(0);
     const [uploadElapsedSeconds, setUploadElapsedSeconds] = useState(0);
+    const [uploadMode, setUploadMode] = useState<'direct' | 'server' | null>(null);
     const [reuploadCompleted, setReuploadCompleted] = useState(false);
 
     const numericOrderId = Number(orderId);
@@ -259,56 +278,41 @@ export default function ClientUpload() {
         setError('');
         setUploadProgress(0);
         setUploadElapsedSeconds(0);
+        setUploadMode(shouldUseDirectFespUpload ? 'direct' : 'server');
 
         try {
             let response;
             if (shouldUseDirectFespUpload) {
-                let directPutCompleted = false;
-                try {
-                    const prepared = await workflowService.prepareDirectClientPortalUpload(
-                        numericOrderId,
+                const prepared = await workflowService.prepareDirectClientPortalUpload(
+                    numericOrderId,
+                    files[0],
+                    orderLookup,
+                    { forceReupload, projectId: requestedProjectId }
+                );
+
+                if (!prepared.data.direct_upload || !prepared.data.upload_url) {
+                    response = {
+                        data: {
+                            message: prepared.data.message,
+                            status: prepared.data.status,
+                            upload_id: prepared.data.upload_id,
+                        },
+                    };
+                } else {
+                    const directResponse = await workflowService.uploadFileToClientPortalUrl(
+                        prepared.data.upload_url,
                         files[0],
-                        orderLookup,
-                        { forceReupload, projectId: requestedProjectId }
+                        prepared.data.headers,
+                        setUploadProgress
                     );
-
-                    if (!prepared.data.direct_upload || !prepared.data.upload_url) {
-                        response = {
-                            data: {
-                                message: prepared.data.message,
-                                status: prepared.data.status,
-                                upload_id: prepared.data.upload_id,
-                            },
-                        };
-                    } else {
-                        const directResponse = await workflowService.uploadFileToClientPortalUrl(
-                            prepared.data.upload_url,
-                            files[0],
-                            prepared.data.headers,
-                            setUploadProgress
-                        );
-                        directPutCompleted = true;
-                        response = await workflowService.confirmDirectClientPortalUpload(
-                            numericOrderId,
-                            prepared.data.upload_id,
-                            {
-                                httpStatus: directResponse.status,
-                                response: typeof directResponse.data === 'string' ? directResponse.data : '',
-                                projectId: requestedProjectId,
-                            }
-                        );
-                    }
-                } catch (directError: any) {
-                    if (directPutCompleted || [403, 422].includes(Number(directError.response?.status || 0))) {
-                        throw directError;
-                    }
-
-                    response = await workflowService.uploadToClientPortal(
+                    response = await workflowService.confirmDirectClientPortalUpload(
                         numericOrderId,
-                        files,
-                        orderLookup,
-                        setUploadProgress,
-                        { forceReupload, projectId: requestedProjectId }
+                        prepared.data.upload_id,
+                        {
+                            httpStatus: directResponse.status,
+                            response: typeof directResponse.data === 'string' ? directResponse.data : '',
+                            projectId: requestedProjectId,
+                        }
                     );
                 }
             } else {
@@ -338,6 +342,7 @@ export default function ClientUpload() {
         } finally {
             setBusy(null);
             setUploadProgress(0);
+            setUploadMode(null);
         }
     };
 
@@ -363,6 +368,7 @@ export default function ClientUpload() {
         setFiles(Array.from(event.target.files || []));
         setReuploadCompleted(false);
         setUploadElapsedSeconds(0);
+        setUploadMode(null);
     };
 
     const openImageLinks = () => {
@@ -501,8 +507,8 @@ export default function ClientUpload() {
                         {busy === 'upload' && (
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                                 <div className="flex items-center justify-between text-xs font-medium text-slate-600">
-                                    <span>{shouldUseDirectFespUpload ? 'Uploading direct to client portal' : (uploadProgress < 100 ? 'Uploading to server' : 'Uploading to client portal')}</span>
-                                    <span>{uploadProgress}% · {uploadElapsedSeconds}s</span>
+                                    <span>{uploadMode === 'direct' ? 'Uploading direct to client portal' : (uploadProgress < 100 ? 'Uploading to server' : 'Uploading to client portal')}</span>
+                                    <span>{uploadProgress}% · {formatElapsedTime(uploadElapsedSeconds)}</span>
                                 </div>
                                 <div className="mt-2 h-2 rounded-full bg-slate-200 overflow-hidden">
                                     <div
@@ -510,7 +516,9 @@ export default function ClientUpload() {
                                         style={{ width: `${uploadProgress}%` }}
                                     />
                                 </div>
-                                <p className="mt-2 text-xs text-slate-500">Upload time: {uploadElapsedSeconds} seconds</p>
+                                <p className="mt-2 text-xs text-slate-500">
+                                    Upload time: {formatElapsedTime(uploadElapsedSeconds)} · Speed: {formatUploadSpeed(files[0]?.size || 0, uploadProgress, uploadElapsedSeconds)}
+                                </p>
                                 {uploadProgress >= 100 && (
                                     <p className="mt-2 text-xs text-slate-500">Waiting for client portal response...</p>
                                 )}
