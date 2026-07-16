@@ -88,6 +88,75 @@ class ClientPortalUploadController extends Controller
         ]);
     }
 
+    public function directUploadUrl(Request $request, int $orderId)
+    {
+        $order = $this->portalOrder($request, $orderId, true);
+        $maxFileKb = (int) config('services.focal_client_portal.max_file_kb', 5242880);
+        $data = $request->validate([
+            'job_order_id' => 'nullable|string|max:120',
+            'force_reupload' => 'sometimes|boolean',
+            'file_name' => 'required|string|max:255',
+            'file_size' => "required|integer|min:1|max:" . ($maxFileKb * 1024),
+        ]);
+
+        try {
+            $prepared = $this->service->prepareDirectFespUpload(
+                $order,
+                $request->user(),
+                $data['file_name'],
+                (int) $data['file_size'],
+                $data['job_order_id'] ?? null,
+                (bool) ($data['force_reupload'] ?? false)
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'message' => $e->getMessage(),
+                'status' => 'failed',
+            ], 502);
+        }
+
+        return response()->json($prepared);
+    }
+
+    public function confirmDirectUpload(Request $request, int $orderId)
+    {
+        $order = $this->portalOrder($request, $orderId, true);
+        $data = $request->validate([
+            'upload_id' => 'required|integer',
+            'http_status' => 'nullable|integer|min:100|max:599',
+            'response' => 'nullable|string|max:5000',
+        ]);
+
+        try {
+            $upload = $this->service->confirmDirectFespUpload(
+                $order,
+                $request->user(),
+                (int) $data['upload_id'],
+                isset($data['http_status']) ? (int) $data['http_status'] : null,
+                $data['response'] ?? null
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'message' => $e->getMessage(),
+                'status' => 'failed',
+            ], 502);
+        }
+
+        return response()->json([
+            'message' => 'Files uploaded successfully to the client portal.',
+            'status' => $this->service->status($order),
+            'upload_id' => $upload->id,
+        ]);
+    }
+
     public function submit(Request $request, int $orderId)
     {
         $order = $this->portalOrder($request, $orderId, false);

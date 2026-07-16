@@ -62,6 +62,8 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
         Route::get('/access', [ClientPortalUploadController::class, 'access']);
         Route::get('/in-progress', [ClientPortalUploadController::class, 'inProgress']);
         Route::get('/orders/{orderId}/status', [ClientPortalUploadController::class, 'status']);
+        Route::post('/orders/{orderId}/direct-upload-url', [ClientPortalUploadController::class, 'directUploadUrl']);
+        Route::post('/orders/{orderId}/direct-upload-confirm', [ClientPortalUploadController::class, 'confirmDirectUpload']);
         Route::post('/orders/{orderId}/asset-upload', [ClientPortalUploadController::class, 'upload']);
         Route::post('/orders/{orderId}/submit', [ClientPortalUploadController::class, 'submit']);
     });
@@ -89,6 +91,8 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
 
         // QA-only client portal delivery for configured projects (22/23 by default).
         Route::get('/orders/{orderId}/client-portal/status', [ClientPortalUploadController::class, 'status']);
+        Route::post('/orders/{orderId}/client-portal/direct-upload-url', [ClientPortalUploadController::class, 'directUploadUrl']);
+        Route::post('/orders/{orderId}/client-portal/direct-upload-confirm', [ClientPortalUploadController::class, 'confirmDirectUpload']);
         Route::post('/orders/{orderId}/client-portal/asset-upload', [ClientPortalUploadController::class, 'upload']);
         Route::post('/orders/{orderId}/client-portal/upload-files', [ClientPortalUploadController::class, 'upload']);
         Route::post('/orders/{orderId}/client-portal/upload', [ClientPortalUploadController::class, 'upload']);
@@ -203,7 +207,7 @@ Route::prefix('assignments')->group(function () {
         Route::middleware('role:ceo,director,operations_manager')->get('/dashboard/project-stats', [DashboardController::class, 'projectStats']);
     Route::middleware('role:ceo,director,operations_manager')->get('/dashboard/operations', [DashboardController::class, 'operations']);
     Route::middleware('role:project_manager')->get('/dashboard/project-manager', [DashboardController::class, 'projectManager']);
-    Route::middleware('role:operations_manager,project_manager')->get('/dashboard/closing-report', [ClosingReportController::class, 'index']);
+    Route::middleware('role:director,operations_manager,project_manager')->get('/dashboard/closing-report', [ClosingReportController::class, 'index']);
     Route::middleware('role:operations_manager,project_manager')->put('/dashboard/closing-report/remarks', [ClosingReportController::class, 'saveRemark']);
     Route::middleware('role:operations_manager,project_manager')->get('/dashboard/time-wise-counts', [TimeWiseCountController::class, 'index']);
     Route::middleware('role:operations_manager,project_manager')->get('/dashboard/order-asset-links', [ManagerOrderAssetLinkController::class, 'index']);

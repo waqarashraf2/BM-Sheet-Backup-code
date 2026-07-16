@@ -1,3 +1,4 @@
+import axios from 'axios';
 import api from './api';
 import type {
   User, LoginCredentials, LoginResponse, SessionCheckResponse,
@@ -61,6 +62,15 @@ export interface ClientPortalInProgressOrder {
 export interface ClientPortalProjectOption {
   id: number;
   label: string;
+}
+
+export interface ClientPortalDirectUploadUrlResponse {
+  message: string;
+  status: ClientPortalUploadStatus;
+  upload_id: number;
+  upload_url: string | null;
+  headers?: Record<string, string>;
+  direct_upload: boolean;
 }
 
 // ═══════════════════════════════════════════
@@ -337,6 +347,54 @@ export const workflowService = {
       },
     );
   },
+
+  prepareDirectClientPortalUpload: (
+    orderId: number,
+    file: File,
+    jobOrderId?: string,
+    options?: { forceReupload?: boolean; projectId?: number },
+  ) =>
+    api.post<ClientPortalDirectUploadUrlResponse>(
+      `/client-portal/orders/${orderId}/direct-upload-url`,
+      {
+        file_name: file.name,
+        file_size: file.size,
+        ...(jobOrderId ? { job_order_id: jobOrderId } : {}),
+        ...(options?.forceReupload ? { force_reupload: true } : {}),
+        ...(options?.projectId ? { project_id: options.projectId } : {}),
+      },
+    ),
+
+  uploadFileToClientPortalUrl: (
+    uploadUrl: string,
+    file: File,
+    headers?: Record<string, string>,
+    onUploadProgress?: (progress: number) => void,
+  ) =>
+    axios.put(uploadUrl, file, {
+      headers: {
+        ...(headers || {}),
+      },
+      onUploadProgress: (event) => {
+        if (!event.total) return;
+        onUploadProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      },
+    }),
+
+  confirmDirectClientPortalUpload: (
+    orderId: number,
+    uploadId: number,
+    result?: { httpStatus?: number; response?: string; projectId?: number },
+  ) =>
+    api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
+      `/client-portal/orders/${orderId}/direct-upload-confirm`,
+      {
+        upload_id: uploadId,
+        ...(result?.httpStatus ? { http_status: result.httpStatus } : {}),
+        ...(result?.response ? { response: result.response.slice(0, 5000) } : {}),
+        ...(result?.projectId ? { project_id: result.projectId } : {}),
+      },
+    ),
 
   submitClientPortalOrder: (orderId: number, projectId?: number) =>
     api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(

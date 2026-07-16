@@ -13,10 +13,11 @@ import {
 } from 'lucide-react';
 import DailyOperationsView from './DailyOperationsView';
 import ProjectsView from './ProjectsView';
+import ClosingReportView from './ClosingReportView';
 
 const COLORS = ['#2AA7A0', '#C45C26', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899'];
 
-type TabType = 'overview' | 'daily-operations' | 'project-stats';
+type TabType = 'overview' | 'daily-operations' | 'project-stats' | 'closing-report';
 
 class Safe extends Component<{ id: string; children: ReactNode }, { err: string | null }> {
   state: { err: string | null } = { err: null };
@@ -76,6 +77,9 @@ export default function CEODashboard() {
     { id: 'project-stats' as TabType, label: 'Project Stats', icon: BarChart3 },
     { id: 'overview' as TabType, label: 'Overview', icon: LayoutDashboard },
     { id: 'daily-operations' as TabType, label: 'Daily Operations', icon: Calendar },
+    ...(user?.role === 'director'
+      ? [{ id: 'closing-report' as TabType, label: 'Closing Report', icon: Layers }]
+      : []),
   ];
 
   if (loading && activeTab === 'overview') return <AnimatedPage><CEODashboardSkeleton /></AnimatedPage>;
@@ -100,8 +104,8 @@ export default function CEODashboard() {
 
       <div className="flex items-center gap-1 mb-6 p-1 bg-slate-100 rounded-xl w-fit">
         {tabs.map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)} disabled={loading && activeTab !== tab.id}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed ${activeTab === tab.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${activeTab === tab.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>
             <tab.icon className="w-4 h-4" />{tab.label}
           </button>
         ))}
@@ -109,6 +113,8 @@ export default function CEODashboard() {
 
       {activeTab === 'daily-operations' ? (
         <DailyOperationsView />
+      ) : activeTab === 'closing-report' ? (
+        <ClosingReportView canEditRemarks={false} />
       ) : activeTab === 'project-stats' ? (
         <ProjectsView />
       ) : org && data && (

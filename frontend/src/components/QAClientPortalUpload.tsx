@@ -32,6 +32,7 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadElapsedSeconds, setUploadElapsedSeconds] = useState(0);
 
   const orderId = String(status?.job_order_id || order.client_reference || order.client_portal_id || order.order_number || '').trim();
   const invalidNames = useMemo(
@@ -63,6 +64,20 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
     return () => { active = false; };
   }, [onStatusChange, order.id]);
 
+  useEffect(() => {
+    if (busy !== 'upload') return;
+
+    const startedAt = Date.now();
+    setUploadElapsedSeconds(0);
+    const intervalId = window.setInterval(() => {
+      setUploadElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [busy]);
+
   if (busy === 'status' && !status) {
     return (
       <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
@@ -74,13 +89,63 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
   if (!status?.required) return null;
 
   const uploadFiles = async () => {
+    const isProject26 = Number(status?.project_id || order.project_id || 0) === 26;
     if (!files.length || invalidNames.length || oversizedFiles.length) return;
+    if (isProject26 && (files.length !== 1 || !files[0].name.toLowerCase().endsWith('.zip'))) {
+      setError('Project 26 upload expects one final ZIP file.');
+      return;
+    }
     setBusy('upload');
     setError('');
     setMessage('');
     setUploadProgress(0);
+    setUploadElapsedSeconds(0);
     try {
-      const response = await workflowService.uploadToClientPortal(order.id, files, undefined, setUploadProgress);
+      let response;
+      if (isProject26) {
+        let directPutCompleted = false;
+        try {
+          const prepared = await workflowService.prepareDirectClientPortalUpload(
+            order.id,
+            files[0],
+            undefined,
+          );
+
+          if (!prepared.data.direct_upload || !prepared.data.upload_url) {
+            response = {
+              data: {
+                message: prepared.data.message,
+                status: prepared.data.status,
+                upload_id: prepared.data.upload_id,
+              },
+            };
+          } else {
+            const directResponse = await workflowService.uploadFileToClientPortalUrl(
+              prepared.data.upload_url,
+              files[0],
+              prepared.data.headers,
+              setUploadProgress
+            );
+            directPutCompleted = true;
+            response = await workflowService.confirmDirectClientPortalUpload(
+              order.id,
+              prepared.data.upload_id,
+              {
+                httpStatus: directResponse.status,
+                response: typeof directResponse.data === 'string' ? directResponse.data : '',
+              }
+            );
+          }
+        } catch (directError: any) {
+          if (directPutCompleted || [403, 422].includes(Number(directError.response?.status || 0))) {
+            throw directError;
+          }
+
+          response = await workflowService.uploadToClientPortal(order.id, files, undefined, setUploadProgress);
+        }
+      } else {
+        response = await workflowService.uploadToClientPortal(order.id, files, undefined, setUploadProgress);
+      }
       setStatus(response.data.status);
       onStatusChange(response.data.status);
       setMessage(response.data.message);
@@ -133,7 +198,10 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
             type="file"
             multiple
             accept="image/*,.zip,application/zip,application/x-zip-compressed"
-            onChange={event => setFiles(Array.from(event.target.files || []))}
+            onChange={event => {
+              setFiles(Array.from(event.target.files || []));
+              setUploadElapsedSeconds(0);
+            }}
             className="block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-2 file:text-xs file:font-semibold file:text-blue-700"
           />
 
@@ -152,8 +220,8 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
           {busy === 'upload' && (
             <div>
               <div className="flex items-center justify-between text-xs font-medium text-slate-600">
-                <span>{uploadProgress < 100 ? 'Uploading to server' : 'Uploading to client portal'}</span>
-                <span>{uploadProgress}%</span>
+                <span>{Number(status?.project_id || order.project_id || 0) === 26 ? 'Uploading direct to client portal' : (uploadProgress < 100 ? 'Uploading to server' : 'Uploading to client portal')}</span>
+                <span>{uploadProgress}% · {uploadElapsedSeconds}s</span>
               </div>
               <div className="mt-1 h-2 overflow-hidden rounded-full bg-blue-100">
                 <div
@@ -161,6 +229,7 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
                   style={{ width: `${uploadProgress}%` }}
                 />
               </div>
+              <p className="mt-1 text-xs text-slate-600">Upload time: {uploadElapsedSeconds} seconds</p>
               {uploadProgress >= 100 && (
                 <p className="mt-1 text-xs text-slate-600">Waiting for client portal response...</p>
               )}

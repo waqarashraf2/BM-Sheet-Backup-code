@@ -532,6 +532,24 @@ export default function SupervisorAssignment() {
     if (role === 'filler') return !!(order as any).file_uploader_id;
     return !!(order as any).qa_id;
   }, []);
+  const hasBulkAssigneeForRole = useCallback((order: AssignmentOrder, role: BulkAssignmentRole) => {
+    const effectiveRole = role === 'designer' ? 'drawer' : role;
+    const hasValue = (value: unknown) => {
+      if (value == null) return false;
+      if (typeof value === 'number') return value > 0;
+      const normalized = String(value).trim().toLowerCase();
+      return normalized !== ''
+        && normalized !== '-'
+        && normalized !== 'assign'
+        && normalized !== '- assign'
+        && normalized !== 'waiting';
+    };
+
+    if (effectiveRole === 'drawer') return hasValue((order as any).drawer_id) || hasValue(order.drawer_name);
+    if (effectiveRole === 'checker') return hasValue((order as any).checker_id) || hasValue(order.checker_name);
+    if (effectiveRole === 'filler') return hasValue((order as any).file_uploader_id) || hasValue(order.file_uploader_name);
+    return hasValue((order as any).qa_id) || hasValue(order.qa_name);
+  }, []);
 
   const clientOrderSummary = useMemo(() => {
     const counts = new Map<string, { total: number; completed: number }>();
@@ -1151,6 +1169,10 @@ export default function SupervisorAssignment() {
     const roleForChecks = role === 'designer' ? 'drawer' : role;
     const hasAssignee = hasAssigneeForRole(order, roleForChecks);
 
+    if (hasBulkAssigneeForRole(order, role)) {
+      return false;
+    }
+
     if (hasAssignee && !canReassignDoneOrders) {
       return false;
     }
@@ -1192,6 +1214,7 @@ export default function SupervisorAssignment() {
     return true;
   }, [
     canReassignDoneOrders,
+    hasBulkAssigneeForRole,
     hasAssigneeForRole,
     isCheckerDoneForBulk,
     isDesignerDoneForBulk,
@@ -3857,7 +3880,7 @@ export default function SupervisorAssignment() {
                               <td className="px-2 py-2 text-center">
                                 <input
                                   type="checkbox"
-                                  checked={bulkSelectedKeys.has(getBulkOrderKey(o))}
+                                  checked={bulkSelectedKeys.has(getBulkOrderKey(o)) && isBulkAssignableOrder(o, bulkRole)}
                                   onChange={() => toggleBulkOrder(o)}
                                   disabled={!isBulkAssignableOrder(o, bulkRole) || bulkAssigning}
                                   className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-30"

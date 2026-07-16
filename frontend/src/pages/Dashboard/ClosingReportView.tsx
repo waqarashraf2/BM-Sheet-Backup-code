@@ -10,7 +10,17 @@ const today = () => {
   return `${date.getFullYear()}-${month}-${day}`;
 };
 
-export default function ClosingReportView() {
+type ClosingReportViewProps = {
+  canEditRemarks?: boolean;
+};
+
+const departmentLabel = (department: string) => {
+  if (department === 'floor_plan') return 'Floor Plan';
+  if (department === 'photos_enhancement') return 'Photos Enhancement';
+  return department.replace(/_/g, ' ');
+};
+
+export default function ClosingReportView({ canEditRemarks = true }: ClosingReportViewProps) {
   const [reportDate, setReportDate] = useState(today());
   const [countryFilter, setCountryFilter] = useState('');
   const [data, setData] = useState<ClosingReportData | null>(null);
@@ -50,6 +60,30 @@ export default function ClosingReportView() {
   const countryOptions = useMemo(() => {
     if (!data) return [];
     return data.countries.map((item) => item.country).sort();
+  }, [data]);
+
+  const reportSections = useMemo(() => {
+    if (!data) return [];
+
+    return data.countries.flatMap((country) => {
+      const groups = country.projects.reduce<Record<string, ClosingReportProjectRow[]>>((carry, project) => {
+        const key = project.department || 'unknown';
+        carry[key] = carry[key] || [];
+        carry[key].push(project);
+        return carry;
+      }, {});
+
+      return Object.entries(groups).map(([department, projects]) => ({
+        key: `${country.country}-${department}`,
+        country: country.country,
+        department,
+        title: `${country.country} ${departmentLabel(department)} Closing Report`,
+        total_orders: projects.reduce((sum, project) => sum + project.total_orders, 0),
+        uploaded_orders: projects.reduce((sum, project) => sum + project.uploaded_orders, 0),
+        pending_orders: projects.reduce((sum, project) => sum + project.pending_orders, 0),
+        projects,
+      }));
+    });
   }, [data]);
 
   const saveRemark = async (project: ClosingReportProjectRow) => {
@@ -145,27 +179,27 @@ export default function ClosingReportView() {
                 <th className="px-3 py-3 text-center">Uploaded Orders</th>
                 <th className="px-3 py-3 text-center">Pending</th>
                 <th className="px-3 py-3 text-left">Remarks</th>
-                <th className="px-3 py-3 text-center">Save</th>
+                {canEditRemarks && <th className="px-3 py-3 text-center">Save</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-slate-500">Loading closing report...</td>
+                  <td colSpan={canEditRemarks ? 7 : 6} className="px-3 py-8 text-center text-slate-500">Loading closing report...</td>
                 </tr>
               )}
-              {!loading && data?.countries.map((country) => (
-                <React.Fragment key={country.country}>
+              {!loading && reportSections.map((section) => (
+                <React.Fragment key={section.key}>
                   <tr className="bg-slate-50">
-                    <td className="px-3 py-2 font-semibold text-slate-900">{country.country}</td>
-                    <td className="px-3 py-2 text-slate-500">{country.project_count} projects</td>
-                    <td className="px-3 py-2 text-center font-semibold text-blue-600">{country.total_orders}</td>
-                    <td className="px-3 py-2 text-center font-semibold text-emerald-600">{country.uploaded_orders}</td>
-                    <td className="px-3 py-2 text-center font-semibold text-amber-600">{country.pending_orders}</td>
-                    <td className="px-3 py-2 text-slate-400">Country total</td>
-                    <td className="px-3 py-2" />
+                    <td className="px-3 py-2 font-semibold text-slate-900">{section.title}</td>
+                    <td className="px-3 py-2 text-slate-500">{section.projects.length} projects</td>
+                    <td className="px-3 py-2 text-center font-semibold text-blue-600">{section.total_orders}</td>
+                    <td className="px-3 py-2 text-center font-semibold text-emerald-600">{section.uploaded_orders}</td>
+                    <td className="px-3 py-2 text-center font-semibold text-amber-600">{section.pending_orders}</td>
+                    <td className="px-3 py-2 text-slate-400">{departmentLabel(section.department)} total</td>
+                    {canEditRemarks && <td className="px-3 py-2" />}
                   </tr>
-                  {country.projects.map((project) => (
+                  {section.projects.map((project) => (
                     <tr key={project.project_id} className="hover:bg-slate-50/70">
                       <td className="px-3 py-2">
                         <div className="font-medium text-slate-900">{project.project_name}</div>
@@ -176,32 +210,40 @@ export default function ClosingReportView() {
                       <td className="px-3 py-2 text-center font-semibold text-emerald-600">{project.uploaded_orders}</td>
                       <td className="px-3 py-2 text-center font-semibold text-amber-600">{project.pending_orders}</td>
                       <td className="px-3 py-2">
-                        <textarea
-                          value={remarks[project.project_id] ?? ''}
-                          onChange={(event) => setRemarks((current) => ({ ...current, [project.project_id]: event.target.value }))}
-                          rows={2}
-                          maxLength={2000}
-                          placeholder="Add remarks"
-                          className="w-full min-w-[260px] resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none"
-                        />
+                        {canEditRemarks ? (
+                          <textarea
+                            value={remarks[project.project_id] ?? ''}
+                            onChange={(event) => setRemarks((current) => ({ ...current, [project.project_id]: event.target.value }))}
+                            rows={2}
+                            maxLength={2000}
+                            placeholder="Add remarks"
+                            className="w-full min-w-[260px] resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none"
+                          />
+                        ) : (
+                          <div className="min-w-[260px] text-sm text-slate-700">
+                            {project.remarks?.trim() || '---'}
+                          </div>
+                        )}
                       </td>
-                      <td className="px-3 py-2 text-center">
-                        <button
-                          onClick={() => saveRemark(project)}
-                          disabled={savingId === project.project_id}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60"
-                          title="Save remarks"
-                        >
-                          <Save className="h-4 w-4" />
-                        </button>
-                      </td>
+                      {canEditRemarks && (
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={() => saveRemark(project)}
+                            disabled={savingId === project.project_id}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60"
+                            title="Save remarks"
+                          >
+                            <Save className="h-4 w-4" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </React.Fragment>
               ))}
-              {!loading && (data?.countries.length ?? 0) === 0 && (
+              {!loading && reportSections.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-slate-500">No closing report data found for this date.</td>
+                  <td colSpan={canEditRemarks ? 7 : 6} className="px-3 py-8 text-center text-slate-500">No closing report data found for this date.</td>
                 </tr>
               )}
             </tbody>

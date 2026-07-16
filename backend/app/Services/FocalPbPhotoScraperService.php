@@ -318,12 +318,14 @@ class FocalPbPhotoScraperService
         $comment = $this->rowValue($row, ['Comment', 'Comments', 'Instruction', 'Instructions', 'Notes', 'Internal Notes']);
         $detailUrl = $this->rowValue($row, ['_detail_url']);
         $originalImageUrl = null;
+        $originalImageId = null;
 
         if ($detailUrl !== null) {
             $details = $this->fetchJobDetails($detailUrl);
             $category = $category ?? ($details['category'] ?? null);
             $comment = $comment ?? ($details['comment'] ?? null);
             $originalImageUrl = $details['original_image_url'] ?? null;
+            $originalImageId = $this->extractOriginalImageId($originalImageUrl);
         }
 
         $dateReceived = $this->rowValue($row, ['Date Received', 'Received']);
@@ -338,13 +340,12 @@ class FocalPbPhotoScraperService
             'portal_status' => $portalStatus,
             'detail_url' => $detailUrl,
             'original_image_url' => $originalImageUrl,
+            'original_image_id' => $originalImageId,
             'category' => $category,
             'comment' => $comment,
             'source' => 'focal_pb_photo_jobs',
             'raw_row' => $row,
         ];
-
-        $receivedAt = $this->parseDateTime($dateReceived);
 
         return [
             'order_number' => $clientPortalId,
@@ -354,7 +355,7 @@ class FocalPbPhotoScraperService
             'metadata' => json_encode($extra, JSON_UNESCAPED_UNICODE),
             'client_portal_id' => $clientPortalId,
             'client_reference' => $enhancementId,
-            'orignal_image_id' => $originalImageUrl,
+            'orignal_image_id' => $originalImageId,
             'address' => null,
             'client_name' => null,
             'current_layer' => 'designer',
@@ -366,9 +367,9 @@ class FocalPbPhotoScraperService
             'code' => $propertyId,
             'project_type' => $jobType,
             'priority' => $this->resolvePriority($timeLeft),
-            'received_at' => $receivedAt,
+            'received_at' => $this->parseDateTime($dateReceived),
             'due_date' => $this->parseDueDate($dateDue),
-            'due_in' => $this->resolveDueIn($receivedAt, $category, $dateDue),
+            'due_in' => $this->parseDateTime($dateDue),
             'import_source' => 'cron',
             'created_at' => now(),
             'updated_at' => now(),
@@ -530,6 +531,25 @@ class FocalPbPhotoScraperService
         return null;
     }
 
+    private function extractOriginalImageId(?string $url): ?string
+    {
+        if ($url === null) {
+            return null;
+        }
+
+        $path = parse_url(trim($url), PHP_URL_PATH);
+        if (!is_string($path) || trim($path, '/') === '') {
+            return null;
+        }
+
+        $segments = array_values(array_filter(explode('/', trim($path, '/')), static fn ($segment) => $segment !== ''));
+        if (count($segments) === 0) {
+            return null;
+        }
+
+        return implode('/', array_slice($segments, -2));
+    }
+
     private function extractFieldFromHtml(string $html, array $labels): ?string
     {
         $dom = new \DOMDocument();
@@ -687,50 +707,6 @@ class FocalPbPhotoScraperService
         }
 
         return 'urgent';
-    }
-
-    private function resolveDueIn(?string $receivedAt, ?string $category, ?string $portalDueDate): ?string
-    {
-        $base = $receivedAt ?: $this->parseDateTime($portalDueDate);
-        if (!$base) {
-            return null;
-        }
-
-        $dt = DateTime::createFromFormat('Y-m-d H:i:s', $base, new DateTimeZone('UTC'));
-        if (!$dt) {
-            return null;
-        }
-
-        $hours = $this->dueInHoursForCategory($category);
-        $dt->modify("+{$hours} hours");
-
-        return $dt->format('Y-m-d H:i:s');
-    }
-
-    private function dueInHoursForCategory(?string $category): int
-    {
-        $normalized = strtolower(trim((string) $category));
-
-        if ($normalized === '') {
-            return 1;
-        }
-
-        $normalized = preg_replace('/[^a-z0-9]+/', ' ', $normalized);
-        $normalized = trim(preg_replace('/\s+/', ' ', $normalized));
-
-        $isRemoval = str_contains($normalized, 'removal')
-            || str_contains($normalized, 'removel')
-            || str_contains($normalized, 'remove');
-
-        if (
-            (str_contains($normalized, 'large') && str_contains($normalized, 'object'))
-            || (str_contains($normalized, 'object') && $isRemoval)
-            || (str_contains($normalized, 'other') && $isRemoval)
-        ) {
-            return 6;
-        }
-
-        return 1;
     }
 
     private function parseTimeLeftHours(?string $raw): float

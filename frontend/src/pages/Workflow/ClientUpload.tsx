@@ -102,6 +102,7 @@ export default function ClientUpload() {
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [uploadProgress, setUploadProgress] = useState(0);
+    const [uploadElapsedSeconds, setUploadElapsedSeconds] = useState(0);
     const [reuploadCompleted, setReuploadCompleted] = useState(false);
 
     const numericOrderId = Number(orderId);
@@ -164,6 +165,20 @@ export default function ClientUpload() {
         };
     }, [numericOrderId, orderIdValid, queryJobOrderId, requestedProjectId]);
 
+    useEffect(() => {
+        if (busy !== 'upload') return;
+
+        const startedAt = Date.now();
+        setUploadElapsedSeconds(0);
+        const intervalId = window.setInterval(() => {
+            setUploadElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+        }, 1000);
+
+        return () => {
+            window.clearInterval(intervalId);
+        };
+    }, [busy]);
+
     const orderLookup = useMemo(() => String(status?.job_order_id || status?.order_number || queryJobOrderId || orderInfo?.jobOrderId || '').trim(), [orderInfo, queryJobOrderId, status]);
     const imageLookup = useMemo(() => {
         const projectId = Number(status?.project_id || queryProjectId || orderInfo?.projectId || 0);
@@ -199,6 +214,8 @@ export default function ClientUpload() {
         [orderInfo, status]
     );
     const canUpload = !!orderLookup && status?.can_upload !== false;
+    const currentProjectId = Number(status?.project_id || queryProjectId || orderInfo?.projectId || 0);
+    const shouldUseDirectFespUpload = currentProjectId === 26;
     const canSubmitRole = ['operations_manager', 'project_manager', 'qa'].includes(user?.role || '');
     const canSubmitClientPortal = !!status?.uploaded && (!status?.submitted || (forceReupload && reuploadCompleted));
     const uploadStatusLabel = canUpload && (!status?.status || status.status === 'not_required')
@@ -228,22 +245,81 @@ export default function ClientUpload() {
         () => files.filter((file) => file.size > MAX_CLIENT_PORTAL_UPLOAD_BYTES),
         [files],
     );
+    const project26FileError = useMemo(() => {
+        if (!shouldUseDirectFespUpload || files.length === 0) return '';
+        if (files.length !== 1) return 'Project 26 upload expects one final ZIP file.';
+        if (!files[0].name.toLowerCase().endsWith('.zip')) return 'Project 26 upload expects a .zip file.';
+        return '';
+    }, [files, shouldUseDirectFespUpload]);
 
     const uploadFiles = async () => {
-        if (!orderIdValid || !files.length || invalidFiles.length || oversizedFiles.length || busy) return;
+        if (!orderIdValid || !files.length || invalidFiles.length || oversizedFiles.length || project26FileError || busy) return;
         setBusy('upload');
         setMessage('');
         setError('');
         setUploadProgress(0);
+        setUploadElapsedSeconds(0);
 
         try {
-            const response = await workflowService.uploadToClientPortal(
-                numericOrderId,
-                files,
-                orderLookup,
-                setUploadProgress,
-                { forceReupload, projectId: requestedProjectId }
-            );
+            let response;
+            if (shouldUseDirectFespUpload) {
+                let directPutCompleted = false;
+                try {
+                    const prepared = await workflowService.prepareDirectClientPortalUpload(
+                        numericOrderId,
+                        files[0],
+                        orderLookup,
+                        { forceReupload, projectId: requestedProjectId }
+                    );
+
+                    if (!prepared.data.direct_upload || !prepared.data.upload_url) {
+                        response = {
+                            data: {
+                                message: prepared.data.message,
+                                status: prepared.data.status,
+                                upload_id: prepared.data.upload_id,
+                            },
+                        };
+                    } else {
+                        const directResponse = await workflowService.uploadFileToClientPortalUrl(
+                            prepared.data.upload_url,
+                            files[0],
+                            prepared.data.headers,
+                            setUploadProgress
+                        );
+                        directPutCompleted = true;
+                        response = await workflowService.confirmDirectClientPortalUpload(
+                            numericOrderId,
+                            prepared.data.upload_id,
+                            {
+                                httpStatus: directResponse.status,
+                                response: typeof directResponse.data === 'string' ? directResponse.data : '',
+                                projectId: requestedProjectId,
+                            }
+                        );
+                    }
+                } catch (directError: any) {
+                    if (directPutCompleted || [403, 422].includes(Number(directError.response?.status || 0))) {
+                        throw directError;
+                    }
+
+                    response = await workflowService.uploadToClientPortal(
+                        numericOrderId,
+                        files,
+                        orderLookup,
+                        setUploadProgress,
+                        { forceReupload, projectId: requestedProjectId }
+                    );
+                }
+            } else {
+                response = await workflowService.uploadToClientPortal(
+                    numericOrderId,
+                    files,
+                    orderLookup,
+                    setUploadProgress,
+                    { forceReupload, projectId: requestedProjectId }
+                );
+            }
             setStatus(response.data.status);
             setReuploadCompleted(forceReupload);
             setMessage(response.data.message || 'Files uploaded successfully.');
@@ -286,6 +362,7 @@ export default function ClientUpload() {
     const selectFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
         setFiles(Array.from(event.target.files || []));
         setReuploadCompleted(false);
+        setUploadElapsedSeconds(0);
     };
 
     const openImageLinks = () => {
@@ -415,11 +492,17 @@ export default function ClientUpload() {
                             </div>
                         )}
 
+                        {project26FileError && (
+                            <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                                {project26FileError}
+                            </div>
+                        )}
+
                         {busy === 'upload' && (
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                                 <div className="flex items-center justify-between text-xs font-medium text-slate-600">
-                                    <span>{uploadProgress < 100 ? 'Uploading to server' : 'Uploading to client portal'}</span>
-                                    <span>{uploadProgress}%</span>
+                                    <span>{shouldUseDirectFespUpload ? 'Uploading direct to client portal' : (uploadProgress < 100 ? 'Uploading to server' : 'Uploading to client portal')}</span>
+                                    <span>{uploadProgress}% · {uploadElapsedSeconds}s</span>
                                 </div>
                                 <div className="mt-2 h-2 rounded-full bg-slate-200 overflow-hidden">
                                     <div
@@ -427,6 +510,7 @@ export default function ClientUpload() {
                                         style={{ width: `${uploadProgress}%` }}
                                     />
                                 </div>
+                                <p className="mt-2 text-xs text-slate-500">Upload time: {uploadElapsedSeconds} seconds</p>
                                 {uploadProgress >= 100 && (
                                     <p className="mt-2 text-xs text-slate-500">Waiting for client portal response...</p>
                                 )}
@@ -448,7 +532,7 @@ export default function ClientUpload() {
                                 icon={<UploadCloud className="h-4 w-4" />}
                                 onClick={uploadFiles}
                                 loading={busy === 'upload'}
-                                disabled={!files.length || !!invalidFiles.length || !!oversizedFiles.length || !canUpload || busy !== null}
+                                disabled={!files.length || !!invalidFiles.length || !!oversizedFiles.length || !!project26FileError || !canUpload || busy !== null}
                             >
                                 {forceReupload ? 'Reupload Files' : 'Upload Files'}
                             </Button>

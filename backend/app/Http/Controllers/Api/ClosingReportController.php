@@ -156,6 +156,14 @@ class ClosingReportController extends Controller
 
     private function visibleProjectIds($user): array
     {
+        if ($user->role === 'director') {
+            return Project::query()
+                ->where('status', 'active')
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        }
+
         if (in_array($user->role, ['operations_manager', 'project_manager'], true)) {
             return array_map('intval', $user->getManagedProjectIds());
         }

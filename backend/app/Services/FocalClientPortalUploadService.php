@@ -195,6 +195,123 @@ class FocalClientPortalUploadService
         return $record->fresh();
     }
 
+    public function prepareDirectFespUpload(
+        Order $order,
+        User $user,
+        string $fileName,
+        int $fileSize,
+        ?string $requestedJobOrderId = null,
+        bool $forceReupload = false
+    ): array {
+        $projectId = (int) $order->project_id;
+        if ($projectId !== self::FESP_PROJECT_ID) {
+            throw ValidationException::withMessages([
+                'order' => 'Direct client portal upload is only enabled for Project 26.',
+            ]);
+        }
+
+        if (!$this->canUploadForOrder($order, $requestedJobOrderId)) {
+            throw ValidationException::withMessages([
+                'order' => 'Client portal upload is not enabled for this order.',
+            ]);
+        }
+
+        if (strtolower(pathinfo($fileName, PATHINFO_EXTENSION)) !== 'zip') {
+            throw ValidationException::withMessages([
+                'file_name' => 'Project 26 client portal upload expects a .zip file.',
+            ]);
+        }
+
+        $jobOrderId = $this->clientPortalJobId($order);
+        $fileReference = $this->fileReference($order);
+        $this->validateRequestedJobOrderId($requestedJobOrderId, $jobOrderId, $fileReference);
+        $this->validateFileNames($projectId, $fileReference, collect([$fileName]));
+
+        $existingUpload = $this->existingSuccessfulUpload($projectId, (int) $order->id);
+        if ($existingUpload && !$forceReupload) {
+            return [
+                'message' => 'Files were already uploaded to the client portal.',
+                'status' => $this->status($order),
+                'upload_id' => $existingUpload->id,
+                'upload_url' => null,
+                'direct_upload' => false,
+            ];
+        }
+
+        $uploadUrlResponse = $this->fespClient()->post($this->fespUploadFinalsUrl($jobOrderId));
+        if (!$uploadUrlResponse->successful()) {
+            throw new \RuntimeException($this->responseMessage($uploadUrlResponse, 'FESP upload URL request failed.'));
+        }
+
+        $assetUploadUrl = trim((string) data_get($uploadUrlResponse->json(), 'AssetUploadUrl'));
+        if ($assetUploadUrl === '') {
+            throw new \RuntimeException('FESP upload URL response did not include AssetUploadUrl.');
+        }
+
+        $record = ClientPortalUpload::create([
+            'project_id' => $projectId,
+            'order_id' => $order->id,
+            'job_order_id' => $jobOrderId,
+            'uploaded_by' => $user->id,
+            'status' => 'uploading',
+            'file_names' => [$fileName],
+            'file_count' => 1,
+            'upload_http_status' => $uploadUrlResponse->status(),
+            'upload_response' => 'Direct upload URL issued for browser upload. File size: ' . $fileSize . ' bytes.',
+        ]);
+
+        return [
+            'message' => 'Direct client portal upload URL created.',
+            'status' => $this->status($order),
+            'upload_id' => $record->id,
+            'upload_url' => $assetUploadUrl,
+            'headers' => ['x-ms-blob-type' => 'BlockBlob'],
+            'direct_upload' => true,
+        ];
+    }
+
+    public function confirmDirectFespUpload(
+        Order $order,
+        User $user,
+        int $uploadId,
+        ?int $httpStatus = null,
+        ?string $responseBody = null
+    ): ClientPortalUpload {
+        if ((int) $order->project_id !== self::FESP_PROJECT_ID) {
+            throw ValidationException::withMessages([
+                'order' => 'Direct client portal upload is only enabled for Project 26.',
+            ]);
+        }
+
+        $record = ClientPortalUpload::query()
+            ->where('id', $uploadId)
+            ->where('project_id', $order->project_id)
+            ->where('order_id', $order->id)
+            ->where('uploaded_by', $user->id)
+            ->latest('id')
+            ->first();
+
+        if (!$record) {
+            throw ValidationException::withMessages([
+                'upload_id' => 'The direct upload record was not found for this order.',
+            ]);
+        }
+
+        if ($record->status === 'submitted') {
+            return $record;
+        }
+
+        $record->update([
+            'status' => 'uploaded',
+            'upload_http_status' => $httpStatus,
+            'upload_response' => $responseBody ?: 'Direct browser upload completed.',
+            'uploaded_at' => now(),
+            'failure_reason' => null,
+        ]);
+
+        return $record->fresh();
+    }
+
     private function latestUploadForStatus(Order $order): ?ClientPortalUpload
     {
         $successfulUpload = ClientPortalUpload::query()
@@ -211,6 +328,16 @@ class FocalClientPortalUploadService
         return ClientPortalUpload::query()
             ->where('project_id', $order->project_id)
             ->where('order_id', $order->id)
+            ->latest('id')
+            ->first();
+    }
+
+    private function existingSuccessfulUpload(int $projectId, int $orderId): ?ClientPortalUpload
+    {
+        return ClientPortalUpload::query()
+            ->where('project_id', $projectId)
+            ->where('order_id', $orderId)
+            ->whereIn('status', ['uploaded', 'submitted'])
             ->latest('id')
             ->first();
     }
