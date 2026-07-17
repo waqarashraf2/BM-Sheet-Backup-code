@@ -5,7 +5,7 @@ import { Button } from './ui';
 import { CheckCircle2, Loader2, Send, UploadCloud } from 'lucide-react';
 
 const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
-const ENABLE_PROJECT_26_DIRECT_UPLOAD = false;
+const ENABLE_PROJECT_26_DIRECT_UPLOAD = true;
 
 interface QAClientPortalUploadProps {
   order: Order;
