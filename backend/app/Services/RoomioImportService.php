@@ -843,7 +843,6 @@ protected function parseDueIn(string $dueRaw): string
                 if ($variantNo !== null && $variantNo !== '') {
                     DB::table($table)->where('id', $row->id)->update([
                         $variantColumn => $variantNo,
-                        'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.variant_fetch_method', 'detail_page')"),
                         'updated_at' => now(),
                     ]);
                     $updated++;
@@ -851,7 +850,6 @@ protected function parseDueIn(string $dueRaw): string
                     // API request succeeded but order has no variant name; set '-' so whereNull doesn't get stuck in an infinite loop
                     DB::table($table)->where('id', $row->id)->update([
                         $variantColumn => '-',
-                        'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.variant_fetch_method', 'detail_page_not_found')"),
                         'updated_at' => now(),
                     ]);
                     $updated++;

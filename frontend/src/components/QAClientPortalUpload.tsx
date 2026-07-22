@@ -6,6 +6,7 @@ import { CheckCircle2, Loader2, Send, UploadCloud } from 'lucide-react';
 
 const MAX_CLIENT_PORTAL_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
 const ENABLE_PROJECT_26_DIRECT_UPLOAD = true;
+const NETWORK_UPLOAD_RECHECK_DELAYS_MS = [2000, 5000, 10000];
 
 interface QAClientPortalUploadProps {
   order: Order;
@@ -42,6 +43,18 @@ function formatUploadSpeed(bytes: number, progress: number, elapsedSeconds: numb
   const mbPerSecond = uploadedBytes / elapsedSeconds / (1024 * 1024);
   if (mbPerSecond >= 1) return `${mbPerSecond.toFixed(2)} MB/s`;
   return `${(mbPerSecond * 1024).toFixed(0)} KB/s`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isNetworkUploadError(error: any): boolean {
+  return !error?.response && (
+    error?.code === 'ERR_NETWORK'
+    || error?.code === 'ECONNABORTED'
+    || String(error?.message || '').toLowerCase().includes('network')
+  );
 }
 
 export default function QAClientPortalUpload({ order, onStatusChange }: QAClientPortalUploadProps) {
@@ -168,6 +181,39 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
       onStatusChange(response.data.status);
       setMessage(response.data.message);
     } catch (e: any) {
+      if (isNetworkUploadError(e)) {
+        setMessage('Connection dropped while waiting for upload response. Checking client portal status...');
+
+        for (const delay of NETWORK_UPLOAD_RECHECK_DELAYS_MS) {
+          await sleep(delay);
+
+          try {
+            const statusResponse = await workflowService.getClientPortalUploadStatus(order.id);
+            const refreshedStatus = statusResponse.data;
+            setStatus(refreshedStatus);
+            onStatusChange(refreshedStatus);
+
+            if (refreshedStatus.uploaded || refreshedStatus.submitted) {
+              setError('');
+              setMessage('Upload completed. The browser lost the final response, but the client portal status is now updated.');
+              return;
+            }
+
+            if (refreshedStatus.status === 'failed') {
+              setMessage('');
+              setError(refreshedStatus.failure_reason || 'Upload failed after the server received the file. Please retry.');
+              return;
+            }
+          } catch {
+            // Keep the original network error if the status check is also unavailable.
+          }
+        }
+
+        setMessage('');
+        setError('Network connection dropped during upload. The file was not confirmed. Please retry once; if it repeats, check server resource/proxy logs for this time.');
+        return;
+      }
+
       const statusCode = e.response?.status;
       const serverMessage = e.response?.data?.message || e.response?.data?.errors?.files?.[0];
       const responseText = typeof e.response?.data === 'string' ? e.response.data : '';

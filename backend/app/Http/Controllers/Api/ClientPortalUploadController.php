@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Services\FocalClientPortalUploadService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class ClientPortalUploadController extends Controller
 {
@@ -60,6 +61,15 @@ class ClientPortalUploadController extends Controller
             'files.*.max' => 'Each upload file must not be greater than ' . $this->formatFileSize($maxFileKb) . '.',
         ]);
 
+        Log::info('Client portal upload request received', [
+            'order_id' => $order->id,
+            'project_id' => $order->project_id,
+            'user_id' => $request->user()?->id,
+            'file_count' => count($data['files']),
+            'file_names' => collect($data['files'])->map->getClientOriginalName()->values()->all(),
+            'file_sizes' => collect($data['files'])->map->getSize()->values()->all(),
+        ]);
+
         try {
             $upload = $this->service->upload(
                 $order,
@@ -74,6 +84,13 @@ class ClientPortalUploadController extends Controller
             report($e);
 
             $statusCode = str_contains($e->getMessage(), 'Job Status - Completed') ? 422 : 502;
+
+            Log::warning('Client portal upload request failed', [
+                'order_id' => $order->id,
+                'project_id' => $order->project_id,
+                'user_id' => $request->user()?->id,
+                'message' => $e->getMessage(),
+            ]);
 
             return response()->json([
                 'message' => $e->getMessage(),
