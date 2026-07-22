@@ -43,12 +43,21 @@ class RoomioImportService
 
         $data = $response->json();
 
-        if (!is_array($data) || !isset($data['data']['orderable']['variantName'])) {
-            Log::warning("Variant not found in JSON for order {$orderId}");
+        if (!is_array($data)) {
+            Log::warning("Variant fetch returned invalid JSON for order {$orderId}");
             return null;
         }
 
-        return trim((string) $data['data']['orderable']['variantName']) ?: null;
+        $orderData = $data['data'] ?? $data;
+        if (is_array($orderData)) {
+            $variant = $this->extractVariantNameFromOrder($orderData);
+            if ($variant !== null) {
+                return $variant;
+            }
+        }
+
+        Log::warning("Variant not found in JSON for order {$orderId}");
+        return '';
     }
 
     /**
@@ -320,6 +329,9 @@ protected function parseDueIn(string $dueRaw): string
             $order['orderable']['variant_name'] ?? null,
             $order['orderableSummary']['variantName'] ?? null,
             $order['orderableSummary']['variant_name'] ?? null,
+            $order['variantName'] ?? null,
+            $order['variant_name'] ?? null,
+            $order['variant'] ?? null,
         ];
 
         foreach ($candidates as $candidate) {
@@ -828,15 +840,23 @@ protected function parseDueIn(string $dueRaw): string
         foreach ($rows as $row) {
             try {
                 $variantNo = $this->fetchVariantNo($row->order_number, $auth);
-                if ($variantNo !== null) {
+                if ($variantNo !== null && $variantNo !== '') {
                     DB::table($table)->where('id', $row->id)->update([
                         $variantColumn => $variantNo,
                         'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.variant_fetch_method', 'detail_page')"),
                         'updated_at' => now(),
                     ]);
                     $updated++;
+                } elseif ($variantNo === '') {
+                    // API request succeeded but order has no variant name; set '-' so whereNull doesn't get stuck in an infinite loop
+                    DB::table($table)->where('id', $row->id)->update([
+                        $variantColumn => '-',
+                        'metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.variant_fetch_method', 'detail_page_not_found')"),
+                        'updated_at' => now(),
+                    ]);
+                    $updated++;
                 } else {
-                    Log::info("Variant backfill: no variant found for order {$row->order_number}, will retry next run.");
+                    Log::info("Variant backfill: HTTP request failed for order {$row->order_number}, will retry next run.");
                 }
 
                 // Keep detail endpoint traffic low when many jobs run in parallel.

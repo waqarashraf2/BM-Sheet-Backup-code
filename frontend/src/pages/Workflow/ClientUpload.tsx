@@ -288,36 +288,49 @@ export default function ClientUpload() {
         try {
             let response;
             if (shouldUseDirectFespUpload) {
-                const prepared = await workflowService.prepareDirectClientPortalUpload(
-                    numericOrderId,
-                    files[0],
-                    orderLookup,
-                    { forceReupload, projectId: requestedProjectId }
-                );
-
-                if (!prepared.data.direct_upload || !prepared.data.upload_url) {
-                    response = {
-                        data: {
-                            message: prepared.data.message,
-                            status: prepared.data.status,
-                            upload_id: prepared.data.upload_id,
-                        },
-                    };
-                } else {
-                    const directResponse = await workflowService.uploadFileToClientPortalUrl(
-                        prepared.data.upload_url,
-                        files[0],
-                        prepared.data.headers,
-                        setUploadProgress
-                    );
-                    response = await workflowService.confirmDirectClientPortalUpload(
+                try {
+                    const prepared = await workflowService.prepareDirectClientPortalUpload(
                         numericOrderId,
-                        prepared.data.upload_id,
-                        {
-                            httpStatus: directResponse.status,
-                            response: typeof directResponse.data === 'string' ? directResponse.data : '',
-                            projectId: requestedProjectId,
-                        }
+                        files[0],
+                        orderLookup,
+                        { forceReupload, projectId: requestedProjectId }
+                    );
+
+                    if (!prepared.data.direct_upload || !prepared.data.upload_url) {
+                        response = {
+                            data: {
+                                message: prepared.data.message,
+                                status: prepared.data.status,
+                                upload_id: prepared.data.upload_id,
+                            },
+                        };
+                    } else {
+                        const directResponse = await workflowService.uploadFileToClientPortalUrl(
+                            prepared.data.upload_url,
+                            files[0],
+                            prepared.data.headers,
+                            setUploadProgress
+                        );
+                        response = await workflowService.confirmDirectClientPortalUpload(
+                            numericOrderId,
+                            prepared.data.upload_id,
+                            {
+                                httpStatus: directResponse.status,
+                                response: typeof directResponse.data === 'string' ? directResponse.data : '',
+                                projectId: requestedProjectId,
+                            }
+                        );
+                    }
+                } catch (directError: any) {
+                    console.warn('Direct client portal upload unavailable, falling back to server upload:', directError);
+                    setUploadMode('server');
+                    setUploadProgress(0);
+                    response = await workflowService.uploadToClientPortal(
+                        numericOrderId,
+                        files,
+                        orderLookup,
+                        setUploadProgress,
+                        { forceReupload, projectId: requestedProjectId }
                     );
                 }
             } else {

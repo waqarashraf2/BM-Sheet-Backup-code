@@ -124,35 +124,42 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
     try {
       let response;
       if (isProject26) {
-        const prepared = await workflowService.prepareDirectClientPortalUpload(
-          order.id,
-          files[0],
-          undefined,
-        );
-
-        if (!prepared.data.direct_upload || !prepared.data.upload_url) {
-          response = {
-            data: {
-              message: prepared.data.message,
-              status: prepared.data.status,
-              upload_id: prepared.data.upload_id,
-            },
-          };
-        } else {
-          const directResponse = await workflowService.uploadFileToClientPortalUrl(
-            prepared.data.upload_url,
-            files[0],
-            prepared.data.headers,
-            setUploadProgress
-          );
-          response = await workflowService.confirmDirectClientPortalUpload(
+        try {
+          const prepared = await workflowService.prepareDirectClientPortalUpload(
             order.id,
-            prepared.data.upload_id,
-            {
-              httpStatus: directResponse.status,
-              response: typeof directResponse.data === 'string' ? directResponse.data : '',
-            }
+            files[0],
+            undefined,
           );
+
+          if (!prepared.data.direct_upload || !prepared.data.upload_url) {
+            response = {
+              data: {
+                message: prepared.data.message,
+                status: prepared.data.status,
+                upload_id: prepared.data.upload_id,
+              },
+            };
+          } else {
+            const directResponse = await workflowService.uploadFileToClientPortalUrl(
+              prepared.data.upload_url,
+              files[0],
+              prepared.data.headers,
+              setUploadProgress
+            );
+            response = await workflowService.confirmDirectClientPortalUpload(
+              order.id,
+              prepared.data.upload_id,
+              {
+                httpStatus: directResponse.status,
+                response: typeof directResponse.data === 'string' ? directResponse.data : '',
+              }
+            );
+          }
+        } catch (directError) {
+          console.warn('Direct client portal upload unavailable, falling back to server upload:', directError);
+          setUploadMode('server');
+          setUploadProgress(0);
+          response = await workflowService.uploadToClientPortal(order.id, files, undefined, setUploadProgress);
         }
       } else {
         response = await workflowService.uploadToClientPortal(order.id, files, undefined, setUploadProgress);

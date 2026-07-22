@@ -754,7 +754,7 @@ class FocalClientPortalUploadService
                 continue;
             }
 
-            $response = $this->fespClient()->post($this->fespUploadFinalsUrl($jobOrderId));
+            $response = $this->fespClient()->get($this->fespUploadFinalsUrl($jobOrderId));
             if ($response->successful()) {
                 return [$response, $jobOrderId];
             }
@@ -1047,7 +1047,7 @@ class FocalClientPortalUploadService
             ]);
         }
 
-        $uploadUrlResponse = $this->fespClient()->post($this->fespUploadFinalsUrl($jobOrderId));
+        $uploadUrlResponse = $this->fespClient()->get($this->fespUploadFinalsUrl($jobOrderId));
         if (!$uploadUrlResponse->successful()) {
             throw new \RuntimeException($this->responseMessage($uploadUrlResponse, 'FESP upload URL request failed.'));
         }
