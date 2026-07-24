@@ -100,7 +100,7 @@ class ClientPortalUploadController extends Controller
 
         return response()->json([
             'message' => 'Files uploaded successfully to the client portal.',
-            'status' => $this->service->status($order),
+            'status' => $this->service->status($order, false),
             'upload_id' => $upload->id,
         ]);
     }
@@ -169,7 +169,7 @@ class ClientPortalUploadController extends Controller
 
         return response()->json([
             'message' => 'Files uploaded successfully to the client portal.',
-            'status' => $this->service->status($order),
+            'status' => $this->service->status($order, false),
             'upload_id' => $upload->id,
         ]);
     }
@@ -198,7 +198,7 @@ class ClientPortalUploadController extends Controller
 
         return response()->json([
             'message' => 'Order accepted by the client portal. You can now complete it here.',
-            'status' => $this->service->status($order),
+            'status' => $this->service->status($order, false),
             'upload_id' => $upload->id,
         ]);
     }

@@ -547,7 +547,7 @@ class FocalPbPhotoScraperService
             return null;
         }
 
-        return implode('/', array_slice($segments, -2));
+        return end($segments);
     }
 
     private function extractFieldFromHtml(string $html, array $labels): ?string

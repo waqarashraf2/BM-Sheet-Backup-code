@@ -6,11 +6,13 @@ use App\Models\ClientPortalUpload;
 use App\Models\Order;
 use App\Models\Project;
 use App\Models\User;
+use GuzzleHttp\Psr7\Response as Psr7Response;
 use Illuminate\Http\Client\Response;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
@@ -58,7 +60,7 @@ class FocalClientPortalUploadService
             && $this->clientPortalJobId($order) !== '';
     }
 
-    public function status(Order $order): array
+    public function status(Order $order, bool $checkClientPortal = true): array
     {
         $required = $this->isRequiredForOrder($order);
         $canUpload = $this->canUploadForOrder($order);
@@ -69,7 +71,7 @@ class FocalClientPortalUploadService
             ? $this->latestUploadForStatus($order)
             : null;
 
-        $portalJobStatus = $canUpload ? $this->clientPortalJobStatus($order) : null;
+        $portalJobStatus = $canUpload && $checkClientPortal ? $this->clientPortalJobStatus($order) : null;
 
         return [
             'required' => $required,
@@ -162,9 +164,7 @@ class FocalClientPortalUploadService
                     }
 
                     try {
-                        $lastResponse = $this->client()
-                            ->attach('files', $stream, $file->getClientOriginalName())
-                            ->post($this->uploadUrl($jobOrderId));
+                        $lastResponse = $this->uploadAssetWithNativeCurl($jobOrderId, $file, $stream);
                     } finally {
                         if (is_resource($stream)) {
                             fclose($stream);
@@ -811,6 +811,92 @@ class FocalClientPortalUploadService
                 'Supplier-Secret' => (string) config('services.focal_client_portal.supplier_secret'),
                 'Ocp-Apim-Subscription-Key' => (string) config('services.focal_client_portal.subscription_key'),
             ]);
+    }
+
+    private function uploadAssetWithNativeCurl(string $jobOrderId, UploadedFile $file, mixed $stream): Response
+    {
+        if (!function_exists('curl_init') || !class_exists(\CURLFile::class)) {
+            Log::warning('Native cURL unavailable for client portal upload; using Laravel HTTP client fallback.', [
+                'job_order_id' => $jobOrderId,
+                'file_name' => $file->getClientOriginalName(),
+            ]);
+
+            return $this->client()
+                ->attach('files', $stream, $file->getClientOriginalName())
+                ->post($this->uploadUrl($jobOrderId));
+        }
+
+        if (
+            blank(config('services.focal_client_portal.supplier_secret'))
+            || blank(config('services.focal_client_portal.subscription_key'))
+        ) {
+            throw new \RuntimeException(
+                'Focal client portal credentials are not configured on the server.'
+            );
+        }
+
+        $path = $file->getRealPath();
+        if (!$path || !is_readable($path)) {
+            throw new \RuntimeException("Unable to read {$file->getClientOriginalName()}.");
+        }
+
+        $timeout = max(60, (int) config('services.focal_client_portal.timeout', 600));
+        $connectTimeout = min(60, max(10, (int) config('services.focal_client_portal.connect_timeout', 30)));
+        $responseHeaders = [];
+        $responseBody = '';
+
+        $curl = curl_init($this->uploadUrl($jobOrderId));
+        if ($curl === false) {
+            throw new \RuntimeException('Unable to initialize client portal upload connection.');
+        }
+
+        $mimeType = $file->getMimeType() ?: 'application/octet-stream';
+        $postFields = [
+            'files' => new \CURLFile($path, $mimeType, $file->getClientOriginalName()),
+        ];
+
+        curl_setopt_array($curl, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $postFields,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_HTTPHEADER => [
+                'Accept: */*',
+                'Expect:',
+                'Supplier-Secret: ' . (string) config('services.focal_client_portal.supplier_secret'),
+                'Ocp-Apim-Subscription-Key: ' . (string) config('services.focal_client_portal.subscription_key'),
+            ],
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => $connectTimeout,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_HEADERFUNCTION => static function ($curl, string $headerLine) use (&$responseHeaders): int {
+                $length = strlen($headerLine);
+                $headerLine = trim($headerLine);
+
+                if ($headerLine !== '' && str_contains($headerLine, ':')) {
+                    [$name, $value] = explode(':', $headerLine, 2);
+                    $responseHeaders[trim($name)][] = trim($value);
+                }
+
+                return $length;
+            },
+        ]);
+
+        try {
+            $result = curl_exec($curl);
+            $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+            $errorNumber = curl_errno($curl);
+            $errorMessage = curl_error($curl);
+        } finally {
+            curl_close($curl);
+        }
+
+        if ($result === false || $errorNumber !== 0) {
+            throw new \RuntimeException(trim("Client portal upload connection failed: {$errorMessage} (cURL {$errorNumber})"));
+        }
+
+        $responseBody = is_string($result) ? $result : $responseBody;
+
+        return new Response(new Psr7Response($status, $responseHeaders, $responseBody));
     }
 
     private function fespClient()

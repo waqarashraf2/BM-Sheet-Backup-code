@@ -132,6 +132,7 @@ if ($request->query('date')) {
         $projectIds = $projects->pluck('id')->toArray();
 
         $selectCols = 'id, order_number, project_id, batch_number, received_at, workflow_state, assigned_to, drawer_id, completed_at, due_in';
+        $batchOptionalCols = ['rejection_type', 'fixing_started_at', 'fixing_completed_at'];
 
         // Match the Assignment dashboard's normalized deadline for project 16.
         // Its relative due_in values are stored two hours early during import.
@@ -143,13 +144,13 @@ if ($request->query('date')) {
         $rawUnion = $this->buildQueueUnionQuery(
             $projectIds,
             $selectCols,
-            []
+            $batchOptionalCols
         );
 
         $untouchedRawUnion = $this->buildQueueUnionQuery(
             $projectIds,
             $selectCols,
-            ['checker_id']
+            array_merge(['checker_id'], $batchOptionalCols)
         );
 
         /*
@@ -425,10 +426,40 @@ if ($request->query('date')) {
             ];
         }
 
-        $fixedMin = $batches
-            ->where('fixing', '>', 0)
-            ->sortBy('remaining_minutes')
+        $fixedOrderMin = $orders
+            ->filter(function ($o) {
+                return strtolower((string) ($o->rejection_type ?? '')) === 'pending'
+                    && !in_array((string) ($o->workflow_state ?? ''), ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER'], true)
+                    && !empty($o->due_in)
+                    && $o->batch_remaining_minutes !== null;
+            })
+            ->sortBy(fn($o) => (int) $o->batch_remaining_minutes)
             ->first();
+
+        $fixedMin = null;
+
+        if ($fixedOrderMin) {
+            $remainingMinutes = (int) $fixedOrderMin->batch_remaining_minutes;
+            $fixedMin = [
+                'batch_no' => $fixedOrderMin->batch_number,
+                'batch_label' => $fixedOrderMin->batch_number
+                    ? 'Batch ' . str_pad((string) $fixedOrderMin->batch_number, 2, '0', STR_PAD_LEFT)
+                    : null,
+                'order_number' => $fixedOrderMin->order_number,
+                'received_time' => $fixedOrderMin->received_at
+                    ? \Carbon\Carbon::parse($fixedOrderMin->received_at, 'Asia/Karachi')->format('h:i A')
+                    : null,
+                'remaining_minutes' => $remainingMinutes,
+                'remaining_time' => floor($remainingMinutes / 60) . 'h ' . ($remainingMinutes % 60) . 'm',
+                'plans' => 1,
+                'done' => 0,
+                'pending' => 1,
+                'fixing' => 0,
+                'drawing' => $fixedOrderMin->workflow_state === 'IN_DRAW' ? 1 : 0,
+                'min_remaining_minutes' => $remainingMinutes,
+                'max_remaining_minutes' => $remainingMinutes,
+            ];
+        }
 
         if ($fixedMin) {
             $fixedMin['remaining_time'] =
