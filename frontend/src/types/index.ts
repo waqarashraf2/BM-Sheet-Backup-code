@@ -106,11 +106,12 @@ export interface User {
   rejection_rate_30d: number;
   assignment_score: number;
   skills: string[] | null;
-  shift_start: string | null;
-  shift_end: string | null;
-  project?: Project;
-  team?: Team;
-}
+    shift_start: string | null;
+    shift_end: string | null;
+    created_at?: string | null;
+    project?: Project;
+    team?: Team;
+  }
 
 export interface UserDocument {
   id: number;

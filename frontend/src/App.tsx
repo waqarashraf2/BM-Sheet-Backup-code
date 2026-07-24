@@ -172,6 +172,14 @@ function App() {
               }
             />
             <Route
+              path="hr-panel/*"
+              element={
+                <ProtectedRoute allowedRoles={['hr', 'director']}>
+                  <HRDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="batch-status/*"
               element={
                 <ProtectedRoute allowedRoles={['operations_manager', 'project_manager', 'qa']}>

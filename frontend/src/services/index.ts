@@ -699,10 +699,12 @@ export const userService = {
 };
 
 export const hrService = {
-  dashboard: (params?: { month?: string }) =>
+  dashboard: (params?: { month?: string; project_id?: number | string }) =>
     api.get<{
       stats: { total: number; active: number; inactive: number; absent: number; present: number };
       month: string;
+      project_id?: number | null;
+      project_options: Array<{ id: number; name: string; code?: string | null }>;
       documents_ready: boolean;
       machine_id_ready: boolean;
       monthly_progress: Array<{
@@ -715,12 +717,35 @@ export const hrService = {
         avg_minutes?: number | null;
       }>;
     }>('/hr/dashboard', { params }),
-  users: (params?: { page?: number; per_page?: number; search?: string; role?: string; status?: string; month?: string }) =>
-    api.get<PaginatedResponse<User> & { documents_ready: boolean; machine_id_ready: boolean }>('/hr/users', { params }),
+  users: (params?: { page?: number; per_page?: number; search?: string; role?: string; status?: string; month?: string; project_id?: number | string }) =>
+    api.get<PaginatedResponse<User> & {
+      documents_ready: boolean;
+      machine_id_ready: boolean;
+      project_options: Array<{ id: number; name: string; code?: string | null }>;
+    }>('/hr/users', { params }),
+  userDetail: (userId: number, params?: { month?: string }) =>
+    api.get<{
+      user: User;
+      documents: UserDocument[];
+      performance: {
+        today_completed: number;
+        month_completed: number;
+        month_avg_minutes?: number | null;
+        daily_progress: Array<{ date: string; completed: number; avg_minutes?: number | null }>;
+        recent_work: Array<{ id: number; order_id: number; project_id: number; stage?: string | null; status: string; completed_at?: string | null; minutes?: number | null }>;
+      };
+      month: string;
+      documents_ready: boolean;
+      machine_id_ready: boolean;
+    }>(`/hr/users/${userId}`, { params }),
   documents: (userId: number) =>
     api.get<{ data: UserDocument[]; documents_ready: boolean }>(`/hr/users/${userId}/documents`),
   uploadDocument: (userId: number, data: FormData) =>
     api.post<{ data: UserDocument; message: string }>(`/hr/users/${userId}/documents`, data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  uploadDocuments: (userId: number, data: FormData) =>
+    api.post<{ data: UserDocument[]; message: string }>(`/hr/users/${userId}/documents/bulk`, data, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
   downloadDocument: (documentId: number) =>

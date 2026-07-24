@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Project;
 use App\Models\User;
 use App\Models\UserDocument;
 use App\Models\WorkItem;
@@ -19,7 +20,9 @@ class HrController extends Controller
     {
         $this->authorizeHr($request);
 
-        $userBase = User::query();
+        $projectId = $this->requestedProjectId($request);
+        $userBase = User::query()
+            ->when($projectId, fn ($query) => $query->where('project_id', $projectId));
         $stats = [
             'total' => (clone $userBase)->count(),
             'active' => (clone $userBase)->where('is_active', true)->count(),
@@ -40,6 +43,7 @@ class HrController extends Controller
 
             $monthlyProgress = WorkItem::query()
                 ->where('status', 'completed')
+                ->when($projectId, fn ($query) => $query->where('project_id', $projectId))
                 ->whereBetween('completed_at', [$monthStart, $monthEnd])
                 ->selectRaw("assigned_user_id, COUNT(*) as completed, {$avgSelect}")
                 ->groupBy('assigned_user_id')
@@ -57,6 +61,8 @@ class HrController extends Controller
         return response()->json([
             'stats' => $stats,
             'month' => $month->format('Y-m'),
+            'project_id' => $projectId,
+            'project_options' => $this->projectOptions(),
             'documents_ready' => Schema::hasTable('user_documents'),
             'machine_id_ready' => Schema::hasColumn('users', 'machine_id'),
             'monthly_progress' => $monthlyProgress->map(function ($row) use ($users) {
@@ -131,6 +137,7 @@ class HrController extends Controller
         return response()->json(array_merge($users->toArray(), [
             'documents_ready' => Schema::hasTable('user_documents'),
             'machine_id_ready' => Schema::hasColumn('users', 'machine_id'),
+            'project_options' => $this->projectOptions(),
             'month' => $month->format('Y-m'),
         ]));
     }
@@ -205,6 +212,108 @@ class HrController extends Controller
         ]);
     }
 
+    public function userDetail(Request $request, string $userId)
+    {
+        $this->authorizeHr($request);
+
+        $month = $this->requestedMonth($request);
+        $monthStart = $month->copy()->startOfMonth();
+        $monthEnd = $month->copy()->endOfMonth();
+        $todayStart = now()->startOfDay();
+        $todayEnd = now()->endOfDay();
+
+        $user = User::query()
+            ->with(['project:id,name,code', 'team:id,name,project_id'])
+            ->select($this->userColumns())
+            ->findOrFail($userId);
+
+        $documents = collect();
+        if (Schema::hasTable('user_documents')) {
+            $documents = UserDocument::where('user_id', $user->id)->latest()->get();
+        }
+
+        $performance = [
+            'today_completed' => 0,
+            'month_completed' => 0,
+            'month_avg_minutes' => null,
+            'daily_progress' => [],
+            'recent_work' => [],
+        ];
+
+        if (Schema::hasTable('work_items')) {
+            $avgExpression = Schema::hasColumn('work_items', 'time_spent_seconds')
+                ? 'AVG(CASE WHEN time_spent_seconds > 0 THEN time_spent_seconds ELSE NULL END) as avg_seconds'
+                : 'NULL as avg_seconds';
+
+            $todayCompleted = WorkItem::query()
+                ->where('assigned_user_id', $user->id)
+                ->where('status', 'completed')
+                ->whereBetween('completed_at', [$todayStart, $todayEnd])
+                ->count();
+
+            $monthSummary = WorkItem::query()
+                ->where('assigned_user_id', $user->id)
+                ->where('status', 'completed')
+                ->whereBetween('completed_at', [$monthStart, $monthEnd])
+                ->selectRaw("COUNT(*) as completed, {$avgExpression}")
+                ->first();
+
+            $dailyProgress = WorkItem::query()
+                ->where('assigned_user_id', $user->id)
+                ->where('status', 'completed')
+                ->whereBetween('completed_at', [$monthStart, $monthEnd])
+                ->selectRaw("DATE(completed_at) as work_date, COUNT(*) as completed, {$avgExpression}")
+                ->groupBy(DB::raw('DATE(completed_at)'))
+                ->orderBy('work_date')
+                ->get()
+                ->map(fn ($row) => [
+                    'date' => $row->work_date,
+                    'completed' => (int) $row->completed,
+                    'avg_minutes' => $row->avg_seconds ? round(((float) $row->avg_seconds) / 60, 1) : null,
+                ]);
+
+            $recentColumns = ['id', 'order_id', 'project_id', 'stage', 'status', 'completed_at'];
+            if (Schema::hasColumn('work_items', 'time_spent_seconds')) {
+                $recentColumns[] = 'time_spent_seconds';
+            }
+
+            $recentWork = WorkItem::query()
+                ->where('assigned_user_id', $user->id)
+                ->where('status', 'completed')
+                ->latest('completed_at')
+                ->limit(20)
+                ->get($recentColumns)
+                ->map(fn (WorkItem $item) => [
+                    'id' => $item->id,
+                    'order_id' => $item->order_id,
+                    'project_id' => $item->project_id,
+                    'stage' => $item->stage,
+                    'status' => $item->status,
+                    'completed_at' => optional($item->completed_at)->toDateTimeString(),
+                    'minutes' => isset($item->time_spent_seconds) && $item->time_spent_seconds
+                        ? round(((float) $item->time_spent_seconds) / 60, 1)
+                        : null,
+                ]);
+
+            $performance = [
+                'today_completed' => $todayCompleted,
+                'month_completed' => (int) ($monthSummary?->completed ?? 0),
+                'month_avg_minutes' => $monthSummary?->avg_seconds ? round(((float) $monthSummary->avg_seconds) / 60, 1) : null,
+                'daily_progress' => $dailyProgress,
+                'recent_work' => $recentWork,
+            ];
+        }
+
+        return response()->json([
+            'user' => $user,
+            'documents' => $documents,
+            'performance' => $performance,
+            'month' => $month->format('Y-m'),
+            'documents_ready' => Schema::hasTable('user_documents'),
+            'machine_id_ready' => Schema::hasColumn('users', 'machine_id'),
+        ]);
+    }
+
     public function uploadDocument(Request $request, string $userId)
     {
         $this->authorizeHr($request);
@@ -221,29 +330,46 @@ class HrController extends Controller
             'file' => 'required|file|max:10240|mimes:jpg,jpeg,png,pdf,doc,docx',
         ]);
 
-        $file = $request->file('file');
-        $machineId = Schema::hasColumn('users', 'machine_id') ? ($user->machine_id ?: null) : null;
-        $folderKey = Str::slug($machineId ?: "user-{$user->id}");
-        $extension = strtolower($file->getClientOriginalExtension() ?: 'bin');
-        $fileName = $validated['document_type'] . '-' . now()->format('YmdHis') . '-' . Str::random(8) . '.' . $extension;
-        $path = $file->storeAs("private/user-documents/{$folderKey}", $fileName, 'local');
-
-        $document = UserDocument::create([
-            'user_id' => $user->id,
-            'machine_id' => $machineId,
-            'document_type' => $validated['document_type'],
-            'original_name' => $file->getClientOriginalName(),
-            'file_name' => $fileName,
-            'file_path' => $path,
-            'mime_type' => $file->getMimeType(),
-            'file_size' => $file->getSize(),
-            'uploaded_by' => $request->user()->id,
-            'uploaded_at' => now(),
-        ]);
+        $document = $this->storeUserDocument($user, $request->file('file'), $validated['document_type'], $request->user()->id);
 
         return response()->json([
             'message' => 'Document uploaded successfully.',
             'data' => $document,
+        ], 201);
+    }
+
+    public function uploadDocuments(Request $request, string $userId)
+    {
+        $this->authorizeHr($request);
+
+        if (!Schema::hasTable('user_documents')) {
+            return response()->json([
+                'message' => 'User documents table is not ready. Run the manual SQL first.',
+            ], 503);
+        }
+
+        $user = User::findOrFail($userId);
+        $validated = $request->validate([
+            'documents' => 'required|array|min:1|max:12',
+            'documents.*.document_type' => 'required|in:' . implode(',', UserDocument::TYPES),
+            'documents.*.file' => 'required|file|max:10240|mimes:jpg,jpeg,png,pdf,doc,docx',
+        ]);
+
+        $uploaded = [];
+        DB::transaction(function () use ($request, $validated, $user, &$uploaded) {
+            foreach ($validated['documents'] as $index => $item) {
+                $uploaded[] = $this->storeUserDocument(
+                    $user,
+                    $request->file("documents.{$index}.file"),
+                    $item['document_type'],
+                    $request->user()->id
+                );
+            }
+        });
+
+        return response()->json([
+            'message' => count($uploaded) . ' documents uploaded successfully.',
+            'data' => $uploaded,
         ], 201);
     }
 
@@ -264,9 +390,31 @@ class HrController extends Controller
         return Storage::disk('local')->download($document->file_path, $document->original_name);
     }
 
+    private function storeUserDocument(User $user, $file, string $documentType, int $uploadedBy): UserDocument
+    {
+        $machineId = Schema::hasColumn('users', 'machine_id') ? ($user->machine_id ?: null) : null;
+        $folderKey = Str::slug($machineId ?: "user-{$user->id}");
+        $extension = strtolower($file->getClientOriginalExtension() ?: 'bin');
+        $fileName = $documentType . '-' . now()->format('YmdHis') . '-' . Str::random(8) . '.' . $extension;
+        $path = $file->storeAs("private/user-documents/{$folderKey}", $fileName, 'local');
+
+        return UserDocument::create([
+            'user_id' => $user->id,
+            'machine_id' => $machineId,
+            'document_type' => $documentType,
+            'original_name' => $file->getClientOriginalName(),
+            'file_name' => $fileName,
+            'file_path' => $path,
+            'mime_type' => $file->getMimeType(),
+            'file_size' => $file->getSize(),
+            'uploaded_by' => $uploadedBy,
+            'uploaded_at' => now(),
+        ]);
+    }
+
     private function authorizeHr(Request $request): void
     {
-        abort_unless($request->user() && $request->user()->role === 'hr', 403);
+        abort_unless($request->user() && in_array($request->user()->role, ['hr', 'director'], true), 403);
     }
 
     private function userColumns(): array
@@ -279,8 +427,13 @@ class HrController extends Controller
             'created_at',
         ];
 
-        if (Schema::hasColumn('users', 'machine_id')) {
-            $columns[] = 'machine_id';
+        foreach ([
+            'machine_id', 'inactive_days', 'is_online', 'wip_count', 'wip_limit',
+            'shift_start', 'shift_end', 'layer', 'skills', 'assignment_score',
+        ] as $optionalColumn) {
+            if (Schema::hasColumn('users', $optionalColumn)) {
+                $columns[] = $optionalColumn;
+            }
         }
 
         return $columns;
@@ -290,6 +443,10 @@ class HrController extends Controller
     {
         if ($request->filled('role') && $request->input('role') !== 'all') {
             $query->where('role', $request->input('role'));
+        }
+
+        if ($request->filled('project_id') && $request->input('project_id') !== 'all') {
+            $query->where('project_id', (int) $request->input('project_id'));
         }
 
         if ($request->filled('status') && $request->input('status') !== 'all') {
@@ -330,5 +487,31 @@ class HrController extends Controller
         } catch (\Throwable) {
             return now()->startOfMonth();
         }
+    }
+
+    private function requestedProjectId(Request $request): ?int
+    {
+        if (!$request->filled('project_id') || $request->input('project_id') === 'all') {
+            return null;
+        }
+
+        $projectId = (int) $request->input('project_id');
+        return $projectId > 0 ? $projectId : null;
+    }
+
+    private function projectOptions()
+    {
+        if (!Schema::hasTable('projects')) {
+            return [];
+        }
+
+        return Project::query()
+            ->orderBy('name')
+            ->get(['id', 'name', 'code'])
+            ->map(fn (Project $project) => [
+                'id' => $project->id,
+                'name' => $project->name,
+                'code' => $project->code,
+            ]);
     }
 }

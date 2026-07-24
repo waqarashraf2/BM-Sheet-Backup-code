@@ -217,11 +217,13 @@ Route::prefix('assignments')->group(function () {
     Route::middleware('role:drawer,checker,filler,qa,designer')->get('/dashboard/worker', [DashboardController::class, 'worker']);
     Route::middleware('role:ceo,director,operations_manager,project_manager')->get('/dashboard/absentees', [DashboardController::class, 'absentees']);
 
-    Route::middleware('role:hr')->prefix('hr')->group(function () {
+    Route::middleware('role:hr,director')->prefix('hr')->group(function () {
         Route::get('/dashboard', [HrController::class, 'dashboard']);
         Route::get('/users', [HrController::class, 'users']);
+        Route::get('/users/{userId}', [HrController::class, 'userDetail']);
         Route::get('/users/{userId}/documents', [HrController::class, 'documents']);
         Route::post('/users/{userId}/documents', [HrController::class, 'uploadDocument']);
+        Route::post('/users/{userId}/documents/bulk', [HrController::class, 'uploadDocuments']);
         Route::get('/documents/{documentId}/download', [HrController::class, 'downloadDocument']);
         Route::post('/absent/deactivate', [HrController::class, 'deactivateLongAbsent']);
     });

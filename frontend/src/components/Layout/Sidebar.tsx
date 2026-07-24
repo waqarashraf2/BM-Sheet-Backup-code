@@ -19,6 +19,7 @@ const NAV = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['ceo', 'director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer', 'accounts_manager', 'live_qa', 'hr'] },
   { name: 'Projects', href: '/projects', icon: FolderKanban, roles: ['ceo', 'director', 'operations_manager', 'project_manager'] },
   { name: 'Users', href: '/users', icon: Users, roles: ['director', 'operations_manager', 'project_manager'] },
+  { name: 'HR Panel', href: '/hr-panel', icon: UsersRound, roles: ['director'] },
   { name: 'Invoices', href: '/invoices', icon: Receipt, roles: ['ceo', 'director', 'accounts_manager'] },
   { name: 'Monthly Quantities', href: '/monthly-quantities', icon: BarChart3, roles: ['operations_manager', 'ceo', 'director'] },
   { name: 'Import Orders', href: '/import', icon: Upload, roles: ['director', 'operations_manager', 'project_manager', 'qa'] },
