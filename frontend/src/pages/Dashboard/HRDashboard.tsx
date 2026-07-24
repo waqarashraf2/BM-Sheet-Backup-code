@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertCircle, Calendar, Download, FileText, Search, Upload, UserCheck, UserX, Users } from 'lucide-react';
+import { Activity, AlertCircle, Calendar, Download, FileText, Search, ShieldCheck, Upload, UserCheck, UserX, Users } from 'lucide-react';
 import { AnimatedPage, Button, Modal, PageHeader, StatusBadge } from '../../components/ui';
 import { hrService } from '../../services';
 import type { User, UserDocument } from '../../types';
@@ -30,16 +30,24 @@ type ProgressRow = {
   avg_minutes?: number | null;
 };
 
+type HrUserRow = User & {
+  documents_count?: number;
+  monthly_completed?: number;
+  monthly_avg_minutes?: number | null;
+};
+
 export default function HRDashboard() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'users'>('dashboard');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [stats, setStats] = useState<HrStats>({ total: 0, active: 0, inactive: 0, absent: 0, present: 0 });
   const [progress, setProgress] = useState<ProgressRow[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+  const [users, setUsers] = useState<HrUserRow[]>([]);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, per_page: 25, total: 0 });
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
+  const [role, setRole] = useState('all');
+  const [userMonth, setUserMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [documentsReady, setDocumentsReady] = useState(true);
@@ -49,6 +57,8 @@ export default function HRDashboard() {
   const [documentType, setDocumentType] = useState<typeof documentTypes[number]['value']>('copy_of_cnic');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState<{ matched: number; preview: Array<Partial<User> & { inactive_days?: number }> } | null>(null);
   const [error, setError] = useState('');
 
   const loadDashboard = useCallback(async () => {
@@ -70,7 +80,7 @@ export default function HRDashboard() {
   const loadUsers = useCallback(async () => {
     try {
       setLoadingUsers(true);
-      const res = await hrService.users({ page, per_page: 25, search, status });
+      const res = await hrService.users({ page, per_page: 25, search, status, role, month: userMonth });
       setUsers(res.data.data || []);
       setPagination({
         current_page: res.data.current_page || 1,
@@ -86,7 +96,7 @@ export default function HRDashboard() {
     } finally {
       setLoadingUsers(false);
     }
-  }, [page, search, status]);
+  }, [page, search, status, role, userMonth]);
 
   useEffect(() => {
     loadDashboard();
@@ -152,6 +162,37 @@ export default function HRDashboard() {
     }
   };
 
+  const previewDeactivate = async () => {
+    try {
+      setDeactivating(true);
+      setError('');
+      const res = await hrService.deactivateLongAbsent({ days: 15, dry_run: true });
+      setConfirmDeactivate({ matched: res.data.matched, preview: res.data.preview || [] });
+    } catch (e: any) {
+      console.error(e);
+      setError(e.response?.data?.message || 'Could not check absent users.');
+    } finally {
+      setDeactivating(false);
+    }
+  };
+
+  const runDeactivate = async () => {
+    try {
+      setDeactivating(true);
+      setError('');
+      await hrService.deactivateLongAbsent({ days: 15, dry_run: false });
+      setConfirmDeactivate(null);
+      setStatus('inactive');
+      setPage(1);
+      await Promise.all([loadDashboard(), loadUsers()]);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.response?.data?.message || 'Could not deactivate absent users.');
+    } finally {
+      setDeactivating(false);
+    }
+  };
+
   const startResult = pagination.total === 0 ? 0 : ((pagination.current_page - 1) * pagination.per_page) + 1;
   const endResult = Math.min(pagination.current_page * pagination.per_page, pagination.total);
   const documentLabel = useMemo(() => Object.fromEntries(documentTypes.map(type => [type.value, type.label])), []);
@@ -209,10 +250,10 @@ export default function HRDashboard() {
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-white">
-            <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Monthly Progress</h2>
-                <p className="text-xs text-slate-500">Top completed work items</p>
+                <p className="text-xs text-slate-500">Highest completed work items this month</p>
               </div>
               <label className="flex items-center gap-2 text-sm text-slate-600">
                 <Calendar className="h-4 w-4" />
@@ -259,7 +300,7 @@ export default function HRDashboard() {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 lg:flex-row">
+          <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 xl:flex-row">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
@@ -270,6 +311,22 @@ export default function HRDashboard() {
               />
             </div>
             <select
+              value={role}
+              onChange={e => { setRole(e.target.value); setPage(1); }}
+              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+            >
+              <option value="all">All Roles</option>
+              <option value="drawer">Drawer</option>
+              <option value="checker">Checker</option>
+              <option value="filler">Filler</option>
+              <option value="qa">QA</option>
+              <option value="designer">Designer</option>
+              <option value="project_manager">Project Manager</option>
+              <option value="operations_manager">Ops Manager</option>
+              <option value="accounts_manager">Accounts</option>
+              <option value="hr">HR</option>
+            </select>
+            <select
               value={status}
               onChange={e => { setStatus(e.target.value); setPage(1); }}
               className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
@@ -279,7 +336,20 @@ export default function HRDashboard() {
               <option value="inactive">Inactive</option>
               <option value="present">Present</option>
               <option value="absent">Absent</option>
+              <option value="absent_15_plus">Absent 15+ Days</option>
             </select>
+            <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              <Calendar className="h-4 w-4" />
+              <input
+                type="month"
+                value={userMonth}
+                onChange={e => { setUserMonth(e.target.value); setPage(1); }}
+                className="bg-transparent focus:outline-none"
+              />
+            </label>
+            <Button variant="danger" size="sm" onClick={previewDeactivate} loading={deactivating} icon={<ShieldCheck className="h-4 w-4" />}>
+              Inactive 15+ Absent
+            </Button>
           </div>
 
           <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
@@ -292,15 +362,18 @@ export default function HRDashboard() {
                     <th className="px-4 py-3 text-left">Role</th>
                     <th className="px-4 py-3 text-left">Project</th>
                     <th className="px-4 py-3 text-left">Attendance</th>
+                    <th className="px-4 py-3 text-right">Month Work</th>
+                    <th className="px-4 py-3 text-right">Avg Time</th>
+                    <th className="px-4 py-3 text-right">Inactive Days</th>
                     <th className="px-4 py-3 text-right">Documents</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {loadingUsers ? (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">Loading...</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">Loading...</td></tr>
                   ) : users.length === 0 ? (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No users found.</td></tr>
-                  ) : users.map((row: User & { documents_count?: number }) => (
+                    <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No users found.</td></tr>
+                  ) : users.map((row) => (
                     <tr key={row.id}>
                       <td className="px-4 py-3">
                         <div className="font-medium text-slate-900">{row.name}</div>
@@ -315,6 +388,9 @@ export default function HRDashboard() {
                           {row.is_absent ? <StatusBadge status="absent" /> : <StatusBadge status="present" />}
                         </div>
                       </td>
+                      <td className="px-4 py-3 text-right font-semibold text-slate-900">{row.monthly_completed || 0}</td>
+                      <td className="px-4 py-3 text-right text-slate-600">{row.monthly_avg_minutes ? `${row.monthly_avg_minutes}m` : '---'}</td>
+                      <td className="px-4 py-3 text-right text-slate-600">{row.inactive_days || 0}</td>
                       <td className="px-4 py-3 text-right">
                         <Button size="sm" variant="secondary" onClick={() => openDocuments(row)} icon={<FileText className="h-4 w-4" />}>
                           {row.documents_count || 0}
@@ -383,6 +459,37 @@ export default function HRDashboard() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal open={!!confirmDeactivate} onClose={() => setConfirmDeactivate(null)} title="Mark Absent Users Inactive?" size="lg">
+        <div className="space-y-4">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            This will only update users who are active, absent, and have inactive_days of 15 or more. CEO, Director, and HR accounts are excluded.
+          </div>
+          <div className="text-sm text-slate-700">
+            Matching users: <span className="font-semibold text-slate-900">{confirmDeactivate?.matched || 0}</span>
+          </div>
+          <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200">
+            {(confirmDeactivate?.preview || []).length === 0 ? (
+              <div className="px-4 py-6 text-center text-sm text-slate-500">No matching users found.</div>
+            ) : confirmDeactivate?.preview.map((user) => (
+              <div key={user.id} className="flex items-center justify-between border-b border-slate-100 px-4 py-3 last:border-b-0">
+                <div>
+                  <div className="text-sm font-medium text-slate-900">{user.name}</div>
+                  <div className="text-xs text-slate-500">{user.email}</div>
+                </div>
+                <div className="text-right">
+                  <StatusBadge status={user.role || 'unknown'} />
+                  <div className="mt-1 text-xs text-slate-500">{user.inactive_days || 0} days</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <Button variant="secondary" className="flex-1" onClick={() => setConfirmDeactivate(null)}>Cancel</Button>
+            <Button variant="danger" className="flex-1" onClick={runDeactivate} disabled={!confirmDeactivate?.matched} loading={deactivating}>Mark Inactive</Button>
+          </div>
+        </div>
       </Modal>
     </AnimatedPage>
   );

@@ -35,7 +35,7 @@ class HrController extends Controller
         $monthlyProgress = collect();
         if (Schema::hasTable('work_items')) {
             $avgSelect = Schema::hasColumn('work_items', 'time_spent_seconds')
-                ? 'AVG(NULLIF(time_spent_seconds, 0)) as avg_seconds'
+                ? 'AVG(CASE WHEN time_spent_seconds > 0 THEN time_spent_seconds ELSE NULL END) as avg_seconds'
                 : 'NULL as avg_seconds';
 
             $monthlyProgress = WorkItem::query()
@@ -80,36 +80,14 @@ class HrController extends Controller
         $this->authorizeHr($request);
 
         $perPage = min(max((int) $request->input('per_page', 25), 1), 100);
-        $query = User::query()
-            ->with(['project:id,name', 'team:id,name,project_id']);
+        $month = $this->requestedMonth($request);
+        $monthStart = $month->copy()->startOfMonth();
+        $monthEnd = $month->copy()->endOfMonth();
 
-        if ($request->filled('role') && $request->input('role') !== 'all') {
-            $query->where('role', $request->input('role'));
-        }
-
-        if ($request->filled('status') && $request->input('status') !== 'all') {
-            if ($request->input('status') === 'active') {
-                $query->where('is_active', true);
-            } elseif ($request->input('status') === 'inactive') {
-                $query->where('is_active', false);
-            } elseif ($request->input('status') === 'absent') {
-                $query->where('is_absent', true);
-            } elseif ($request->input('status') === 'present') {
-                $query->where('is_active', true)->where('is_absent', false);
-            }
-        }
-
-        if ($request->filled('search')) {
-            $search = trim((string) $request->input('search'));
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%");
-
-                if (Schema::hasColumn('users', 'machine_id')) {
-                    $q->orWhere('machine_id', 'like', "%{$search}%");
-                }
-            });
-        }
+        $query = $this->applyUserFilters(
+            User::query()->with(['project:id,name', 'team:id,name,project_id']),
+            $request
+        );
 
         $users = $query
             ->select($this->userColumns())
@@ -126,15 +104,86 @@ class HrController extends Controller
                 ->toArray();
         }
 
-        $users->setCollection($users->getCollection()->map(function (User $user) use ($documentCounts) {
+        $monthlyPerformance = [];
+        if (Schema::hasTable('work_items')) {
+            $avgSelect = Schema::hasColumn('work_items', 'time_spent_seconds')
+                ? 'AVG(CASE WHEN time_spent_seconds > 0 THEN time_spent_seconds ELSE NULL END) as avg_seconds'
+                : 'NULL as avg_seconds';
+
+            $monthlyPerformance = WorkItem::query()
+                ->whereIn('assigned_user_id', collect($users->items())->pluck('id')->all())
+                ->where('status', 'completed')
+                ->whereBetween('completed_at', [$monthStart, $monthEnd])
+                ->selectRaw("assigned_user_id, COUNT(*) as completed, {$avgSelect}")
+                ->groupBy('assigned_user_id')
+                ->get()
+                ->keyBy('assigned_user_id');
+        }
+
+        $users->setCollection($users->getCollection()->map(function (User $user) use ($documentCounts, $monthlyPerformance) {
+            $performance = $monthlyPerformance[$user->id] ?? null;
             $user->setAttribute('documents_count', (int) ($documentCounts[$user->id] ?? 0));
+            $user->setAttribute('monthly_completed', (int) ($performance?->completed ?? 0));
+            $user->setAttribute('monthly_avg_minutes', $performance?->avg_seconds ? round(((float) $performance->avg_seconds) / 60, 1) : null);
             return $user;
         }));
 
         return response()->json(array_merge($users->toArray(), [
             'documents_ready' => Schema::hasTable('user_documents'),
             'machine_id_ready' => Schema::hasColumn('users', 'machine_id'),
+            'month' => $month->format('Y-m'),
         ]));
+    }
+
+    public function deactivateLongAbsent(Request $request)
+    {
+        $this->authorizeHr($request);
+
+        $days = min(max((int) $request->input('days', 15), 15), 365);
+        $dryRun = $request->boolean('dry_run', false);
+
+        $query = User::query()
+            ->where('is_active', true)
+            ->where('is_absent', true)
+            ->where('inactive_days', '>=', $days)
+            ->whereNotIn('role', ['ceo', 'director', 'hr']);
+
+        $count = (clone $query)->count();
+        $preview = (clone $query)
+            ->orderByDesc('inactive_days')
+            ->limit(10)
+            ->get($this->userColumns())
+            ->map(fn (User $user) => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+                'machine_id' => $user->machine_id,
+                'inactive_days' => $user->inactive_days,
+            ]);
+
+        if ($dryRun) {
+            return response()->json([
+                'message' => "{$count} users match the {$days}+ day absent rule.",
+                'affected' => 0,
+                'matched' => $count,
+                'preview' => $preview,
+            ]);
+        }
+
+        $affected = DB::transaction(function () use ($query) {
+            return $query->update([
+                'is_active' => false,
+                'updated_at' => now(),
+            ]);
+        });
+
+        return response()->json([
+            'message' => "{$affected} absent users were marked inactive.",
+            'affected' => $affected,
+            'matched' => $count,
+            'preview' => $preview,
+        ]);
     }
 
     public function documents(Request $request, string $userId)
@@ -235,6 +284,41 @@ class HrController extends Controller
         }
 
         return $columns;
+    }
+
+    private function applyUserFilters($query, Request $request)
+    {
+        if ($request->filled('role') && $request->input('role') !== 'all') {
+            $query->where('role', $request->input('role'));
+        }
+
+        if ($request->filled('status') && $request->input('status') !== 'all') {
+            if ($request->input('status') === 'active') {
+                $query->where('is_active', true);
+            } elseif ($request->input('status') === 'inactive') {
+                $query->where('is_active', false);
+            } elseif ($request->input('status') === 'absent') {
+                $query->where('is_absent', true);
+            } elseif ($request->input('status') === 'present') {
+                $query->where('is_active', true)->where('is_absent', false);
+            } elseif ($request->input('status') === 'absent_15_plus') {
+                $query->where('is_absent', true)->where('inactive_days', '>=', 15);
+            }
+        }
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+
+                if (Schema::hasColumn('users', 'machine_id')) {
+                    $q->orWhere('machine_id', 'like', "%{$search}%");
+                }
+            });
+        }
+
+        return $query;
     }
 
     private function requestedMonth(Request $request): Carbon

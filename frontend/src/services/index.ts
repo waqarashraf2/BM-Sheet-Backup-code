@@ -715,7 +715,7 @@ export const hrService = {
         avg_minutes?: number | null;
       }>;
     }>('/hr/dashboard', { params }),
-  users: (params?: { page?: number; per_page?: number; search?: string; role?: string; status?: string }) =>
+  users: (params?: { page?: number; per_page?: number; search?: string; role?: string; status?: string; month?: string }) =>
     api.get<PaginatedResponse<User> & { documents_ready: boolean; machine_id_ready: boolean }>('/hr/users', { params }),
   documents: (userId: number) =>
     api.get<{ data: UserDocument[]; documents_ready: boolean }>(`/hr/users/${userId}/documents`),
@@ -725,6 +725,8 @@ export const hrService = {
     }),
   downloadDocument: (documentId: number) =>
     api.get(`/hr/documents/${documentId}/download`, { responseType: 'blob' }),
+  deactivateLongAbsent: (data?: { days?: number; dry_run?: boolean }) =>
+    api.post<{ message: string; affected: number; matched: number; preview: Array<Partial<User> & { inactive_days?: number }> }>('/hr/absent/deactivate', data || {}),
 };
 
 // ═══════════════════════════════════════════
