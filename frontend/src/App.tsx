@@ -18,6 +18,7 @@ const OperationsManagerDashboard = lazy(() => import('./pages/Dashboard/Operatio
 const ProjectManagerDashboard = lazy(() => import('./pages/Dashboard/ProjectManagerDashboard'));
 const WorkerDashboard = lazy(() => import('./pages/Dashboard/WorkerDashboard'));
 const AccountsManagerDashboard = lazy(() => import('./pages/Dashboard/AccountsManagerDashboard'));
+const HRDashboard = lazy(() => import('./pages/Dashboard/HRDashboard'));
 const BatchStatus = lazy(() => import('./pages/Dashboard/BatchStatus'));
 const ColumnAssignment = lazy(() => import('./pages/Dashboard/ColumnAssignment'));
 
@@ -118,6 +119,8 @@ function App() {
         return <WorkerDashboard />;
       case 'accounts_manager':
         return <AccountsManagerDashboard />;
+      case 'hr':
+        return <HRDashboard />;
       case 'live_qa':
         return <LiveQADashboard />;
       default:

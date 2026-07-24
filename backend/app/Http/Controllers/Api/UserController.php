@@ -9,6 +9,7 @@ use App\Models\ActivityLog;
 use App\Models\User;
 use App\Services\NotificationService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class UserController extends Controller
 {
@@ -103,15 +104,21 @@ class UserController extends Controller
             'by_role' => $roleCounts,
         ];
 
-        $users = $query
-            ->select([
-                'id', 'name', 'email', 'machine_id', 'role', 'country', 'department',
+        $selectColumns = [
+                'id', 'name', 'email', 'role', 'country', 'department',
                 'project_id', 'team_id', 'layer', 'is_active', 'is_absent',
                 'last_activity', 'inactive_days', 'wip_count', 'wip_limit',
                 'today_completed', 'daily_target', 'avg_completion_minutes',
                 'rejection_rate_30d', 'assignment_score', 'skills',
                 'shift_start', 'shift_end', 'current_session_token', 'created_at',
-            ])
+        ];
+
+        if (Schema::hasColumn('users', 'machine_id')) {
+            $selectColumns[] = 'machine_id';
+        }
+
+        $users = $query
+            ->select($selectColumns)
             ->with(['project:id,name', 'team:id,name,project_id'])
             ->latest()
             ->paginate($perPage);
@@ -133,6 +140,9 @@ class UserController extends Controller
     public function store(StoreUserRequest $request)
     {
         $data = $request->validated();
+        if (!Schema::hasColumn('users', 'machine_id')) {
+            unset($data['machine_id']);
+        }
         // Password is auto-hashed by User model's 'hashed' cast
 
         // Store plain text password so PM/OM can view it later
@@ -204,6 +214,9 @@ class UserController extends Controller
         $oldProjectId = $user->project_id;
 
         $data = $request->validated();
+        if (!Schema::hasColumn('users', 'machine_id')) {
+            unset($data['machine_id']);
+        }
         // Password is auto-hashed by User model's 'hashed' cast
 
         // Store plain text password so PM/OM can view it later

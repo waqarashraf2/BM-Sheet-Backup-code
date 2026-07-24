@@ -16,7 +16,7 @@ import BenchmarkLogo from '../ui/BenchmarkLogo';
 
 const NAV = [
 
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['ceo', 'director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer', 'accounts_manager', 'live_qa'] },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['ceo', 'director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer', 'accounts_manager', 'live_qa', 'hr'] },
   { name: 'Projects', href: '/projects', icon: FolderKanban, roles: ['ceo', 'director', 'operations_manager', 'project_manager'] },
   { name: 'Users', href: '/users', icon: Users, roles: ['director', 'operations_manager', 'project_manager'] },
   { name: 'Invoices', href: '/invoices', icon: Receipt, roles: ['ceo', 'director', 'accounts_manager'] },

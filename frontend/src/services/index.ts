@@ -6,7 +6,7 @@ import type {
   Order, WorkItem, MonthLock, Invoice, InvoiceInput, InvoiceMonthlyQuantity,
   MasterDashboard, ProjectDashboard, WorkerDashboardData, OpsDashboardData, QueueHealth,
   DailyOperationsData, PMDashboardData, AssignmentDashboardData, ClosingReportData,
-  PaginatedResponse, Notification,
+  PaginatedResponse, Notification, UserDocument,
   OrderImportSource, OrderImportLog, ChecklistTemplate, OrderChecklist,
   WorkflowState, InvoiceStatus,
 } from '../types';
@@ -696,6 +696,35 @@ export const userService = {
   inactive: () => api.get<{ data: User[] }>('/users-inactive'),
   reassignWork: (userId: number) =>
     api.post('/users/reassign-work', { user_id: userId }),
+};
+
+export const hrService = {
+  dashboard: (params?: { month?: string }) =>
+    api.get<{
+      stats: { total: number; active: number; inactive: number; absent: number; present: number };
+      month: string;
+      documents_ready: boolean;
+      machine_id_ready: boolean;
+      monthly_progress: Array<{
+        user_id: number;
+        name?: string | null;
+        email?: string | null;
+        machine_id?: string | null;
+        role?: string | null;
+        completed: number;
+        avg_minutes?: number | null;
+      }>;
+    }>('/hr/dashboard', { params }),
+  users: (params?: { page?: number; per_page?: number; search?: string; role?: string; status?: string }) =>
+    api.get<PaginatedResponse<User> & { documents_ready: boolean; machine_id_ready: boolean }>('/hr/users', { params }),
+  documents: (userId: number) =>
+    api.get<{ data: UserDocument[]; documents_ready: boolean }>(`/hr/users/${userId}/documents`),
+  uploadDocument: (userId: number, data: FormData) =>
+    api.post<{ data: UserDocument; message: string }>(`/hr/users/${userId}/documents`, data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  downloadDocument: (documentId: number) =>
+    api.get(`/hr/documents/${documentId}/download`, { responseType: 'blob' }),
 };
 
 // ═══════════════════════════════════════════

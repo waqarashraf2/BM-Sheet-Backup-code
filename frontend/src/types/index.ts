@@ -112,6 +112,21 @@ export interface User {
   team?: Team;
 }
 
+export interface UserDocument {
+  id: number;
+  user_id: number | null;
+  machine_id?: string | null;
+  document_type: 'copy_of_cnic' | 'two_pics' | 'nda' | 'contract_letter' | 'extra';
+  original_name: string;
+  file_name: string;
+  file_path: string;
+  mime_type?: string | null;
+  file_size?: number | null;
+  uploaded_by?: number | null;
+  uploaded_at?: string | null;
+  created_at?: string | null;
+}
+
 export interface LoginCredentials {
   email: string;
   password: string;

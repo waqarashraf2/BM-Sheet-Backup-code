@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\LiveQAController;
 use App\Http\Controllers\Api\ClientPortalUploadController;
 use App\Http\Controllers\Api\OrderAssetZipDownloadController;
+use App\Http\Controllers\Api\HrController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -215,6 +216,14 @@ Route::prefix('assignments')->group(function () {
     Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,checker')->get('/dashboard/assignment/{queueName}', [DashboardController::class, 'assignmentDashboard'])->where('queueName', '.*');
     Route::middleware('role:drawer,checker,filler,qa,designer')->get('/dashboard/worker', [DashboardController::class, 'worker']);
     Route::middleware('role:ceo,director,operations_manager,project_manager')->get('/dashboard/absentees', [DashboardController::class, 'absentees']);
+
+    Route::middleware('role:hr')->prefix('hr')->group(function () {
+        Route::get('/dashboard', [HrController::class, 'dashboard']);
+        Route::get('/users', [HrController::class, 'users']);
+        Route::get('/users/{userId}/documents', [HrController::class, 'documents']);
+        Route::post('/users/{userId}/documents', [HrController::class, 'uploadDocument']);
+        Route::get('/documents/{documentId}/download', [HrController::class, 'downloadDocument']);
+    });
 
     // ═══════════════════════════════════════════
     // ═══════════════════════════════════════════
