@@ -684,7 +684,7 @@ export const projectService = {
 // USER SERVICE
 // ═══════════════════════════════════════════
 export const userService = {
-  list: (filters?: { role?: string; country?: string; project_id?: number }) =>
+  list: (filters?: { role?: string; country?: string; department?: string; project_id?: number | string; team_id?: number | string; is_active?: boolean | number | string; search?: string; page?: number; per_page?: number }) =>
     api.get<PaginatedResponse<User>>('/users', { params: filters }),
   get: (id: number) => api.get<{ data: User }>(`/users/${id}`),
   create: (data: Partial<User> & { password: string; password_confirmation: string }) =>

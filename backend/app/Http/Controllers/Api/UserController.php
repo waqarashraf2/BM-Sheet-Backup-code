@@ -17,7 +17,9 @@ class UserController extends Controller
      */
     public function index(Request $request)
     {
-        $query = User::with(['project', 'team']);
+        $perPage = min(max((int) $request->input('per_page', 25), 1), 100);
+
+        $query = User::query();
 
         // Scope by role
         $authUser = $request->user();
@@ -85,7 +87,34 @@ class UserController extends Controller
             });
         }
 
-        $users = $query->latest()->paginate($request->per_page ?? 15);
+        $statsQuery = clone $query;
+        $roleCounts = (clone $statsQuery)
+            ->selectRaw('role, COUNT(*) as total')
+            ->groupBy('role')
+            ->pluck('total', 'role')
+            ->map(fn ($count) => (int) $count)
+            ->toArray();
+
+        $stats = [
+            'total' => (clone $statsQuery)->count(),
+            'active' => (clone $statsQuery)->where('is_active', true)->count(),
+            'managers' => (clone $statsQuery)->whereIn('role', ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr'])->count(),
+            'production' => (clone $statsQuery)->whereIn('role', ['drawer', 'checker', 'filler', 'qa', 'designer'])->count(),
+            'by_role' => $roleCounts,
+        ];
+
+        $users = $query
+            ->select([
+                'id', 'name', 'email', 'machine_id', 'role', 'country', 'department',
+                'project_id', 'team_id', 'layer', 'is_active', 'is_absent',
+                'last_activity', 'inactive_days', 'wip_count', 'wip_limit',
+                'today_completed', 'daily_target', 'avg_completion_minutes',
+                'rejection_rate_30d', 'assignment_score', 'skills',
+                'shift_start', 'shift_end', 'current_session_token', 'created_at',
+            ])
+            ->with(['project:id,name', 'team:id,name,project_id'])
+            ->latest()
+            ->paginate($perPage);
 
         $users->setCollection(
             $users->getCollection()->map(function (User $user) {
@@ -93,7 +122,9 @@ class UserController extends Controller
             })
         );
 
-        return response()->json($users);
+        return response()->json(array_merge($users->toArray(), [
+            'stats' => $stats,
+        ]));
     }
 
     /**
@@ -215,7 +246,7 @@ class UserController extends Controller
         }
 
         // Role hierarchy check: prevent deleting users at same or higher level
-        $roleHierarchy = ['ceo' => 6, 'director' => 5, 'operations_manager' => 4, 'project_manager' => 3, 'accounts_manager' => 3, 'qa' => 2, 'live_qa' => 2, 'drawer' => 1, 'checker' => 1, 'designer' => 1];
+        $roleHierarchy = ['ceo' => 6, 'director' => 5, 'operations_manager' => 4, 'project_manager' => 3, 'accounts_manager' => 3, 'hr' => 3, 'qa' => 2, 'live_qa' => 2, 'drawer' => 1, 'checker' => 1, 'filler' => 1, 'designer' => 1];
         $authLevel = $roleHierarchy[$authUser->role] ?? 0;
         $targetLevel = $roleHierarchy[$user->role] ?? 0;
 

@@ -19,7 +19,7 @@ class User extends Authenticatable
      * @var list<string>
      */
     protected $fillable = [
-        'name', 'email', 'password', 'plain_password', 'role', 'country', 'department',
+        'name', 'email', 'machine_id', 'password', 'plain_password', 'role', 'country', 'department',
         'project_id', 'team_id', 'old_system_id', 'layer', 'is_active',
         'last_activity', 'inactive_days',
         'current_session_token', 'wip_count', 'wip_limit', 'today_completed',
@@ -105,6 +105,11 @@ class User extends Authenticatable
     public function workAssignments()
     {
         return $this->hasMany(WorkAssignment::class);
+    }
+
+    public function documents()
+    {
+        return $this->hasMany(UserDocument::class);
     }
 
     /**

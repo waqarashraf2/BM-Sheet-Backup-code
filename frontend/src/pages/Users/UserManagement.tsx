@@ -4,9 +4,9 @@ import type { RootState } from '../../store/store';
 import { userService, projectService } from '../../services';
 import type { User } from '../../types';
 import { AnimatedPage, PageHeader, StatusBadge, Modal, Button, DataTable, FilterBar } from '../../components/ui';
-import { Users as UsersIcon, Plus, Edit, Trash2, UserCheck, UserX, Shield, Activity, User as UserIcon, Mail, Lock, ChevronDown, Globe, Building, Layers, UsersRound, Eye, EyeOff } from 'lucide-react';
+import { Users as UsersIcon, Plus, Edit, Trash2, UserCheck, UserX, Shield, Activity, User as UserIcon, Mail, Lock, ChevronDown, ChevronLeft, ChevronRight, Globe, Building, Layers, UsersRound, Eye, EyeOff } from 'lucide-react';
 
-const emptyForm = { name: '', email: '', password: '', password_confirmation: '', role: 'drawer', project_id: '', team_id: '', department: 'floor_plan', layer: '' };
+const emptyForm = { name: '', email: '', machine_id: '', password: '', password_confirmation: '', role: 'drawer', project_id: '', team_id: '', department: 'floor_plan', layer: '' };
 // FLAGS kept for future use: country flag emoji map
 // const FLAGS: Record<string, string> = { UK: '\u{1F1EC}\u{1F1E7}', Australia: '\u{1F1E6}\u{1F1FA}', Canada: '\u{1F1E8}\u{1F1E6}', USA: '\u{1F1FA}\u{1F1F8}', Vietnam: '\u{1F1FB}\u{1F1F3}' };
 
@@ -17,6 +17,10 @@ export default function UserManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRole, setSelectedRole] = useState('all');
   const [selectedProjectId, setSelectedProjectId] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
+  const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, per_page: 25, total: 0 });
+  const [stats, setStats] = useState<{ total: number; active: number; managers: number; production: number; by_role?: Record<string, number> }>({ total: 0, active: 0, managers: 0, production: 0, by_role: {} });
   const [filterProjects, setFilterProjects] = useState<{ id: number; name: string }[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -43,16 +47,24 @@ export default function UserManagement() {
   const loadUsers = useCallback(async () => {
     try {
       setLoading(true);
-      const params: any = { per_page: 500 };
+      const params: any = { page: currentPage, per_page: perPage };
       if (selectedRole !== 'all') params.role = selectedRole;
       if (selectedProjectId !== 'all') params.project_id = selectedProjectId;
       if (searchRef.current) params.search = searchRef.current;
       const res = await userService.list(params);
-      const d = res.data?.data || res.data;
+      const payload: any = res.data || {};
+      const d = payload.data || [];
       setUsers(Array.isArray(d) ? d : []);
+      setPagination({
+        current_page: payload.current_page || 1,
+        last_page: payload.last_page || 1,
+        per_page: payload.per_page || perPage,
+        total: payload.total || 0,
+      });
+      setStats(payload.stats || { total: payload.total || 0, active: 0, managers: 0, production: 0, by_role: {} });
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selectedRole, selectedProjectId]);
+  }, [currentPage, perPage, selectedRole, selectedProjectId]);
 
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
@@ -66,6 +78,7 @@ export default function UserManagement() {
     { value: 'operations_manager', label: 'Ops Manager' },
     { value: 'project_manager', label: 'Project Manager' },
     { value: 'accounts_manager', label: 'Accounts' },
+    { value: 'hr', label: 'HR' },
     { value: 'live_qa', label: 'Live QA' },
     { value: 'drawer', label: 'Drawer' },
     { value: 'checker', label: 'Checker' },
@@ -76,7 +89,7 @@ export default function UserManagement() {
   const hiddenRoles: Record<string, string[]> = {
     ceo: ['ceo', 'project_manager', 'accounts_manager', 'drawer', 'checker', 'filler', 'qa', 'designer'],
     operations_manager: ['ceo', 'director', 'operations_manager', 'accounts_manager'],
-    project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager'],
+    project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr'],
   };
   const rolesToHide = hiddenRoles[myRole] || (myRole === 'director' ? [] : [myRole]);
   const visibleRoleOptions = allRoleOptions.filter(r => !rolesToHide.includes(r.value));
@@ -97,10 +110,17 @@ export default function UserManagement() {
   }, []);
 
   const openCreate = () => { setEditingUser(null); setFormData(emptyForm); setFormTeams([]); setFormError(''); setShowModal(true); };
-  const openEdit = (u: User) => {
-    setEditingUser(u);
-    setFormData({ name: u.name, email: u.email, password: '', password_confirmation: '', role: u.role, project_id: u.project_id ? String(u.project_id) : '', team_id: u.team_id ? String(u.team_id) : '', department: u.department || 'floor_plan', layer: u.layer || '' });
-    if (u.project_id) loadTeamsForProject(String(u.project_id));
+  const openEdit = async (u: User) => {
+    let userToEdit = u;
+    try {
+      const res = await userService.get(u.id);
+      userToEdit = (res.data?.data || u) as User;
+    } catch (e) {
+      console.error('[Users] fetch user detail failed', e);
+    }
+    setEditingUser(userToEdit);
+    setFormData({ name: userToEdit.name, email: userToEdit.email, machine_id: userToEdit.machine_id || '', password: '', password_confirmation: '', role: userToEdit.role, project_id: userToEdit.project_id ? String(userToEdit.project_id) : '', team_id: userToEdit.team_id ? String(userToEdit.team_id) : '', department: userToEdit.department || 'floor_plan', layer: userToEdit.layer || '' });
+    if (userToEdit.project_id) loadTeamsForProject(String(userToEdit.project_id));
     else setFormTeams([]);
     setFormError(''); setShowModal(true);
   };
@@ -132,9 +152,23 @@ export default function UserManagement() {
     try { await userService.update(u.id, { is_active: !u.is_active } as any); loadUsers(); } catch (e) { console.error(e); }
   };
 
-  const filtered = users.filter(u =>
-    !searchTerm || u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleSearch = () => {
+    if (currentPage !== 1) setCurrentPage(1);
+    else loadUsers();
+  };
+
+  const handleRoleChange = (value: string) => {
+    setSelectedRole(value);
+    setCurrentPage(1);
+  };
+
+  const handleProjectChange = (value: string) => {
+    setSelectedProjectId(value);
+    setCurrentPage(1);
+  };
+
+  const startResult = pagination.total === 0 ? 0 : ((pagination.current_page - 1) * pagination.per_page) + 1;
+  const endResult = Math.min(pagination.current_page * pagination.per_page, pagination.total);
 
   return (
     <AnimatedPage>
@@ -145,15 +179,15 @@ export default function UserManagement() {
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {(myRole === 'ceo' ? [
-          { label: 'Total', value: users.length, icon: UsersIcon, bg: 'bg-slate-100', color: 'text-slate-600' },
-          { label: 'Active', value: users.filter(u => u.is_active).length, icon: UserCheck, bg: 'bg-brand-50', color: 'text-brand-600' },
-          { label: 'Directors', value: users.filter(u => u.role === 'director').length, icon: Shield, bg: 'bg-brand-50', color: 'text-brand-600' },
-          { label: 'Ops Managers', value: users.filter(u => u.role === 'operations_manager').length, icon: Activity, bg: 'bg-blue-50', color: 'text-blue-600' },
+          { label: 'Total', value: stats.total, icon: UsersIcon, bg: 'bg-slate-100', color: 'text-slate-600' },
+          { label: 'Active', value: stats.active, icon: UserCheck, bg: 'bg-brand-50', color: 'text-brand-600' },
+          { label: 'Directors', value: stats.by_role?.director || 0, icon: Shield, bg: 'bg-brand-50', color: 'text-brand-600' },
+          { label: 'Ops Managers', value: stats.by_role?.operations_manager || 0, icon: Activity, bg: 'bg-blue-50', color: 'text-blue-600' },
         ] : [
-          { label: 'Total', value: users.length, icon: UsersIcon, bg: 'bg-slate-100', color: 'text-slate-600' },
-          { label: 'Active', value: users.filter(u => u.is_active).length, icon: UserCheck, bg: 'bg-brand-50', color: 'text-brand-600' },
-          { label: 'Managers', value: users.filter(u => ['ceo', 'director', 'operations_manager'].includes(u.role)).length, icon: Shield, bg: 'bg-brand-50', color: 'text-brand-600' },
-          { label: 'Production', value: users.filter(u => ['drawer', 'checker', 'filler', 'qa', 'designer'].includes(u.role)).length, icon: Activity, bg: 'bg-blue-50', color: 'text-blue-600' },
+          { label: 'Total', value: stats.total, icon: UsersIcon, bg: 'bg-slate-100', color: 'text-slate-600' },
+          { label: 'Active', value: stats.active, icon: UserCheck, bg: 'bg-brand-50', color: 'text-brand-600' },
+          { label: 'Managers', value: stats.managers, icon: Shield, bg: 'bg-brand-50', color: 'text-brand-600' },
+          { label: 'Production', value: stats.production, icon: Activity, bg: 'bg-blue-50', color: 'text-blue-600' },
         ]).map((s, i) => (
           <div key={i} className="bg-white rounded-xl border border-slate-200/60 p-4 flex items-center gap-3">
             <div className={`w-10 h-10 rounded-lg ${s.bg} flex items-center justify-center`}><s.icon className={`w-5 h-5 ${s.color}`} /></div>
@@ -163,24 +197,29 @@ export default function UserManagement() {
       </div>
 
       {/* Filters */}
-      <FilterBar searchValue={searchTerm} onSearchChange={setSearchTerm} onSearchSubmit={loadUsers} searchPlaceholder="Search users..."
+      <FilterBar searchValue={searchTerm} onSearchChange={setSearchTerm} onSearchSubmit={handleSearch} searchPlaceholder="Search users..."
         filters={<>
-          <select value={selectedRole} onChange={e => setSelectedRole(e.target.value)} aria-label="Filter by role" className="px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all appearance-none cursor-pointer pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}>
+          <select value={selectedRole} onChange={e => handleRoleChange(e.target.value)} aria-label="Filter by role" className="px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all appearance-none cursor-pointer pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}>
             <option value="all">All Roles</option>
             {visibleRoleOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
-          <select value={selectedProjectId} onChange={e => setSelectedProjectId(e.target.value)} aria-label="Filter by project" className="px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all appearance-none cursor-pointer pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}>
+          <select value={selectedProjectId} onChange={e => handleProjectChange(e.target.value)} aria-label="Filter by project" className="px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all appearance-none cursor-pointer pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}>
             <option value="all">All Projects</option>
             {filterProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          <Button variant="secondary" size="sm" onClick={loadUsers}>Search</Button>
+          <select value={perPage} onChange={e => { setPerPage(Number(e.target.value)); setCurrentPage(1); }} aria-label="Rows per page" className="px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all">
+            <option value={25}>25 / page</option>
+            <option value={50}>50 / page</option>
+            <option value={100}>100 / page</option>
+          </select>
+          <Button variant="secondary" size="sm" onClick={handleSearch}>Search</Button>
         </>}
       />
 
       {/* Table */}
       <div className="mt-4">
         <DataTable
-          data={filtered} loading={loading}
+          data={users} loading={loading} pageSize={perPage}
           columns={[
             {
               key: 'name', label: 'User', sortable: true, render: (u) => (
@@ -200,6 +239,7 @@ export default function UserManagement() {
                 </div>
               )
             },
+            { key: 'machine_id', label: 'Machine ID', render: (u) => <span className="text-slate-500">{u.machine_id || '---'}</span> },
             { key: 'role', label: 'Role', render: (u) => <StatusBadge status={u.role} /> },
             { key: 'project', label: 'Project', render: (u) => <span className="text-slate-600">{u.project?.name || '—'}</span> },
             { key: 'team', label: 'Team', render: (u) => <span className="text-slate-500">{u.team?.name || '—'}</span> },
@@ -230,6 +270,24 @@ export default function UserManagement() {
           emptyTitle="No users found"
           emptyDescription="Adjust your filters or add a new user."
         />
+        {!loading && pagination.last_page > 1 && (
+          <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-slate-200/70 bg-white px-4 py-3">
+            <div className="text-xs text-slate-500">
+              Showing <span className="font-semibold text-slate-700">{startResult}</span>-<span className="font-semibold text-slate-700">{endResult}</span> of <span className="font-semibold text-slate-700">{pagination.total}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={pagination.current_page <= 1}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-xs font-medium text-slate-600">
+                Page {pagination.current_page} of {pagination.last_page}
+              </span>
+              <Button variant="secondary" size="sm" onClick={() => setCurrentPage(p => Math.min(pagination.last_page, p + 1))} disabled={pagination.current_page >= pagination.last_page}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Create/Edit */}
@@ -273,6 +331,23 @@ export default function UserManagement() {
                 value={formData.email}
                 onChange={e => setFormData({ ...formData, email: e.target.value })}
                 placeholder="e.g. john@benchmark.com"
+                className="w-full pl-10 pr-4 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200"
+              />
+            </div>
+          </div>
+
+          {/* Machine ID */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Machine ID</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                <Activity className="h-4 w-4 text-slate-400" />
+              </div>
+              <input
+                type="text"
+                value={formData.machine_id}
+                onChange={e => setFormData({ ...formData, machine_id: e.target.value })}
+                placeholder="e.g. BM-PC-001"
                 className="w-full pl-10 pr-4 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200"
               />
             </div>

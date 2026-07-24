@@ -37,6 +37,7 @@ const statusStyles: Record<string, { bg: string; text: string; dot: string }> = 
   issued:            { bg: 'bg-brand-50',   text: 'text-brand-700',  dot: 'bg-brand-400' },
   sent:              { bg: 'bg-brand-50',     text: 'text-brand-700',    dot: 'bg-brand-500' },
   filler:            { bg: 'bg-sky-50',      text: 'text-sky-700',     dot: 'bg-sky-400' },
+  hr:                { bg: 'bg-indigo-50',   text: 'text-indigo-700',  dot: 'bg-indigo-400' },
   // Generic
   active:            { bg: 'bg-brand-50',  text: 'text-brand-700', dot: 'bg-brand-500' },
   inactive:          { bg: 'bg-slate-100',   text: 'text-slate-500',   dot: 'bg-slate-400' },
@@ -57,6 +58,8 @@ const sizeClasses = {
 };
 
 function formatLabel(status: string): string {
+  if (status.toLowerCase() === 'hr') return 'HR';
+
   return status
     .replace(/_/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase());

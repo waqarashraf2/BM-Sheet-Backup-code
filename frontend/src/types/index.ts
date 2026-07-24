@@ -25,11 +25,11 @@ export type InvoiceStatus = typeof INVOICE_STATUSES[number];
 export const REJECTION_CODES = ['quality', 'incomplete', 'wrong_specs', 'rework', 'formatting', 'missing_info'] as const;
 export type RejectionCode = typeof REJECTION_CODES[number];
 
-export const ROLES = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'checker', 'filler', 'drawer', 'designer', 'admin', 'accounts_manager', 'live_qa'] as const;
+export const ROLES = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'checker', 'filler', 'drawer', 'designer', 'admin', 'accounts_manager', 'live_qa', 'hr'] as const;
 export type UserRole = typeof ROLES[number];
 
 export const PRODUCTION_ROLES: UserRole[] = ['drawer', 'checker', 'filler', 'qa', 'designer'];
-export const MANAGEMENT_ROLES: UserRole[] = ['ceo', 'director', 'operations_manager', 'project_manager', 'admin'];
+export const MANAGEMENT_ROLES: UserRole[] = ['ceo', 'director', 'operations_manager', 'project_manager', 'admin', 'hr'];
 export const QA_OVERSIGHT_ROLES: UserRole[] = ['live_qa', 'ceo', 'director'];
 
 
@@ -86,6 +86,7 @@ export interface User {
   id: number;
   name: string;
   email: string;
+  machine_id?: string | null;
   role: UserRole;
   country: string;
   department: string;
