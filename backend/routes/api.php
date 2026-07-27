@@ -217,7 +217,7 @@ Route::prefix('assignments')->group(function () {
     Route::middleware('role:drawer,checker,filler,qa,designer')->get('/dashboard/worker', [DashboardController::class, 'worker']);
     Route::middleware('role:ceo,director,operations_manager,project_manager')->get('/dashboard/absentees', [DashboardController::class, 'absentees']);
 
-    Route::middleware('role:hr,director')->prefix('hr')->group(function () {
+    Route::middleware('role:ceo,hr,director')->prefix('hr')->group(function () {
         Route::get('/dashboard', [HrController::class, 'dashboard']);
         Route::get('/users', [HrController::class, 'users']);
         Route::get('/users/{userId}', [HrController::class, 'userDetail']);

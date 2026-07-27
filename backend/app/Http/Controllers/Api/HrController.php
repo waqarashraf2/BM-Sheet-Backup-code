@@ -497,7 +497,7 @@ class HrController extends Controller
 
     private function authorizeHr(Request $request): void
     {
-        abort_unless($request->user() && in_array($request->user()->role, ['hr', 'director'], true), 403);
+        abort_unless($request->user() && in_array($request->user()->role, ['ceo', 'hr', 'director'], true), 403);
     }
 
     private function documentStats(?int $projectId): array

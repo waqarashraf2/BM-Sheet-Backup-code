@@ -174,7 +174,7 @@ function App() {
             <Route
               path="hr-panel/*"
               element={
-                <ProtectedRoute allowedRoles={['hr', 'director']}>
+                <ProtectedRoute allowedRoles={['ceo', 'hr', 'director']}>
                   <HRDashboard />
                 </ProtectedRoute>
               }

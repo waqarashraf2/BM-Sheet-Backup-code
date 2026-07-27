@@ -10,7 +10,7 @@ import {
   LayoutDashboard, FolderKanban, Users, Receipt, ClipboardList,
   Upload, AlertTriangle, UserPlus, ChevronsLeft, ChevronsRight,
   Command, LogOut, UserCheck, UsersRound, Briefcase, Shield, ScrollText,
-  ShieldCheck, BarChart3, ShieldAlert, UploadCloud,
+  ShieldCheck, BarChart3, ShieldAlert, UploadCloud, ClipboardCheck,
 } from 'lucide-react';
 import BenchmarkLogo from '../ui/BenchmarkLogo';
 
@@ -19,7 +19,8 @@ const NAV = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['ceo', 'director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer', 'accounts_manager', 'live_qa', 'hr'] },
   { name: 'Projects', href: '/projects', icon: FolderKanban, roles: ['ceo', 'director', 'operations_manager', 'project_manager'] },
   { name: 'Users', href: '/users', icon: Users, roles: ['director', 'operations_manager', 'project_manager'] },
-  { name: 'HR Panel', href: '/hr-panel', icon: UsersRound, roles: ['director'] },
+  { name: 'HR Panel', href: '/hr-panel', icon: UsersRound, roles: ['ceo', 'director'] },
+  { name: 'QMS', href: 'https://bmsheet-v2.benchmarkstudio.biz/qms_react/', icon: ClipboardCheck, roles: ['ceo', 'director'], external: true },
   { name: 'Invoices', href: '/invoices', icon: Receipt, roles: ['ceo', 'director', 'accounts_manager'] },
   { name: 'Monthly Quantities', href: '/monthly-quantities', icon: BarChart3, roles: ['operations_manager', 'ceo', 'director'] },
   { name: 'Import Orders', href: '/import', icon: Upload, roles: ['director', 'operations_manager', 'project_manager', 'qa'] },
@@ -173,8 +174,53 @@ export default function Sidebar() {
         </AnimatePresence>
 
         {items.map((item, index) => {
-          const active = location.pathname === item.href || location.pathname.startsWith(item.href + '/');
+          const isExternal = Boolean((item as any).external);
+          const active = !isExternal && (location.pathname === item.href || location.pathname.startsWith(item.href + '/'));
           const Icon = item.icon;
+          const navClassName = `
+            group flex items-center gap-3 rounded-lg transition-all duration-150 relative
+            ${collapsed ? 'justify-center p-2.5' : 'px-3 py-2'}
+            ${active
+              ? 'bg-brand-primary text-white shadow-sm'
+              : 'text-ink-secondary hover:text-ink-primary hover:bg-surface-secondary'
+            }
+          `;
+          const navContent = (
+            <>
+              {/* Active indicator */}
+              {active && !collapsed && (
+                <motion.div
+                  layoutId="activeNav"
+                  className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-white rounded-r-full"
+                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                />
+              )}
+
+              <Icon className={`h-[18px] w-[18px] shrink-0 transition-colors ${active ? 'text-white' : 'text-ink-tertiary group-hover:text-ink-secondary'
+                }`} />
+
+              <AnimatePresence>
+                {!collapsed && (
+                  <motion.span
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="text-[13px] font-medium whitespace-nowrap"
+                  >
+                    {item.name}
+                  </motion.span>
+                )}
+              </AnimatePresence>
+
+              {/* Hover indicator for collapsed */}
+              {collapsed && !active && (
+                <div className="absolute left-full ml-2 px-2 py-1 bg-ink-primary text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg">
+                  {item.name}
+                </div>
+              )}
+            </>
+          );
+
           return (
             <motion.div
               key={item.name}
@@ -182,50 +228,25 @@ export default function Sidebar() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: index * 0.02 }}
             >
-              <Link
-                to={item.href}
-                title={collapsed ? item.name : undefined}
-                className={`
-                  group flex items-center gap-3 rounded-lg transition-all duration-150 relative
-                  ${collapsed ? 'justify-center p-2.5' : 'px-3 py-2'}
-                  ${active
-                    ? 'bg-brand-primary text-white shadow-sm'
-                    : 'text-ink-secondary hover:text-ink-primary hover:bg-surface-secondary'
-                  }
-                `}
-              >
-                {/* Active indicator */}
-                {active && !collapsed && (
-                  <motion.div
-                    layoutId="activeNav"
-                    className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-white rounded-r-full"
-                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                  />
-                )}
-
-                <Icon className={`h-[18px] w-[18px] shrink-0 transition-colors ${active ? 'text-white' : 'text-ink-tertiary group-hover:text-ink-secondary'
-                  }`} />
-
-                <AnimatePresence>
-                  {!collapsed && (
-                    <motion.span
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="text-[13px] font-medium whitespace-nowrap"
-                    >
-                      {item.name}
-                    </motion.span>
-                  )}
-                </AnimatePresence>
-
-                {/* Hover indicator for collapsed */}
-                {collapsed && !active && (
-                  <div className="absolute left-full ml-2 px-2 py-1 bg-ink-primary text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg">
-                    {item.name}
-                  </div>
-                )}
-              </Link>
+              {isExternal ? (
+                <a
+                  href={item.href}
+                  title={collapsed ? item.name : undefined}
+                  className={navClassName}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {navContent}
+                </a>
+              ) : (
+                <Link
+                  to={item.href}
+                  title={collapsed ? item.name : undefined}
+                  className={navClassName}
+                >
+                  {navContent}
+                </Link>
+              )}
             </motion.div>
           );
         })}
