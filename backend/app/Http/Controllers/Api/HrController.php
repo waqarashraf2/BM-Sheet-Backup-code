@@ -450,6 +450,29 @@ class HrController extends Controller
         return Storage::disk('local')->download($document->file_path, $document->original_name);
     }
 
+    public function deleteDocument(Request $request, string $documentId)
+    {
+        $this->authorizeHr($request);
+
+        if (!Schema::hasTable('user_documents')) {
+            return response()->json(['message' => 'User documents table is not ready.'], 503);
+        }
+
+        $document = UserDocument::findOrFail($documentId);
+
+        DB::transaction(function () use ($document) {
+            if ($document->file_path && Storage::disk('local')->exists($document->file_path)) {
+                Storage::disk('local')->delete($document->file_path);
+            }
+
+            $document->delete();
+        });
+
+        return response()->json([
+            'message' => 'Document deleted successfully.',
+        ]);
+    }
+
     private function storeUserDocument(User $user, $file, string $documentType, int $uploadedBy): UserDocument
     {
         $machineId = Schema::hasColumn('users', 'machine_id') ? ($user->machine_id ?: null) : null;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertCircle, Calendar, Download, Edit, FileText, Search, ShieldCheck, Upload, UserCheck, UserX, Users } from 'lucide-react';
+import { Activity, AlertCircle, Calendar, Download, Edit, FileText, Search, ShieldCheck, Trash2, Upload, UserCheck, UserX, Users } from 'lucide-react';
 import { AnimatedPage, Button, Modal, PageHeader, StatusBadge } from '../../components/ui';
 import { hrService } from '../../services';
 import type { User, UserDocument } from '../../types';
@@ -112,6 +112,7 @@ export default function HRDashboard() {
   });
   const [uploading, setUploading] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<number | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState<{ matched: number; preview: Array<Partial<User> & { inactive_days?: number }> } | null>(null);
@@ -298,6 +299,28 @@ export default function HRDashboard() {
     } catch (e) {
       console.error(e);
       setError('Download failed.');
+    }
+  };
+
+  const deleteDocument = async (doc: UserDocument) => {
+    if (!selectedUser) return;
+
+    const confirmed = window.confirm(`Delete "${doc.original_name}"? This cannot be undone.`);
+    if (!confirmed) return;
+
+    try {
+      setDeletingDocumentId(doc.id);
+      setError('');
+      await hrService.deleteDocument(doc.id);
+      const remainingDocuments = documents.filter(item => item.id !== doc.id);
+      setDocuments(remainingDocuments);
+      setSelectedDetail(prev => prev ? { ...prev, documents: remainingDocuments } : prev);
+      await Promise.all([loadDashboard(), loadUsers()]);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.response?.data?.message || 'Delete failed.');
+    } finally {
+      setDeletingDocumentId(null);
     }
   };
 
@@ -805,9 +828,20 @@ export default function HRDashboard() {
                       {documentLabel[doc.document_type]} {doc.uploaded_at ? `- ${new Date(doc.uploaded_at).toLocaleDateString()}` : ''}
                     </div>
                   </div>
-                  <Button size="sm" variant="secondary" onClick={() => downloadDocument(doc)} icon={<Download className="h-4 w-4" />}>
-                    Download
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => deleteDocument(doc)}
+                      loading={deletingDocumentId === doc.id}
+                      icon={<Trash2 className="h-4 w-4" />}
+                    >
+                      Delete
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => downloadDocument(doc)} icon={<Download className="h-4 w-4" />}>
+                      Download
+                    </Button>
+                  </div>
                 </div>
               ))}
                 </div>

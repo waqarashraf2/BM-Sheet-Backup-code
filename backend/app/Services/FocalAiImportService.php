@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Schema;
 class FocalAiImportService
 {
     protected string $ordersUrl = 'https://ai-services.focalagent.com/backend/job_ids';
-    protected string $token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoienVsZnFhci5hbGlAYmVuY2htYXJrc3R1ZGlvLmJpeiIsImV4cCI6MTc4NTE0Njg4MH0.e_Qe2P741Nakkvhj8en-xXooE1G5vPrJrtU0FaiuUCc";
+    protected string $token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoienVsZnFhci5hbGlAYmVuY2htYXJrc3R1ZGlvLmJpeiIsImV4cCI6MTc4NzU4MDEwMX0.Zc_ks5t9MxgJLVnQMfa3tSz1iE-TrqXWBURlabYvXwA";
     protected int $timeout = 60;
     protected bool $verifySsl = false;
     protected string $origin = 'https://qaapp.focalagent.com';

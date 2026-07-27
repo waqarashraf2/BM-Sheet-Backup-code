@@ -226,6 +226,7 @@ Route::prefix('assignments')->group(function () {
         Route::post('/users/{userId}/documents', [HrController::class, 'uploadDocument']);
         Route::post('/users/{userId}/documents/bulk', [HrController::class, 'uploadDocuments']);
         Route::get('/documents/{documentId}/download', [HrController::class, 'downloadDocument']);
+        Route::delete('/documents/{documentId}', [HrController::class, 'deleteDocument']);
         Route::post('/absent/deactivate', [HrController::class, 'deactivateLongAbsent']);
     });
 
