@@ -416,23 +416,6 @@ export default function HRDashboard() {
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-white">
-            <div className="border-b border-slate-100 px-4 py-3">
-              <h2 className="text-sm font-semibold text-slate-900">Active User Documents</h2>
-              <p className="text-xs text-slate-500">
-                Required documents checked for {documentStats.active_total} active users
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-3 xl:grid-cols-6">
-              {requiredDocumentCards.map(item => (
-                <div key={item.label} className={`rounded-lg px-3 py-3 ${item.tone}`}>
-                  <div className="text-2xl font-bold">{item.value}</div>
-                  <div className="mt-1 text-xs font-medium">{item.label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-white">
           <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Monthly Progress</h2>
@@ -483,6 +466,23 @@ export default function HRDashboard() {
         </div>
       ) : (
         <div className="space-y-4">
+          <div className="rounded-lg border border-slate-200 bg-white">
+            <div className="border-b border-slate-100 px-4 py-3">
+              <h2 className="text-sm font-semibold text-slate-900">Active User Documents</h2>
+              <p className="text-xs text-slate-500">
+                Required documents checked for {documentStats.active_total} active users
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-3 xl:grid-cols-6">
+              {requiredDocumentCards.map(item => (
+                <div key={item.label} className={`rounded-lg px-3 py-3 ${item.tone}`}>
+                  <div className="text-2xl font-bold">{item.value}</div>
+                  <div className="mt-1 text-xs font-medium">{item.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 xl:flex-row">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
