@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertCircle, Calendar, Download, FileText, Search, ShieldCheck, Upload, UserCheck, UserX, Users } from 'lucide-react';
+import { Activity, AlertCircle, Calendar, Download, Edit, FileText, Search, ShieldCheck, Upload, UserCheck, UserX, Users } from 'lucide-react';
 import { AnimatedPage, Button, Modal, PageHeader, StatusBadge } from '../../components/ui';
 import { hrService } from '../../services';
 import type { User, UserDocument } from '../../types';
@@ -18,6 +18,18 @@ type HrStats = {
   inactive: number;
   absent: number;
   present: number;
+};
+
+type DocumentStats = {
+  active_total: number;
+  complete_required: number;
+  no_documents: number;
+  missing: {
+    copy_of_cnic: number;
+    two_pics: number;
+    nda: number;
+    contract_letter: number;
+  };
 };
 
 type ProjectOption = {
@@ -58,6 +70,12 @@ export default function HRDashboard() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'users'>('dashboard');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [stats, setStats] = useState<HrStats>({ total: 0, active: 0, inactive: 0, absent: 0, present: 0 });
+  const [documentStats, setDocumentStats] = useState<DocumentStats>({
+    active_total: 0,
+    complete_required: 0,
+    no_documents: 0,
+    missing: { copy_of_cnic: 0, two_pics: 0, nda: 0, contract_letter: 0 },
+  });
   const [progress, setProgress] = useState<ProgressRow[]>([]);
   const [users, setUsers] = useState<HrUserRow[]>([]);
   const [page, setPage] = useState(1);
@@ -76,7 +94,24 @@ export default function HRDashboard() {
   const [selectedDetail, setSelectedDetail] = useState<UserDetail | null>(null);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentFiles, setDocumentFiles] = useState<Partial<Record<typeof documentTypes[number]['value'], File[]>>>({});
+  const [editingUser, setEditingUser] = useState<HrUserRow | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    email: '',
+    machine_id: '',
+    role: 'drawer',
+    project_id: '',
+    department: 'floor_plan',
+    layer: '',
+    is_active: true,
+    is_absent: false,
+    daily_target: '',
+    wip_limit: '',
+    shift_start: '',
+    shift_end: '',
+  });
   const [uploading, setUploading] = useState(false);
+  const [savingUser, setSavingUser] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState<{ matched: number; preview: Array<Partial<User> & { inactive_days?: number }> } | null>(null);
@@ -87,6 +122,12 @@ export default function HRDashboard() {
       setLoadingDashboard(true);
       const res = await hrService.dashboard({ month, project_id: projectId });
       setStats(res.data.stats);
+      setDocumentStats(res.data.document_stats || {
+        active_total: 0,
+        complete_required: 0,
+        no_documents: 0,
+        missing: { copy_of_cnic: 0, two_pics: 0, nda: 0, contract_letter: 0 },
+      });
       setProgress(res.data.monthly_progress || []);
       setProjectOptions(res.data.project_options || []);
       setDocumentsReady(res.data.documents_ready);
@@ -152,6 +193,59 @@ export default function HRDashboard() {
       setError('Could not load user details.');
     } finally {
       setLoadingDetail(false);
+    }
+  };
+
+  const openEditUser = (user: HrUserRow) => {
+    setEditingUser(user);
+    setEditForm({
+      name: user.name || '',
+      email: user.email || '',
+      machine_id: user.machine_id || '',
+      role: user.role || 'drawer',
+      project_id: user.project_id ? String(user.project_id) : '',
+      department: user.department || 'floor_plan',
+      layer: user.layer || '',
+      is_active: !!user.is_active,
+      is_absent: !!user.is_absent,
+      daily_target: user.daily_target != null ? String(user.daily_target) : '',
+      wip_limit: user.wip_limit != null ? String(user.wip_limit) : '',
+      shift_start: user.shift_start || '',
+      shift_end: user.shift_end || '',
+    });
+    setError('');
+  };
+
+  const saveUser = async () => {
+    if (!editingUser) return;
+
+    const payload: Partial<User> = {
+      name: editForm.name,
+      email: editForm.email,
+      machine_id: editForm.machine_id || null,
+      role: editForm.role as User['role'],
+      project_id: editForm.project_id ? Number(editForm.project_id) : null,
+      department: editForm.department,
+      layer: editForm.layer || null,
+      is_active: editForm.is_active,
+      is_absent: editForm.is_absent,
+      daily_target: editForm.daily_target === '' ? 0 : Number(editForm.daily_target),
+      wip_limit: editForm.wip_limit === '' ? undefined : Number(editForm.wip_limit),
+      shift_start: editForm.shift_start || null,
+      shift_end: editForm.shift_end || null,
+    };
+
+    try {
+      setSavingUser(true);
+      setError('');
+      await hrService.updateUser(editingUser.id, payload);
+      setEditingUser(null);
+      await Promise.all([loadDashboard(), loadUsers()]);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.response?.data?.message || 'Could not update user.');
+    } finally {
+      setSavingUser(false);
     }
   };
 
@@ -241,6 +335,15 @@ export default function HRDashboard() {
   const startResult = pagination.total === 0 ? 0 : ((pagination.current_page - 1) * pagination.per_page) + 1;
   const endResult = Math.min(pagination.current_page * pagination.per_page, pagination.total);
   const documentLabel = useMemo(() => Object.fromEntries(documentTypes.map(type => [type.value, type.label])), []);
+  const requiredDocumentCards = [
+    { label: 'Complete Docs', value: documentStats.complete_required, tone: 'bg-emerald-50 text-emerald-700' },
+    { label: 'No Docs', value: documentStats.no_documents, tone: 'bg-rose-50 text-rose-700' },
+    { label: 'CNIC Missing', value: documentStats.missing.copy_of_cnic, tone: 'bg-amber-50 text-amber-700' },
+    { label: 'Pics Missing', value: documentStats.missing.two_pics, tone: 'bg-sky-50 text-sky-700' },
+    { label: 'NDA Missing', value: documentStats.missing.nda, tone: 'bg-indigo-50 text-indigo-700' },
+    { label: 'Contract Missing', value: documentStats.missing.contract_letter, tone: 'bg-purple-50 text-purple-700' },
+  ];
+  const protectedEditRoles = new Set(['ceo', 'director']);
   const selectedFilesCount = useMemo(
     () => Object.values(documentFiles).reduce((total, files) => total + (files?.length || 0), 0),
     [documentFiles],
@@ -310,6 +413,23 @@ export default function HRDashboard() {
                 <div className="text-xs text-slate-500">{item.label}</div>
               </div>
             ))}
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white">
+            <div className="border-b border-slate-100 px-4 py-3">
+              <h2 className="text-sm font-semibold text-slate-900">Active User Documents</h2>
+              <p className="text-xs text-slate-500">
+                Required documents checked for {documentStats.active_total} active users
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-3 xl:grid-cols-6">
+              {requiredDocumentCards.map(item => (
+                <div key={item.label} className={`rounded-lg px-3 py-3 ${item.tone}`}>
+                  <div className="text-2xl font-bold">{item.value}</div>
+                  <div className="mt-1 text-xs font-medium">{item.label}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-white">
@@ -442,13 +562,14 @@ export default function HRDashboard() {
                     <th className="px-4 py-3 text-right">Avg Time</th>
                     <th className="px-4 py-3 text-right">Inactive Days</th>
                     <th className="px-4 py-3 text-right">Documents</th>
+                    <th className="px-4 py-3 text-right">Edit</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {loadingUsers ? (
-                    <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">Loading...</td></tr>
+                    <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-500">Loading...</td></tr>
                   ) : users.length === 0 ? (
-                    <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No users found.</td></tr>
+                    <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-500">No users found.</td></tr>
                   ) : users.map((row) => (
                     <tr key={row.id} onClick={() => openDocuments(row)} className="cursor-pointer hover:bg-slate-50">
                       <td className="px-4 py-3">
@@ -472,6 +593,15 @@ export default function HRDashboard() {
                         <Button size="sm" variant="secondary" onClick={(event) => { event.stopPropagation(); openDocuments(row); }} icon={<FileText className="h-4 w-4" />}>
                           Details ({row.documents_count || 0})
                         </Button>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {protectedEditRoles.has(row.role) ? (
+                          <span className="text-xs text-slate-400">Protected</span>
+                        ) : (
+                          <Button size="sm" variant="ghost" onClick={(event) => { event.stopPropagation(); openEditUser(row); }} icon={<Edit className="h-4 w-4" />}>
+                            Edit
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -685,6 +815,161 @@ export default function HRDashboard() {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal open={!!editingUser} onClose={() => setEditingUser(null)} title="Edit User" size="lg">
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Name</span>
+              <input
+                value={editForm.name}
+                onChange={e => setEditForm(prev => ({ ...prev, name: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Email</span>
+              <input
+                type="email"
+                value={editForm.email}
+                onChange={e => setEditForm(prev => ({ ...prev, email: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Machine ID</span>
+              <input
+                value={editForm.machine_id}
+                onChange={e => setEditForm(prev => ({ ...prev, machine_id: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Role</span>
+              <select
+                value={editForm.role}
+                onChange={e => setEditForm(prev => ({ ...prev, role: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              >
+                <option value="drawer">Drawer</option>
+                <option value="checker">Checker</option>
+                <option value="filler">Filler</option>
+                <option value="qa">QA</option>
+                <option value="designer">Designer</option>
+                <option value="project_manager">Project Manager</option>
+                <option value="operations_manager">Ops Manager</option>
+                <option value="accounts_manager">Accounts</option>
+                <option value="hr">HR</option>
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Project</span>
+              <select
+                value={editForm.project_id}
+                onChange={e => setEditForm(prev => ({ ...prev, project_id: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              >
+                <option value="">No Project</option>
+                {projectOptions.map(project => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}{project.code ? ` (${project.code})` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Department</span>
+              <select
+                value={editForm.department}
+                onChange={e => setEditForm(prev => ({ ...prev, department: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              >
+                <option value="floor_plan">Floor Plan</option>
+                <option value="photos_enhancement">Photos Enhancement</option>
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Layer</span>
+              <select
+                value={editForm.layer}
+                onChange={e => setEditForm(prev => ({ ...prev, layer: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              >
+                <option value="">No Layer</option>
+                <option value="drawer">Drawer</option>
+                <option value="checker">Checker</option>
+                <option value="filler">Filler</option>
+                <option value="qa">QA</option>
+                <option value="designer">Designer</option>
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Daily Target</span>
+              <input
+                type="number"
+                min={0}
+                value={editForm.daily_target}
+                onChange={e => setEditForm(prev => ({ ...prev, daily_target: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">WIP Limit</span>
+              <input
+                type="number"
+                min={1}
+                value={editForm.wip_limit}
+                onChange={e => setEditForm(prev => ({ ...prev, wip_limit: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Shift Start</span>
+              <input
+                type="time"
+                value={editForm.shift_start}
+                onChange={e => setEditForm(prev => ({ ...prev, shift_start: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Shift End</span>
+              <input
+                type="time"
+                value={editForm.shift_end}
+                onChange={e => setEditForm(prev => ({ ...prev, shift_end: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="flex flex-wrap gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+              <input
+                type="checkbox"
+                checked={editForm.is_active}
+                onChange={e => setEditForm(prev => ({ ...prev, is_active: e.target.checked }))}
+                className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+              />
+              Active
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+              <input
+                type="checkbox"
+                checked={editForm.is_absent}
+                onChange={e => setEditForm(prev => ({ ...prev, is_absent: e.target.checked }))}
+                className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+              />
+              Absent
+            </label>
+          </div>
+
+          <div className="flex gap-3">
+            <Button variant="secondary" className="flex-1" onClick={() => setEditingUser(null)}>Cancel</Button>
+            <Button className="flex-1" onClick={saveUser} loading={savingUser}>Save User</Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal open={!!confirmDeactivate} onClose={() => setConfirmDeactivate(null)} title="Mark Absent Users Inactive?" size="lg">

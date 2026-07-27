@@ -702,6 +702,17 @@ export const hrService = {
   dashboard: (params?: { month?: string; project_id?: number | string }) =>
     api.get<{
       stats: { total: number; active: number; inactive: number; absent: number; present: number };
+      document_stats: {
+        active_total: number;
+        complete_required: number;
+        no_documents: number;
+        missing: {
+          copy_of_cnic: number;
+          two_pics: number;
+          nda: number;
+          contract_letter: number;
+        };
+      };
       month: string;
       project_id?: number | null;
       project_options: Array<{ id: number; name: string; code?: string | null }>;
@@ -723,6 +734,8 @@ export const hrService = {
       machine_id_ready: boolean;
       project_options: Array<{ id: number; name: string; code?: string | null }>;
     }>('/hr/users', { params }),
+  updateUser: (userId: number, data: Partial<User>) =>
+    api.put<{ data: User; message: string }>(`/hr/users/${userId}`, data),
   userDetail: (userId: number, params?: { month?: string }) =>
     api.get<{
       user: User;

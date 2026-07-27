@@ -221,6 +221,7 @@ Route::prefix('assignments')->group(function () {
         Route::get('/dashboard', [HrController::class, 'dashboard']);
         Route::get('/users', [HrController::class, 'users']);
         Route::get('/users/{userId}', [HrController::class, 'userDetail']);
+        Route::put('/users/{userId}', [HrController::class, 'updateUser']);
         Route::get('/users/{userId}/documents', [HrController::class, 'documents']);
         Route::post('/users/{userId}/documents', [HrController::class, 'uploadDocument']);
         Route::post('/users/{userId}/documents/bulk', [HrController::class, 'uploadDocuments']);

@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 
 class HrController extends Controller
@@ -60,6 +61,7 @@ class HrController extends Controller
 
         return response()->json([
             'stats' => $stats,
+            'document_stats' => $this->documentStats($projectId),
             'month' => $month->format('Y-m'),
             'project_id' => $projectId,
             'project_options' => $this->projectOptions(),
@@ -140,6 +142,64 @@ class HrController extends Controller
             'project_options' => $this->projectOptions(),
             'month' => $month->format('Y-m'),
         ]));
+    }
+
+    public function updateUser(Request $request, string $userId)
+    {
+        $this->authorizeHr($request);
+
+        $user = User::findOrFail($userId);
+        $oldValues = $user->toArray();
+
+        $rules = [
+            'name' => 'sometimes|string|max:255',
+            'email' => ['sometimes', 'email', Rule::unique('users', 'email')->ignore($user->id)],
+            'role' => 'sometimes|in:drawer,checker,filler,qa,designer,project_manager,operations_manager,accounts_manager,hr',
+            'country' => 'sometimes|nullable|string|max:255',
+            'department' => 'sometimes|nullable|in:floor_plan,photos_enhancement',
+            'project_id' => 'sometimes|nullable|exists:projects,id',
+            'team_id' => 'sometimes|nullable|exists:teams,id',
+            'is_active' => 'sometimes|boolean',
+        ];
+
+        foreach ([
+            'machine_id' => 'sometimes|nullable|string|max:100',
+            'layer' => 'sometimes|nullable|in:drawer,checker,filler,qa,designer',
+            'is_absent' => 'sometimes|boolean',
+            'daily_target' => 'sometimes|nullable|integer|min:0|max:100000',
+            'wip_limit' => 'sometimes|nullable|integer|min:1|max:1000',
+            'shift_start' => 'sometimes|nullable|date_format:H:i',
+            'shift_end' => 'sometimes|nullable|date_format:H:i',
+        ] as $column => $rule) {
+            if (Schema::hasColumn('users', $column)) {
+                $rules[$column] = $rule;
+            }
+        }
+
+        $data = $request->validate($rules);
+
+        foreach (['machine_id', 'layer', 'is_absent', 'daily_target', 'wip_limit', 'shift_start', 'shift_end'] as $column) {
+            if (!Schema::hasColumn('users', $column)) {
+                unset($data[$column]);
+            }
+        }
+
+        DB::transaction(function () use ($user, $data) {
+            $user->update($data);
+
+            if (array_key_exists('machine_id', $data) && Schema::hasTable('user_documents')) {
+                DB::table('user_documents')
+                    ->where('user_id', $user->id)
+                    ->update(['machine_id' => $data['machine_id'] ?: null]);
+            }
+        });
+
+        \App\Services\AuditService::logUserUpdated($user->id, $oldValues, $user->fresh()->toArray());
+
+        return response()->json([
+            'message' => 'User updated successfully.',
+            'data' => $user->fresh(['project:id,name', 'team:id,name,project_id']),
+        ]);
     }
 
     public function deactivateLongAbsent(Request $request)
@@ -415,6 +475,64 @@ class HrController extends Controller
     private function authorizeHr(Request $request): void
     {
         abort_unless($request->user() && in_array($request->user()->role, ['hr', 'director'], true), 403);
+    }
+
+    private function documentStats(?int $projectId): array
+    {
+        $requiredTypes = [
+            'copy_of_cnic',
+            'two_pics',
+            'nda',
+            'contract_letter',
+        ];
+
+        $empty = [
+            'active_total' => User::query()
+                ->where('is_active', true)
+                ->when($projectId, fn ($query) => $query->where('project_id', $projectId))
+                ->count(),
+            'complete_required' => 0,
+            'no_documents' => 0,
+            'missing' => array_fill_keys($requiredTypes, 0),
+        ];
+
+        if (!Schema::hasTable('user_documents')) {
+            return $empty;
+        }
+
+        $flags = DB::table('user_documents')
+            ->select('user_id')
+            ->selectRaw("MAX(CASE WHEN document_type = 'copy_of_cnic' THEN 1 ELSE 0 END) as has_copy_of_cnic")
+            ->selectRaw("MAX(CASE WHEN document_type = 'two_pics' THEN 1 ELSE 0 END) as has_two_pics")
+            ->selectRaw("MAX(CASE WHEN document_type = 'nda' THEN 1 ELSE 0 END) as has_nda")
+            ->selectRaw("MAX(CASE WHEN document_type = 'contract_letter' THEN 1 ELSE 0 END) as has_contract_letter")
+            ->whereNotNull('user_id')
+            ->groupBy('user_id');
+
+        $summary = DB::table('users as users')
+            ->leftJoinSub($flags, 'docs', 'docs.user_id', '=', 'users.id')
+            ->where('users.is_active', true)
+            ->when($projectId, fn ($query) => $query->where('users.project_id', $projectId))
+            ->selectRaw('COUNT(*) as active_total')
+            ->selectRaw('SUM(CASE WHEN docs.user_id IS NULL THEN 1 ELSE 0 END) as no_documents')
+            ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_copy_of_cnic, 0) = 0 THEN 1 ELSE 0 END) as missing_copy_of_cnic')
+            ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_two_pics, 0) = 0 THEN 1 ELSE 0 END) as missing_two_pics')
+            ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_nda, 0) = 0 THEN 1 ELSE 0 END) as missing_nda')
+            ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_contract_letter, 0) = 0 THEN 1 ELSE 0 END) as missing_contract_letter')
+            ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_copy_of_cnic, 0) = 1 AND COALESCE(docs.has_two_pics, 0) = 1 AND COALESCE(docs.has_nda, 0) = 1 AND COALESCE(docs.has_contract_letter, 0) = 1 THEN 1 ELSE 0 END) as complete_required')
+            ->first();
+
+        return [
+            'active_total' => (int) ($summary->active_total ?? 0),
+            'complete_required' => (int) ($summary->complete_required ?? 0),
+            'no_documents' => (int) ($summary->no_documents ?? 0),
+            'missing' => [
+                'copy_of_cnic' => (int) ($summary->missing_copy_of_cnic ?? 0),
+                'two_pics' => (int) ($summary->missing_two_pics ?? 0),
+                'nda' => (int) ($summary->missing_nda ?? 0),
+                'contract_letter' => (int) ($summary->missing_contract_letter ?? 0),
+            ],
+        ];
     }
 
     private function userColumns(): array
