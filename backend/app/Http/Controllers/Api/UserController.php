@@ -27,6 +27,8 @@ class UserController extends Controller
         if ($authUser->role === 'ceo') {
             // CEO only sees Directors and Operations Managers
             $query->whereIn('role', ['director', 'operations_manager']);
+        } elseif ($authUser->role === 'hr') {
+            $query->where('role', '!=', 'ceo');
         } elseif ($authUser->role === 'project_manager') {
             // PM sees only workers in their team/projects — NOT other PMs or themselves
             // Only OM can manage PM accounts
@@ -172,9 +174,10 @@ class UserController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
         $user = User::with(['project', 'team', 'workAssignments.order'])->findOrFail($id);
+        abort_if($request->user()?->role === 'hr' && $user->role === 'ceo', 403);
         $user = $this->enrichUserWithTeamStatus($user);
 
         return response()->json([

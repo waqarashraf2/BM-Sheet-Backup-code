@@ -23,6 +23,7 @@ class HrController extends Controller
 
         $projectId = $this->requestedProjectId($request);
         $userBase = User::query()
+            ->when($request->user()?->role === 'hr', fn ($query) => $query->where('role', '!=', 'ceo'))
             ->when($projectId, fn ($query) => $query->where('project_id', $projectId));
         $stats = [
             'total' => (clone $userBase)->count(),
@@ -55,6 +56,7 @@ class HrController extends Controller
         }
 
         $users = User::query()
+            ->when($request->user()?->role === 'hr', fn ($query) => $query->where('role', '!=', 'ceo'))
             ->whereIn('id', $monthlyProgress->keys())
             ->get($this->userColumns())
             ->keyBy('id');
@@ -106,6 +108,7 @@ class HrController extends Controller
         if (Schema::hasTable('user_documents')) {
             $documentCounts = DB::table('user_documents')
                 ->whereIn('user_id', collect($users->items())->pluck('id')->all())
+                ->whereIn('document_type', $this->requiredDocumentTypes())
                 ->selectRaw('user_id, COUNT(*) as total')
                 ->groupBy('user_id')
                 ->pluck('total', 'user_id')
@@ -149,6 +152,7 @@ class HrController extends Controller
         $this->authorizeHr($request);
 
         $user = User::findOrFail($userId);
+        $this->abortIfHrCannotAccessUser($request, $user);
         $oldValues = $user->toArray();
 
         $rules = [
@@ -257,6 +261,7 @@ class HrController extends Controller
     {
         $this->authorizeHr($request);
         $user = User::findOrFail($userId);
+        $this->abortIfHrCannotAccessUser($request, $user);
 
         if (!Schema::hasTable('user_documents')) {
             return response()->json(['data' => [], 'documents_ready' => false]);
@@ -286,6 +291,7 @@ class HrController extends Controller
             ->with(['project:id,name,code', 'team:id,name,project_id'])
             ->select($this->userColumns())
             ->findOrFail($userId);
+        $this->abortIfHrCannotAccessUser($request, $user);
 
         $documents = collect();
         if (Schema::hasTable('user_documents')) {
@@ -385,6 +391,7 @@ class HrController extends Controller
         }
 
         $user = User::findOrFail($userId);
+        $this->abortIfHrCannotAccessUser($request, $user);
         $validated = $request->validate([
             'document_type' => 'required|in:' . implode(',', UserDocument::TYPES),
             'file' => 'required|file|max:10240|mimes:jpg,jpeg,png,pdf,doc,docx',
@@ -409,6 +416,7 @@ class HrController extends Controller
         }
 
         $user = User::findOrFail($userId);
+        $this->abortIfHrCannotAccessUser($request, $user);
         $validated = $request->validate([
             'documents' => 'required|array|min:1|max:12',
             'documents.*.document_type' => 'required|in:' . implode(',', UserDocument::TYPES),
@@ -500,14 +508,14 @@ class HrController extends Controller
         abort_unless($request->user() && in_array($request->user()->role, ['ceo', 'hr', 'director'], true), 403);
     }
 
+    private function abortIfHrCannotAccessUser(Request $request, User $user): void
+    {
+        abort_if($request->user()?->role === 'hr' && $user->role === 'ceo', 403);
+    }
+
     private function documentStats(?int $projectId): array
     {
-        $requiredTypes = [
-            'copy_of_cnic',
-            'two_pics',
-            'nda',
-            'contract_letter',
-        ];
+        $requiredTypes = $this->requiredDocumentTypes();
 
         $empty = [
             'active_total' => User::query()
@@ -530,6 +538,7 @@ class HrController extends Controller
             ->selectRaw("MAX(CASE WHEN document_type = 'nda' THEN 1 ELSE 0 END) as has_nda")
             ->selectRaw("MAX(CASE WHEN document_type = 'contract_letter' THEN 1 ELSE 0 END) as has_contract_letter")
             ->whereNotNull('user_id')
+            ->whereIn('document_type', $requiredTypes)
             ->groupBy('user_id');
 
         $summary = DB::table('users as users')
@@ -558,6 +567,16 @@ class HrController extends Controller
         ];
     }
 
+    private function requiredDocumentTypes(): array
+    {
+        return [
+            'copy_of_cnic',
+            'two_pics',
+            'nda',
+            'contract_letter',
+        ];
+    }
+
     private function userColumns(): array
     {
         $columns = [
@@ -582,6 +601,10 @@ class HrController extends Controller
 
     private function applyUserFilters($query, Request $request)
     {
+        if ($request->user()?->role === 'hr') {
+            $query->where('role', '!=', 'ceo');
+        }
+
         if ($request->filled('role') && $request->input('role') !== 'all') {
             $query->where('role', $request->input('role'));
         }

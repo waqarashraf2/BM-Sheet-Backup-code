@@ -529,6 +529,7 @@ export default function HRDashboard() {
               <option value="designer">Designer</option>
               <option value="project_manager">Project Manager</option>
               <option value="operations_manager">Ops Manager</option>
+              <option value="director">Director</option>
               <option value="accounts_manager">Accounts</option>
               <option value="hr">HR</option>
             </select>

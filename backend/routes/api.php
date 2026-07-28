@@ -257,13 +257,18 @@ Route::prefix('assignments')->group(function () {
     // ═══════════════════════════════════════════
     // MANAGEMENT ROUTES (ops_manager, director, ceo)
     // ═══════════════════════════════════════════
+    Route::middleware('role:ceo,director,operations_manager,project_manager,hr')->group(function () {
+        Route::get('/users', [UserController::class, 'index']);
+        Route::get('/users/{user}', [UserController::class, 'show'])->whereNumber('user');
+    });
+
     Route::middleware('role:ceo,director,operations_manager,project_manager')->group(function () {
 
         // Projects (write operations — CEO/Director only)
         // Moved to Director+ group below
 
         // Users
-        Route::apiResource('users', UserController::class);
+        Route::apiResource('users', UserController::class)->whereNumber('user');
         Route::post('/users/{id}/deactivate', [UserController::class, 'deactivate']);
         Route::get('/users-inactive', [UserController::class, 'inactive']);
         Route::post('/users/reassign-work', [UserController::class, 'reassignWork']);

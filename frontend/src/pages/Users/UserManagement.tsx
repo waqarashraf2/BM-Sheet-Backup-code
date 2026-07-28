@@ -90,6 +90,7 @@ export default function UserManagement() {
     ceo: ['ceo', 'project_manager', 'accounts_manager', 'drawer', 'checker', 'filler', 'qa', 'designer'],
     operations_manager: ['ceo', 'director', 'operations_manager', 'accounts_manager'],
     project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr'],
+    hr: ['ceo', 'hr'],
   };
   const rolesToHide = hiddenRoles[myRole] || (myRole === 'director' ? [] : [myRole]);
   const visibleRoleOptions = allRoleOptions.filter(r => !rolesToHide.includes(r.value));
@@ -355,24 +356,6 @@ export default function UserManagement() {
 
           {/* Password Row */}
           <div className="grid grid-cols-2 gap-4">
-            {/* Show stored password when editing (read-only) */}
-            {editingUser && (editingUser as any).plain_password && (
-              <div className="col-span-2">
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Current Password</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                    <Lock className="h-4 w-4 text-amber-500" />
-                  </div>
-                  <input
-                    type="text"
-                    value={(editingUser as any).plain_password}
-                    readOnly
-                    className="w-full pl-10 pr-4 py-3 text-sm bg-amber-50 border border-amber-200 rounded-xl text-amber-800 font-mono font-semibold cursor-default select-all"
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1">This is the user's current password. You can share it with the worker if they forgot.</p>
-              </div>
-            )}
             <div>
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                 Password {editingUser ? <span className="text-slate-400 font-normal normal-case">(optional)</span> : <span className="text-rose-400">*</span>}
