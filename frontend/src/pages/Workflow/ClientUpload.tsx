@@ -335,16 +335,8 @@ export default function ClientUpload() {
                         );
                     }
                 } catch (directError: any) {
-                    console.warn('Direct client portal upload unavailable, falling back to server upload:', directError);
-                    setUploadMode('server');
-                    setUploadProgress(0);
-                    response = await workflowService.uploadToClientPortal(
-                        numericOrderId,
-                        files,
-                        orderLookup,
-                        setUploadProgress,
-                        { forceReupload, projectId: requestedProjectId }
-                    );
+                    console.warn('Direct client portal upload failed for Project 26:', directError);
+                    throw directError;
                 }
             } else {
                 response = await workflowService.uploadToClientPortal(

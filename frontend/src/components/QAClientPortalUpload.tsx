@@ -169,10 +169,8 @@ export default function QAClientPortalUpload({ order, onStatusChange }: QAClient
             );
           }
         } catch (directError) {
-          console.warn('Direct client portal upload unavailable, falling back to server upload:', directError);
-          setUploadMode('server');
-          setUploadProgress(0);
-          response = await workflowService.uploadToClientPortal(order.id, files, undefined, setUploadProgress);
+          console.warn('Direct client portal upload failed for Project 26:', directError);
+          throw directError;
         }
       } else {
         response = await workflowService.uploadToClientPortal(order.id, files, undefined, setUploadProgress);
