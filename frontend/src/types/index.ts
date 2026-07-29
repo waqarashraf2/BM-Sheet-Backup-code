@@ -87,6 +87,10 @@ export interface User {
   name: string;
   email: string;
   machine_id?: string | null;
+  blood_group?: string | null;
+  contact_number?: string | null;
+  bank_account_number?: string | null;
+  salary?: number | string | null;
   role: UserRole;
   country: string;
   department: string;
@@ -111,7 +115,27 @@ export interface User {
     created_at?: string | null;
     project?: Project;
     team?: Team;
-  }
+}
+
+export interface UserSalaryIncrement {
+  id: number;
+  previous_salary?: number | string | null;
+  increment_amount: number | string;
+  new_salary: number | string;
+  effective_date: string;
+  notes?: string | null;
+  created_at?: string | null;
+}
+
+export interface UserLeaveBalance {
+  id: number;
+  year: number;
+  annual_allowed: number;
+  leaves_taken: number;
+  leaves_remaining: number;
+  notes?: string | null;
+  updated_at?: string | null;
+}
 
 export interface UserDocument {
   id: number;

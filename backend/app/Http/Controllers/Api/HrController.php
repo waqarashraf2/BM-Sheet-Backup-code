@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\UserDocument;
+use App\Models\UserLeaveBalance;
+use App\Models\UserSalaryIncrement;
 use App\Models\WorkItem;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -25,12 +27,35 @@ class HrController extends Controller
         $userBase = User::query()
             ->when($request->user()?->role === 'hr', fn ($query) => $query->where('role', '!=', 'ceo'))
             ->when($projectId, fn ($query) => $query->where('project_id', $projectId));
+        $inactiveFilter = function ($query) {
+            $query->where('is_active', false)
+                ->orWhere('inactive_days', '>=', 15)
+                ->orWhere(function ($nested) {
+                    $nested->where('is_absent', true)->where('inactive_days', '>=', 15);
+                });
+        };
         $stats = [
             'total' => (clone $userBase)->count(),
-            'active' => (clone $userBase)->where('is_active', true)->count(),
-            'inactive' => (clone $userBase)->where('is_active', false)->count(),
+            'active' => (clone $userBase)
+                ->where('is_active', true)
+                ->where(function ($query) {
+                    $query->whereNull('inactive_days')->orWhere('inactive_days', '<', 15);
+                })
+                ->where(function ($query) {
+                    $query->where('is_absent', false)
+                        ->orWhereNull('inactive_days')
+                        ->orWhere('inactive_days', '<', 15);
+                })
+                ->count(),
+            'inactive' => (clone $userBase)->where($inactiveFilter)->count(),
             'absent' => (clone $userBase)->where('is_absent', true)->count(),
-            'present' => (clone $userBase)->where('is_active', true)->where('is_absent', false)->count(),
+            'present' => (clone $userBase)
+                ->where('is_active', true)
+                ->where('is_absent', false)
+                ->where(function ($query) {
+                    $query->whereNull('inactive_days')->orWhere('inactive_days', '<', 15);
+                })
+                ->count(),
         ];
 
         $month = $this->requestedMonth($request);
@@ -64,6 +89,7 @@ class HrController extends Controller
         return response()->json([
             'stats' => $stats,
             'document_stats' => $this->documentStats($projectId),
+            'employee_analytics' => $this->employeeAnalytics($request, $month, $projectId),
             'month' => $month->format('Y-m'),
             'project_id' => $projectId,
             'project_options' => $this->projectOptions(),
@@ -136,7 +162,7 @@ class HrController extends Controller
             $user->setAttribute('documents_count', (int) ($documentCounts[$user->id] ?? 0));
             $user->setAttribute('monthly_completed', (int) ($performance?->completed ?? 0));
             $user->setAttribute('monthly_avg_minutes', $performance?->avg_seconds ? round(((float) $performance->avg_seconds) / 60, 1) : null);
-            return $user;
+            return $this->exposePayrollFields($user);
         }));
 
         return response()->json(array_merge($users->toArray(), [
@@ -168,6 +194,10 @@ class HrController extends Controller
 
         foreach ([
             'machine_id' => 'sometimes|nullable|string|max:100',
+            'blood_group' => 'sometimes|nullable|string|max:10',
+            'contact_number' => 'sometimes|nullable|string|max:50',
+            'bank_account_number' => 'sometimes|nullable|string|max:100',
+            'salary' => 'sometimes|nullable|numeric|min:0|max:9999999999.99',
             'layer' => 'sometimes|nullable|in:drawer,checker,filler,qa,designer',
             'is_absent' => 'sometimes|boolean',
             'daily_target' => 'sometimes|nullable|integer|min:0|max:100000',
@@ -182,7 +212,7 @@ class HrController extends Controller
 
         $data = $request->validate($rules);
 
-        foreach (['machine_id', 'layer', 'is_absent', 'daily_target', 'wip_limit', 'shift_start', 'shift_end'] as $column) {
+        foreach (['machine_id', 'blood_group', 'contact_number', 'bank_account_number', 'salary', 'layer', 'is_absent', 'daily_target', 'wip_limit', 'shift_start', 'shift_end'] as $column) {
             if (!Schema::hasColumn('users', $column)) {
                 unset($data[$column]);
             }
@@ -202,7 +232,82 @@ class HrController extends Controller
 
         return response()->json([
             'message' => 'User updated successfully.',
-            'data' => $user->fresh(['project:id,name', 'team:id,name,project_id']),
+            'data' => $this->exposePayrollFields($user->fresh(['project:id,name', 'team:id,name,project_id'])),
+        ]);
+    }
+
+    public function addSalaryIncrement(Request $request, string $userId)
+    {
+        $this->authorizeHr($request);
+        $this->abortUnlessPayrollReady();
+
+        $user = User::findOrFail($userId);
+        $this->abortIfHrCannotAccessUser($request, $user);
+
+        $validated = $request->validate([
+            'increment_amount' => 'required|numeric|min:0|max:9999999999.99',
+            'effective_date' => 'required|date',
+            'notes' => 'nullable|string|max:2000',
+        ]);
+
+        $increment = DB::transaction(function () use ($request, $user, $validated) {
+            $previousSalary = $user->salary !== null ? (float) $user->salary : 0.0;
+            $incrementAmount = (float) $validated['increment_amount'];
+            $newSalary = $previousSalary + $incrementAmount;
+
+            $record = UserSalaryIncrement::create([
+                'user_id' => $user->id,
+                'previous_salary' => $previousSalary,
+                'increment_amount' => $incrementAmount,
+                'new_salary' => $newSalary,
+                'effective_date' => $validated['effective_date'],
+                'notes' => $validated['notes'] ?? null,
+                'created_by' => $request->user()?->id,
+            ]);
+
+            $user->update(['salary' => $newSalary]);
+
+            return $record;
+        });
+
+        return response()->json([
+            'message' => 'Salary increment added successfully.',
+            'data' => $increment->fresh(),
+            'user' => $this->exposePayrollFields($user->fresh($this->userDetailRelations())),
+        ], 201);
+    }
+
+    public function updateLeaveBalance(Request $request, string $userId)
+    {
+        $this->authorizeHr($request);
+        $this->abortUnlessLeaveBalanceReady();
+
+        $user = User::findOrFail($userId);
+        $this->abortIfHrCannotAccessUser($request, $user);
+
+        $validated = $request->validate([
+            'year' => 'required|integer|min:2020|max:2100',
+            'annual_allowed' => 'sometimes|integer|min:0|max:60',
+            'leaves_taken' => 'required|integer|min:0|max:60',
+            'notes' => 'nullable|string|max:2000',
+        ]);
+
+        $allowed = (int) ($validated['annual_allowed'] ?? 14);
+        $taken = min((int) $validated['leaves_taken'], $allowed);
+
+        $balance = UserLeaveBalance::updateOrCreate(
+            ['user_id' => $user->id, 'year' => (int) $validated['year']],
+            [
+                'annual_allowed' => $allowed,
+                'leaves_taken' => $taken,
+                'notes' => $validated['notes'] ?? null,
+                'updated_by' => $request->user()?->id,
+            ]
+        );
+
+        return response()->json([
+            'message' => 'Leave balance updated successfully.',
+            'data' => $this->formatLeaveBalance($balance),
         ]);
     }
 
@@ -371,12 +476,16 @@ class HrController extends Controller
         }
 
         return response()->json([
-            'user' => $user,
+            'user' => $this->exposePayrollFields($user),
             'documents' => $documents,
             'performance' => $performance,
+            'salary_increments' => $this->salaryIncrementHistory($user->id),
+            'leave_balances' => $this->leaveBalances($user->id),
             'month' => $month->format('Y-m'),
             'documents_ready' => Schema::hasTable('user_documents'),
             'machine_id_ready' => Schema::hasColumn('users', 'machine_id'),
+            'payroll_ready' => $this->payrollReady(),
+            'leave_balance_ready' => Schema::hasTable('user_leave_balances'),
         ]);
     }
 
@@ -508,9 +617,86 @@ class HrController extends Controller
         abort_unless($request->user() && in_array($request->user()->role, ['ceo', 'hr', 'director'], true), 403);
     }
 
+    private function payrollReady(): bool
+    {
+        return Schema::hasTable('user_salary_increments')
+            && Schema::hasColumn('users', 'salary')
+            && Schema::hasColumn('users', 'bank_account_number');
+    }
+
+    private function abortUnlessPayrollReady(): void
+    {
+        abort_unless($this->payrollReady(), 503, 'Payroll tables are not ready. Run migrations first.');
+    }
+
+    private function abortUnlessLeaveBalanceReady(): void
+    {
+        abort_unless(Schema::hasTable('user_leave_balances'), 503, 'Leave balance table is not ready. Run migrations first.');
+    }
+
     private function abortIfHrCannotAccessUser(Request $request, User $user): void
     {
         abort_if($request->user()?->role === 'hr' && $user->role === 'ceo', 403);
+    }
+
+    private function exposePayrollFields(User $user): User
+    {
+        return $user->makeVisible(['bank_account_number', 'salary']);
+    }
+
+    private function userDetailRelations(): array
+    {
+        return ['project:id,name,code', 'team:id,name,project_id'];
+    }
+
+    private function salaryIncrementHistory(int $userId)
+    {
+        if (!Schema::hasTable('user_salary_increments')) {
+            return [];
+        }
+
+        return UserSalaryIncrement::query()
+            ->where('user_id', $userId)
+            ->latest('effective_date')
+            ->latest('id')
+            ->limit(25)
+            ->get()
+            ->map(fn (UserSalaryIncrement $increment) => [
+                'id' => $increment->id,
+                'previous_salary' => $increment->previous_salary,
+                'increment_amount' => $increment->increment_amount,
+                'new_salary' => $increment->new_salary,
+                'effective_date' => optional($increment->effective_date)->toDateString(),
+                'notes' => $increment->notes,
+                'created_at' => optional($increment->created_at)->toDateTimeString(),
+            ]);
+    }
+
+    private function leaveBalances(int $userId)
+    {
+        if (!Schema::hasTable('user_leave_balances')) {
+            return [];
+        }
+
+        return UserLeaveBalance::query()
+            ->where('user_id', $userId)
+            ->orderByDesc('year')
+            ->limit(5)
+            ->get()
+            ->map(fn (UserLeaveBalance $balance) => $this->formatLeaveBalance($balance));
+    }
+
+    private function formatLeaveBalance(UserLeaveBalance $balance): array
+    {
+        return [
+            'id' => $balance->id,
+            'year' => (int) $balance->year,
+            'annual_allowed' => (int) $balance->annual_allowed,
+            'leaves_taken' => (int) $balance->leaves_taken,
+            'leaves_remaining' => max(0, (int) $balance->annual_allowed - (int) $balance->leaves_taken),
+            'notes' => $balance->notes,
+            'updated_at' => optional($balance->updated_at)->toDateTimeString(),
+        ];
     }
 
     private function documentStats(?int $projectId): array
@@ -567,6 +753,82 @@ class HrController extends Controller
         ];
     }
 
+    private function employeeAnalytics(Request $request, Carbon $month, ?int $projectId): array
+    {
+        $monthStart = $month->copy()->startOfMonth();
+        $monthEnd = $month->copy()->endOfMonth();
+        $today = now()->startOfDay();
+        $probationStart = $today->copy()->subDays(92)->startOfDay();
+        $probationEnd = $today->copy()->subDays(90)->endOfDay();
+
+        $restrictedForHr = $request->user()?->role === 'hr';
+        $inactiveSql = "(users.is_active = 0 OR (users.is_absent = 1 AND COALESCE(users.inactive_days, 0) >= 15) OR COALESCE(users.inactive_days, 0) >= 15)";
+
+        $projectRows = DB::table('users as users')
+            ->leftJoin('projects as projects', 'projects.id', '=', 'users.project_id')
+            ->when($restrictedForHr, fn ($query) => $query->where('users.role', '!=', 'ceo'))
+            ->when($projectId, fn ($query) => $query->where('users.project_id', $projectId))
+            ->selectRaw("COALESCE(projects.name, 'No Project') as project_name")
+            ->selectRaw('COUNT(*) as total_employees')
+            ->selectRaw('SUM(CASE WHEN users.created_at BETWEEN ? AND ? THEN 1 ELSE 0 END) as new_joined', [$monthStart, $monthEnd])
+            ->selectRaw("SUM(CASE WHEN {$inactiveSql} AND users.updated_at BETWEEN ? AND ? THEN 1 ELSE 0 END) as left_this_month", [$monthStart, $monthEnd])
+            ->selectRaw("SUM(CASE WHEN {$inactiveSql} THEN 1 ELSE 0 END) as total_inactive")
+            ->selectRaw('SUM(CASE WHEN users.is_active = 1 AND NOT (users.is_absent = 1 AND COALESCE(users.inactive_days, 0) >= 15) AND COALESCE(users.inactive_days, 0) < 15 THEN 1 ELSE 0 END) as active_employees')
+            ->groupBy('users.project_id', 'projects.name')
+            ->orderByDesc('new_joined')
+            ->orderBy('project_name')
+            ->get()
+            ->map(fn ($row) => [
+                'project_name' => $row->project_name,
+                'total_employees' => (int) $row->total_employees,
+                'new_joined' => (int) $row->new_joined,
+                'left_this_month' => (int) $row->left_this_month,
+                'total_inactive' => (int) $row->total_inactive,
+                'active_employees' => (int) $row->active_employees,
+            ]);
+
+        $summary = [
+            'new_joined' => (int) $projectRows->sum('new_joined'),
+            'left_this_month' => (int) $projectRows->sum('left_this_month'),
+            'total_inactive' => (int) $projectRows->sum('total_inactive'),
+            'active_employees' => (int) $projectRows->sum('active_employees'),
+            'total_employees' => (int) $projectRows->sum('total_employees'),
+        ];
+
+        $probationEmployees = User::query()
+            ->with('project:id,name')
+            ->when($restrictedForHr, fn ($query) => $query->where('role', '!=', 'ceo'))
+            ->when($projectId, fn ($query) => $query->where('project_id', $projectId))
+            ->where('is_active', true)
+            ->whereBetween('created_at', [$probationStart, $probationEnd])
+            ->orderBy('created_at')
+            ->limit(20)
+            ->get($this->userColumns())
+            ->map(function (User $user) use ($today) {
+                $joinedAt = $user->created_at ? Carbon::parse($user->created_at)->startOfDay() : null;
+                $days = $joinedAt ? $joinedAt->diffInDays($today) : null;
+
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'role' => $user->role,
+                    'project_name' => $user->project?->name,
+                    'machine_id' => $user->machine_id ?? null,
+                    'joined_at' => optional($user->created_at)->toDateString(),
+                    'days_completed' => $days,
+                ];
+            });
+
+        return [
+            'summary' => array_merge($summary, [
+                'probation_due' => $probationEmployees->count(),
+            ]),
+            'project_breakdown' => $projectRows,
+            'probation_alerts' => $probationEmployees,
+        ];
+    }
+
     private function requiredDocumentTypes(): array
     {
         return [
@@ -590,6 +852,7 @@ class HrController extends Controller
         foreach ([
             'machine_id', 'inactive_days', 'is_online', 'wip_count', 'wip_limit',
             'shift_start', 'shift_end', 'layer', 'skills', 'assignment_score',
+            'blood_group', 'contact_number', 'bank_account_number', 'salary',
         ] as $optionalColumn) {
             if (Schema::hasColumn('users', $optionalColumn)) {
                 $columns[] = $optionalColumn;
