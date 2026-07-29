@@ -7,6 +7,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\UserDocument;
 use App\Models\UserLeaveBalance;
+use App\Models\UserLeaveEntry;
 use App\Models\UserSalaryIncrement;
 use App\Models\WorkItem;
 use Carbon\Carbon;
@@ -197,6 +198,7 @@ class HrController extends Controller
             'blood_group' => 'sometimes|nullable|string|max:10',
             'contact_number' => 'sometimes|nullable|string|max:50',
             'bank_account_number' => 'sometimes|nullable|string|max:100',
+            'joining_salary' => 'sometimes|nullable|numeric|min:0|max:9999999999.99',
             'salary' => 'sometimes|nullable|numeric|min:0|max:9999999999.99',
             'layer' => 'sometimes|nullable|in:drawer,checker,filler,qa,designer',
             'is_absent' => 'sometimes|boolean',
@@ -212,7 +214,7 @@ class HrController extends Controller
 
         $data = $request->validate($rules);
 
-        foreach (['machine_id', 'blood_group', 'contact_number', 'bank_account_number', 'salary', 'layer', 'is_absent', 'daily_target', 'wip_limit', 'shift_start', 'shift_end'] as $column) {
+        foreach (['machine_id', 'blood_group', 'contact_number', 'bank_account_number', 'joining_salary', 'salary', 'layer', 'is_absent', 'daily_target', 'wip_limit', 'shift_start', 'shift_end'] as $column) {
             if (!Schema::hasColumn('users', $column)) {
                 unset($data[$column]);
             }
@@ -265,7 +267,11 @@ class HrController extends Controller
                 'created_by' => $request->user()?->id,
             ]);
 
-            $user->update(['salary' => $newSalary]);
+            $userUpdates = ['salary' => $newSalary];
+            if (Schema::hasColumn('users', 'joining_salary') && $user->joining_salary === null) {
+                $userUpdates['joining_salary'] = $previousSalary;
+            }
+            $user->update($userUpdates);
 
             return $record;
         });
@@ -309,6 +315,53 @@ class HrController extends Controller
             'message' => 'Leave balance updated successfully.',
             'data' => $this->formatLeaveBalance($balance),
         ]);
+    }
+
+    public function addLeaveEntry(Request $request, string $userId)
+    {
+        $this->authorizeHr($request);
+        $this->abortUnlessLeaveEntryReady();
+
+        $user = User::findOrFail($userId);
+        $this->abortIfHrCannotAccessUser($request, $user);
+
+        $validated = $request->validate([
+            'leave_date' => 'required|date',
+            'leave_days' => 'sometimes|integer|min:1|max:14',
+            'reason' => 'required|string|max:500',
+        ]);
+
+        $entry = DB::transaction(function () use ($request, $user, $validated) {
+            $leaveDate = Carbon::parse($validated['leave_date']);
+            $year = (int) $leaveDate->format('Y');
+            $leaveDays = (int) ($validated['leave_days'] ?? 1);
+
+            $entry = UserLeaveEntry::create([
+                'user_id' => $user->id,
+                'leave_date' => $leaveDate->toDateString(),
+                'leave_days' => $leaveDays,
+                'reason' => $validated['reason'],
+                'created_by' => $request->user()?->id,
+            ]);
+
+            $balance = UserLeaveBalance::firstOrNew([
+                'user_id' => $user->id,
+                'year' => $year,
+            ]);
+            $balance->annual_allowed = $balance->annual_allowed ?: 14;
+            $balance->leaves_taken = min(60, (float) ($balance->leaves_taken ?? 0) + $leaveDays);
+            $balance->updated_by = $request->user()?->id;
+            $balance->save();
+
+            return $entry;
+        });
+
+        return response()->json([
+            'message' => 'Leave record added successfully.',
+            'data' => $this->formatLeaveEntry($entry->fresh()),
+            'leave_balances' => $this->leaveBalances($user->id),
+            'leave_entries' => $this->leaveEntries($user->id),
+        ], 201);
     }
 
     public function deactivateLongAbsent(Request $request)
@@ -481,11 +534,13 @@ class HrController extends Controller
             'performance' => $performance,
             'salary_increments' => $this->salaryIncrementHistory($user->id),
             'leave_balances' => $this->leaveBalances($user->id),
+            'leave_entries' => $this->leaveEntries($user->id),
             'month' => $month->format('Y-m'),
             'documents_ready' => Schema::hasTable('user_documents'),
             'machine_id_ready' => Schema::hasColumn('users', 'machine_id'),
             'payroll_ready' => $this->payrollReady(),
             'leave_balance_ready' => Schema::hasTable('user_leave_balances'),
+            'leave_entry_ready' => Schema::hasTable('user_leave_entries'),
         ]);
     }
 
@@ -621,6 +676,7 @@ class HrController extends Controller
     {
         return Schema::hasTable('user_salary_increments')
             && Schema::hasColumn('users', 'salary')
+            && Schema::hasColumn('users', 'joining_salary')
             && Schema::hasColumn('users', 'bank_account_number');
     }
 
@@ -634,6 +690,15 @@ class HrController extends Controller
         abort_unless(Schema::hasTable('user_leave_balances'), 503, 'Leave balance table is not ready. Run migrations first.');
     }
 
+    private function abortUnlessLeaveEntryReady(): void
+    {
+        abort_unless(
+            Schema::hasTable('user_leave_entries') && Schema::hasTable('user_leave_balances'),
+            503,
+            'Leave record tables are not ready. Run migrations first.'
+        );
+    }
+
     private function abortIfHrCannotAccessUser(Request $request, User $user): void
     {
         abort_if($request->user()?->role === 'hr' && $user->role === 'ceo', 403);
@@ -641,7 +706,7 @@ class HrController extends Controller
 
     private function exposePayrollFields(User $user): User
     {
-        return $user->makeVisible(['bank_account_number', 'salary']);
+        return $user->makeVisible(['bank_account_number', 'joining_salary', 'salary']);
     }
 
     private function userDetailRelations(): array
@@ -686,6 +751,21 @@ class HrController extends Controller
             ->map(fn (UserLeaveBalance $balance) => $this->formatLeaveBalance($balance));
     }
 
+    private function leaveEntries(int $userId)
+    {
+        if (!Schema::hasTable('user_leave_entries')) {
+            return [];
+        }
+
+        return UserLeaveEntry::query()
+            ->where('user_id', $userId)
+            ->latest('leave_date')
+            ->latest('id')
+            ->limit(50)
+            ->get()
+            ->map(fn (UserLeaveEntry $entry) => $this->formatLeaveEntry($entry));
+    }
+
     private function formatLeaveBalance(UserLeaveBalance $balance): array
     {
         return [
@@ -696,6 +776,17 @@ class HrController extends Controller
             'leaves_remaining' => max(0, (int) $balance->annual_allowed - (int) $balance->leaves_taken),
             'notes' => $balance->notes,
             'updated_at' => optional($balance->updated_at)->toDateTimeString(),
+        ];
+    }
+
+    private function formatLeaveEntry(UserLeaveEntry $entry): array
+    {
+        return [
+            'id' => $entry->id,
+            'leave_date' => optional($entry->leave_date)->toDateString(),
+            'leave_days' => $entry->leave_days,
+            'reason' => $entry->reason,
+            'created_at' => optional($entry->created_at)->toDateTimeString(),
         ];
     }
 
@@ -852,7 +943,7 @@ class HrController extends Controller
         foreach ([
             'machine_id', 'inactive_days', 'is_online', 'wip_count', 'wip_limit',
             'shift_start', 'shift_end', 'layer', 'skills', 'assignment_score',
-            'blood_group', 'contact_number', 'bank_account_number', 'salary',
+            'blood_group', 'contact_number', 'bank_account_number', 'joining_salary', 'salary',
         ] as $optionalColumn) {
             if (Schema::hasColumn('users', $optionalColumn)) {
                 $columns[] = $optionalColumn;

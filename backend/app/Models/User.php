@@ -21,7 +21,7 @@ class User extends Authenticatable
     protected $fillable = [
         'name', 'email', 'machine_id', 'password', 'plain_password', 'role', 'country', 'department',
         'project_id', 'team_id', 'old_system_id', 'layer', 'is_active',
-        'blood_group', 'contact_number', 'bank_account_number', 'salary',
+        'blood_group', 'contact_number', 'bank_account_number', 'joining_salary', 'salary',
         'last_activity', 'inactive_days',
         'current_session_token', 'wip_count', 'wip_limit', 'today_completed',
         'shift_start', 'shift_end', 'is_absent', 'daily_target',
@@ -38,6 +38,7 @@ class User extends Authenticatable
         'plain_password',
         'remember_token',
         'bank_account_number',
+        'joining_salary',
         'salary',
     ];
 
@@ -76,6 +77,7 @@ class User extends Authenticatable
             'avg_completion_minutes' => 'decimal:2',
             'rejection_rate_30d' => 'decimal:4',
             'assignment_score' => 'decimal:4',
+            'joining_salary' => 'decimal:2',
             'salary' => 'decimal:2',
         ];
     }
@@ -125,6 +127,11 @@ class User extends Authenticatable
     public function leaveBalances()
     {
         return $this->hasMany(UserLeaveBalance::class);
+    }
+
+    public function leaveEntries()
+    {
+        return $this->hasMany(UserLeaveEntry::class);
     }
 
     /**

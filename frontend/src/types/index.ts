@@ -90,6 +90,7 @@ export interface User {
   blood_group?: string | null;
   contact_number?: string | null;
   bank_account_number?: string | null;
+  joining_salary?: number | string | null;
   salary?: number | string | null;
   role: UserRole;
   country: string;
@@ -135,6 +136,14 @@ export interface UserLeaveBalance {
   leaves_remaining: number;
   notes?: string | null;
   updated_at?: string | null;
+}
+
+export interface UserLeaveEntry {
+  id: number;
+  leave_date: string;
+  leave_days: number | string;
+  reason: string;
+  created_at?: string | null;
 }
 
 export interface UserDocument {

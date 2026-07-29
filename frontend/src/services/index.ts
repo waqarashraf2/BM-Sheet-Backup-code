@@ -770,6 +770,7 @@ export const hrService = {
       documents: UserDocument[];
       salary_increments: import('../types').UserSalaryIncrement[];
       leave_balances: import('../types').UserLeaveBalance[];
+      leave_entries: import('../types').UserLeaveEntry[];
       performance: {
         today_completed: number;
         month_completed: number;
@@ -782,11 +783,19 @@ export const hrService = {
       machine_id_ready: boolean;
       payroll_ready: boolean;
       leave_balance_ready: boolean;
+      leave_entry_ready: boolean;
     }>(`/hr/users/${userId}`, { params }),
   addSalaryIncrement: (userId: number, data: { increment_amount: number; effective_date: string; notes?: string | null }) =>
     api.post<{ data: import('../types').UserSalaryIncrement; user: User; message: string }>(`/hr/users/${userId}/salary-increments`, data),
   updateLeaveBalance: (userId: number, data: { year: number; annual_allowed?: number; leaves_taken: number; notes?: string | null }) =>
     api.put<{ data: import('../types').UserLeaveBalance; message: string }>(`/hr/users/${userId}/leave-balance`, data),
+  addLeaveEntry: (userId: number, data: { leave_date: string; leave_days?: number; reason: string }) =>
+    api.post<{
+      data: import('../types').UserLeaveEntry;
+      leave_balances: import('../types').UserLeaveBalance[];
+      leave_entries: import('../types').UserLeaveEntry[];
+      message: string;
+    }>(`/hr/users/${userId}/leave-entries`, data),
   documents: (userId: number) =>
     api.get<{ data: UserDocument[]; documents_ready: boolean }>(`/hr/users/${userId}/documents`),
   uploadDocument: (userId: number, data: FormData) =>

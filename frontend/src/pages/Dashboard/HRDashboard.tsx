@@ -4,7 +4,7 @@ import { useSelector } from 'react-redux';
 import { AnimatedPage, Button, Modal, PageHeader, StatusBadge } from '../../components/ui';
 import { hrService } from '../../services';
 import type { RootState } from '../../store/store';
-import type { User, UserDocument, UserLeaveBalance, UserSalaryIncrement } from '../../types';
+import type { User, UserDocument, UserLeaveBalance, UserLeaveEntry, UserSalaryIncrement } from '../../types';
 
 const documentTypes = [
   { value: 'copy_of_cnic', label: 'Copy of CNIC' },
@@ -80,8 +80,10 @@ type UserDetail = {
   documents: UserDocument[];
   salary_increments: UserSalaryIncrement[];
   leave_balances: UserLeaveBalance[];
+  leave_entries: UserLeaveEntry[];
   payroll_ready: boolean;
   leave_balance_ready: boolean;
+  leave_entry_ready: boolean;
   performance: {
     today_completed: number;
     month_completed: number;
@@ -143,12 +145,18 @@ export default function HRDashboard() {
     blood_group: '',
     contact_number: '',
     bank_account_number: '',
+    joining_salary: '',
     salary: '',
   });
   const [incrementForm, setIncrementForm] = useState({
     increment_amount: '',
     effective_date: new Date().toISOString().slice(0, 10),
     notes: '',
+  });
+  const [leaveEntryForm, setLeaveEntryForm] = useState({
+    leave_date: new Date().toISOString().slice(0, 10),
+    leave_days: '1',
+    reason: '',
   });
   const [leaveForm, setLeaveForm] = useState({
     year: String(new Date().getFullYear()),
@@ -160,6 +168,7 @@ export default function HRDashboard() {
   const [savingUser, setSavingUser] = useState(false);
   const [savingIncrement, setSavingIncrement] = useState(false);
   const [savingLeaves, setSavingLeaves] = useState(false);
+  const [savingLeaveEntry, setSavingLeaveEntry] = useState(false);
   const [deletingDocumentId, setDeletingDocumentId] = useState<number | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
@@ -233,8 +242,10 @@ export default function HRDashboard() {
         documents: res.data.documents || [],
         salary_increments: res.data.salary_increments || [],
         leave_balances: res.data.leave_balances || [],
+        leave_entries: res.data.leave_entries || [],
         payroll_ready: !!res.data.payroll_ready,
         leave_balance_ready: !!res.data.leave_balance_ready,
+        leave_entry_ready: !!res.data.leave_entry_ready,
         performance: res.data.performance,
       });
       setDocuments(res.data.documents || []);
@@ -276,6 +287,7 @@ export default function HRDashboard() {
       blood_group: user.blood_group || '',
       contact_number: user.contact_number || '',
       bank_account_number: user.bank_account_number || '',
+      joining_salary: user.joining_salary != null ? String(user.joining_salary) : '',
       salary: user.salary != null ? String(user.salary) : '',
     });
     setError('');
@@ -303,6 +315,7 @@ export default function HRDashboard() {
     };
     if (['ceo', 'hr', 'director'].includes(currentUser?.role || '')) {
       payload.bank_account_number = editForm.bank_account_number || null;
+      payload.joining_salary = editForm.joining_salary === '' ? null : Number(editForm.joining_salary);
       payload.salary = editForm.salary === '' ? null : Number(editForm.salary);
     }
 
@@ -329,8 +342,10 @@ export default function HRDashboard() {
       documents: res.data.documents || [],
       salary_increments: res.data.salary_increments || [],
       leave_balances: res.data.leave_balances || [],
+      leave_entries: res.data.leave_entries || [],
       payroll_ready: !!res.data.payroll_ready,
       leave_balance_ready: !!res.data.leave_balance_ready,
+      leave_entry_ready: !!res.data.leave_entry_ready,
       performance: res.data.performance,
     });
     setDocuments(res.data.documents || []);
@@ -383,6 +398,31 @@ export default function HRDashboard() {
     }
   };
 
+  const addLeaveEntry = async () => {
+    if (!selectedUser || !leaveEntryForm.leave_date || !leaveEntryForm.reason.trim()) return;
+
+    try {
+      setSavingLeaveEntry(true);
+      setError('');
+      await hrService.addLeaveEntry(selectedUser.id, {
+        leave_date: leaveEntryForm.leave_date,
+        leave_days: leaveEntryForm.leave_days === '' ? 1 : Number(leaveEntryForm.leave_days),
+        reason: leaveEntryForm.reason.trim(),
+      });
+      setLeaveEntryForm({
+        leave_date: new Date().toISOString().slice(0, 10),
+        leave_days: '1',
+        reason: '',
+      });
+      await reloadSelectedUserDetail();
+    } catch (e: any) {
+      console.error(e);
+      setError(e.response?.data?.message || 'Could not add leave record.');
+    } finally {
+      setSavingLeaveEntry(false);
+    }
+  };
+
   const uploadDocuments = async () => {
     if (!selectedUser) return;
 
@@ -407,8 +447,10 @@ export default function HRDashboard() {
         documents: res.data.documents || [],
         salary_increments: res.data.salary_increments || [],
         leave_balances: res.data.leave_balances || [],
+        leave_entries: res.data.leave_entries || [],
         payroll_ready: !!res.data.payroll_ready,
         leave_balance_ready: !!res.data.leave_balance_ready,
+        leave_entry_ready: !!res.data.leave_entry_ready,
         performance: res.data.performance,
       });
       setDocuments(res.data.documents || []);
@@ -1020,6 +1062,7 @@ export default function HRDashboard() {
                     ['Layer', selectedDetail.user.layer || '---'],
                     ...(canViewPayroll ? [
                       ['Bank Account', selectedDetail.user.bank_account_number || '---'],
+                      ['Joining Salary', formatMoney(selectedDetail.user.joining_salary)],
                       ['Current Salary', formatMoney(selectedDetail.user.salary)],
                     ] : []),
                     ['Saved Target', selectedDetail.user.daily_target ? selectedDetail.user.daily_target : 'Not set'],
@@ -1080,11 +1123,17 @@ export default function HRDashboard() {
                   <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                       <h3 className="text-sm font-semibold text-slate-900">Salary & Increment</h3>
-                      <p className="text-xs text-slate-500">Current salary and increment history</p>
+                      <p className="text-xs text-slate-500">Joining salary, current salary, and increment history</p>
                     </div>
-                    <div className="text-right">
-                      <div className="text-lg font-bold text-slate-900">{formatMoney(selectedDetail.user.salary)}</div>
-                      <div className="text-xs text-slate-500">current salary</div>
+                    <div className="grid grid-cols-2 gap-3 text-right">
+                      <div>
+                        <div className="text-sm font-bold text-slate-900">{formatMoney(selectedDetail.user.joining_salary)}</div>
+                        <div className="text-xs text-slate-500">joining</div>
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-slate-900">{formatMoney(selectedDetail.user.salary)}</div>
+                        <div className="text-xs text-slate-500">current</div>
+                      </div>
                     </div>
                   </div>
                   {!selectedDetail.payroll_ready ? (
@@ -1160,6 +1209,41 @@ export default function HRDashboard() {
                   <div className="px-4 py-6 text-sm text-amber-700">Leave balance table is pending. Run migrations first.</div>
                 ) : (
                   <div className="space-y-4 p-4">
+                    {selectedDetail.leave_entry_ready ? (
+                      <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                        <div className="mb-3 text-xs font-semibold uppercase text-slate-500">Add Leave Record</div>
+                        <div className="grid gap-3 md:grid-cols-[1fr_0.7fr_1.4fr_auto]">
+                          <input
+                            type="date"
+                            value={leaveEntryForm.leave_date}
+                            onChange={e => setLeaveEntryForm(prev => ({ ...prev, leave_date: e.target.value }))}
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none"
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            max={14}
+                            value={leaveEntryForm.leave_days}
+                            onChange={e => setLeaveEntryForm(prev => ({ ...prev, leave_days: e.target.value }))}
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none"
+                          />
+                          <input
+                            value={leaveEntryForm.reason}
+                            onChange={e => setLeaveEntryForm(prev => ({ ...prev, reason: e.target.value }))}
+                            placeholder="Reason"
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none"
+                          />
+                          <Button onClick={addLeaveEntry} loading={savingLeaveEntry} disabled={!leaveEntryForm.reason.trim()}>
+                            Add
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                        Leave record table is pending. Run migrations first.
+                      </div>
+                    )}
+
                     <div className="grid gap-3 md:grid-cols-3">
                       <label className="text-sm">
                         <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Year</span>
@@ -1213,6 +1297,22 @@ export default function HRDashboard() {
                           <div className="text-right font-semibold text-emerald-700">{item.leaves_remaining} left</div>
                         </div>
                       ))}
+                    </div>
+                    <div className="rounded-lg border border-slate-100">
+                      <div className="border-b border-slate-100 px-3 py-2 text-xs font-semibold uppercase text-slate-500">
+                        Leave History
+                      </div>
+                      <div className="max-h-44 overflow-y-auto">
+                        {selectedDetail.leave_entries.length === 0 ? (
+                          <div className="px-4 py-5 text-center text-sm text-slate-500">No leave records added.</div>
+                        ) : selectedDetail.leave_entries.map(item => (
+                          <div key={item.id} className="grid gap-2 border-b border-slate-100 px-3 py-2 text-sm last:border-b-0 md:grid-cols-[110px_70px_1fr]">
+                            <div className="font-medium text-slate-900">{item.leave_date ? new Date(item.leave_date).toLocaleDateString() : '---'}</div>
+                            <div className="text-slate-600">{item.leave_days} day</div>
+                            <div className="text-slate-600">{item.reason}</div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1374,6 +1474,16 @@ export default function HRDashboard() {
                   <input
                     value={editForm.bank_account_number}
                     onChange={e => setEditForm(prev => ({ ...prev, bank_account_number: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Joining Salary</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editForm.joining_salary}
+                    onChange={e => setEditForm(prev => ({ ...prev, joining_salary: e.target.value }))}
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
                   />
                 </label>
