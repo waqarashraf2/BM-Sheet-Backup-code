@@ -1117,74 +1117,77 @@ export default function HRDashboard() {
               </div>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+            <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
               {canViewPayroll && (
-                <div className="rounded-lg border border-slate-200">
-                  <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+                  <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50/70 px-3 py-2.5 lg:flex-row lg:items-center lg:justify-between">
                     <div>
-                      <h3 className="text-sm font-semibold text-slate-900">Salary & Increment</h3>
-                      <p className="text-xs text-slate-500">Joining salary, current salary, and increment history</p>
+                      <h3 className="text-xs font-semibold uppercase text-slate-900">Salary & Increment</h3>
+                      <p className="text-[11px] text-slate-500">Joining salary, current salary, and increment history</p>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 text-right">
-                      <div>
-                        <div className="text-sm font-bold text-slate-900">{formatMoney(selectedDetail.user.joining_salary)}</div>
-                        <div className="text-xs text-slate-500">joining</div>
+                    <div className="grid grid-cols-2 gap-2 text-right">
+                      <div className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5">
+                        <div className="text-[10px] font-medium uppercase text-slate-400">Joining</div>
+                        <div className="text-xs font-bold text-slate-900">{formatMoney(selectedDetail.user.joining_salary)}</div>
                       </div>
-                      <div>
-                        <div className="text-sm font-bold text-slate-900">{formatMoney(selectedDetail.user.salary)}</div>
-                        <div className="text-xs text-slate-500">current</div>
+                      <div className="rounded-md border border-emerald-100 bg-emerald-50 px-2.5 py-1.5">
+                        <div className="text-[10px] font-medium uppercase text-emerald-600">Current</div>
+                        <div className="text-xs font-bold text-emerald-800">{formatMoney(selectedDetail.user.salary)}</div>
                       </div>
                     </div>
                   </div>
                   {!selectedDetail.payroll_ready ? (
                     <div className="px-4 py-6 text-sm text-amber-700">Payroll table is pending. Run migrations first.</div>
                   ) : (
-                    <div className="space-y-4 p-4">
-                      <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
-                        <label className="text-sm">
-                          <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Increment Amount</span>
+                    <div className="space-y-3 p-3">
+                      <div className="rounded-lg border border-slate-100 bg-slate-50 p-2.5">
+                        <div className="mb-2 text-[11px] font-semibold uppercase text-slate-500">Add Increment</div>
+                        <div className="grid gap-2 md:grid-cols-[1fr_1fr]">
+                        <label className="text-xs">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase text-slate-500">Increment Amount</span>
                           <input
                             type="number"
                             min={0}
                             value={incrementForm.increment_amount}
                             onChange={e => setIncrementForm(prev => ({ ...prev, increment_amount: e.target.value }))}
-                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                            className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs focus:border-teal-500 focus:bg-white focus:outline-none"
                           />
                         </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Effective Date</span>
+                        <label className="text-xs">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase text-slate-500">Effective Date</span>
                           <input
                             type="date"
                             value={incrementForm.effective_date}
                             onChange={e => setIncrementForm(prev => ({ ...prev, effective_date: e.target.value }))}
-                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                            className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs focus:border-teal-500 focus:bg-white focus:outline-none"
                           />
                         </label>
+                        </div>
+                        <div className="mt-2 flex gap-2">
+                          <input
+                            value={incrementForm.notes}
+                            onChange={e => setIncrementForm(prev => ({ ...prev, notes: e.target.value }))}
+                            placeholder="Notes"
+                            className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs focus:border-teal-500 focus:outline-none"
+                          />
+                          <Button size="sm" onClick={addIncrement} loading={savingIncrement} disabled={!incrementForm.increment_amount}>
+                            Add Increment
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex gap-3">
-                        <input
-                          value={incrementForm.notes}
-                          onChange={e => setIncrementForm(prev => ({ ...prev, notes: e.target.value }))}
-                          placeholder="Notes"
-                          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
-                        />
-                        <Button onClick={addIncrement} loading={savingIncrement} disabled={!incrementForm.increment_amount}>
-                          Add Increment
-                        </Button>
-                      </div>
-                      <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-100">
+                      <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-100 bg-white">
                         {selectedDetail.salary_increments.length === 0 ? (
-                          <div className="px-4 py-6 text-center text-sm text-slate-500">No increments added.</div>
+                          <div className="px-3 py-4 text-center text-xs text-slate-500">No increments added.</div>
                         ) : selectedDetail.salary_increments.map(item => (
-                          <div key={item.id} className="grid gap-2 border-b border-slate-100 px-4 py-3 text-sm last:border-b-0 md:grid-cols-[1fr_auto]">
-                            <div>
+                          <div key={item.id} className="grid gap-2 border-b border-slate-100 px-3 py-2 text-xs last:border-b-0 md:grid-cols-[1fr_auto]">
+                            <div className="min-w-0">
                               <div className="font-semibold text-slate-900">
                                 +{formatMoney(item.increment_amount)} on {item.effective_date ? new Date(item.effective_date).toLocaleDateString() : '---'}
                               </div>
-                              <div className="text-xs text-slate-500">
+                              <div className="text-[11px] text-slate-500">
                                 {formatMoney(item.previous_salary)} to {formatMoney(item.new_salary)}
                               </div>
-                              {item.notes && <div className="mt-1 text-xs text-slate-500">{item.notes}</div>}
+                              {item.notes && <div className="mt-1 rounded-md bg-slate-50 px-2 py-1 text-[11px] text-slate-500">{item.notes}</div>}
                             </div>
                           </div>
                         ))}
@@ -1194,30 +1197,30 @@ export default function HRDashboard() {
                 </div>
               )}
 
-              <div className="rounded-lg border border-slate-200">
-                <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-3 py-2.5">
                   <div>
-                    <h3 className="text-sm font-semibold text-slate-900">Annual Leaves</h3>
-                    <p className="text-xs text-slate-500">Default yearly allowance is 14 leaves</p>
+                    <h3 className="text-xs font-semibold uppercase text-slate-900">Annual Leaves</h3>
+                    <p className="text-[11px] text-slate-500">Default yearly allowance is 14 leaves</p>
                   </div>
-                  <div className="text-right">
-                    <div className="text-lg font-bold text-slate-900">{currentLeaveBalance?.leaves_remaining ?? 14}</div>
-                    <div className="text-xs text-slate-500">remaining</div>
+                  <div className="rounded-md border border-teal-100 bg-teal-50 px-2.5 py-1.5 text-right">
+                    <div className="text-[10px] font-medium uppercase text-teal-600">Remaining</div>
+                    <div className="text-sm font-bold text-teal-800">{currentLeaveBalance?.leaves_remaining ?? 14}</div>
                   </div>
                 </div>
                 {!selectedDetail.leave_balance_ready ? (
                   <div className="px-4 py-6 text-sm text-amber-700">Leave balance table is pending. Run migrations first.</div>
                 ) : (
-                  <div className="space-y-4 p-4">
+                  <div className="space-y-3 p-3">
                     {selectedDetail.leave_entry_ready ? (
-                      <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                        <div className="mb-3 text-xs font-semibold uppercase text-slate-500">Add Leave Record</div>
-                        <div className="grid gap-3 md:grid-cols-[1fr_0.7fr_1.4fr_auto]">
+                      <div className="rounded-lg border border-slate-100 bg-slate-50 p-2.5">
+                        <div className="mb-2 text-[11px] font-semibold uppercase text-slate-500">Add Leave Record</div>
+                        <div className="grid gap-2 md:grid-cols-[1fr_0.6fr_1.3fr_auto]">
                           <input
                             type="date"
                             value={leaveEntryForm.leave_date}
                             onChange={e => setLeaveEntryForm(prev => ({ ...prev, leave_date: e.target.value }))}
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none"
+                            className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs focus:border-teal-500 focus:outline-none"
                           />
                           <input
                             type="number"
@@ -1225,15 +1228,15 @@ export default function HRDashboard() {
                             max={14}
                             value={leaveEntryForm.leave_days}
                             onChange={e => setLeaveEntryForm(prev => ({ ...prev, leave_days: e.target.value }))}
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none"
+                            className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs focus:border-teal-500 focus:outline-none"
                           />
                           <input
                             value={leaveEntryForm.reason}
                             onChange={e => setLeaveEntryForm(prev => ({ ...prev, reason: e.target.value }))}
                             placeholder="Reason"
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none"
+                            className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs focus:border-teal-500 focus:outline-none"
                           />
-                          <Button onClick={addLeaveEntry} loading={savingLeaveEntry} disabled={!leaveEntryForm.reason.trim()}>
+                          <Button size="sm" onClick={addLeaveEntry} loading={savingLeaveEntry} disabled={!leaveEntryForm.reason.trim()}>
                             Add
                           </Button>
                         </div>
@@ -1244,53 +1247,56 @@ export default function HRDashboard() {
                       </div>
                     )}
 
-                    <div className="grid gap-3 md:grid-cols-3">
-                      <label className="text-sm">
-                        <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Year</span>
+                    <div className="rounded-lg border border-slate-100 p-2.5">
+                      <div className="mb-2 text-[11px] font-semibold uppercase text-slate-500">Yearly Balance</div>
+                      <div className="grid gap-2 md:grid-cols-3">
+                      <label className="text-xs">
+                        <span className="mb-1 block text-[10px] font-semibold uppercase text-slate-500">Year</span>
                         <input
                           type="number"
                           value={leaveForm.year}
                           onChange={e => setLeaveForm(prev => ({ ...prev, year: e.target.value }))}
-                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                          className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs focus:border-teal-500 focus:bg-white focus:outline-none"
                         />
                       </label>
-                      <label className="text-sm">
-                        <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Allowed</span>
+                      <label className="text-xs">
+                        <span className="mb-1 block text-[10px] font-semibold uppercase text-slate-500">Allowed</span>
                         <input
                           type="number"
                           min={0}
                           max={60}
                           value={leaveForm.annual_allowed}
                           onChange={e => setLeaveForm(prev => ({ ...prev, annual_allowed: e.target.value }))}
-                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                          className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs focus:border-teal-500 focus:bg-white focus:outline-none"
                         />
                       </label>
-                      <label className="text-sm">
-                        <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Taken</span>
+                      <label className="text-xs">
+                        <span className="mb-1 block text-[10px] font-semibold uppercase text-slate-500">Taken</span>
                         <input
                           type="number"
                           min={0}
                           max={60}
                           value={leaveForm.leaves_taken}
                           onChange={e => setLeaveForm(prev => ({ ...prev, leaves_taken: e.target.value }))}
-                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                          className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs focus:border-teal-500 focus:bg-white focus:outline-none"
                         />
                       </label>
+                      </div>
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          value={leaveForm.notes}
+                          onChange={e => setLeaveForm(prev => ({ ...prev, notes: e.target.value }))}
+                          placeholder="Notes"
+                          className="min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs focus:border-teal-500 focus:bg-white focus:outline-none"
+                        />
+                        <Button size="sm" onClick={saveLeaveBalance} loading={savingLeaves}>Save Leaves</Button>
+                      </div>
                     </div>
-                    <div className="flex gap-3">
-                      <input
-                        value={leaveForm.notes}
-                        onChange={e => setLeaveForm(prev => ({ ...prev, notes: e.target.value }))}
-                        placeholder="Notes"
-                        className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
-                      />
-                      <Button onClick={saveLeaveBalance} loading={savingLeaves}>Save Leaves</Button>
-                    </div>
-                    <div className="grid gap-2">
+                    <div className="grid gap-1.5">
                       {selectedDetail.leave_balances.length === 0 ? (
-                        <div className="rounded-lg border border-slate-100 px-4 py-4 text-center text-sm text-slate-500">No leave balance added.</div>
+                        <div className="rounded-lg border border-slate-100 px-3 py-3 text-center text-xs text-slate-500">No leave balance added.</div>
                       ) : selectedDetail.leave_balances.map(item => (
-                        <div key={item.id} className="grid grid-cols-4 items-center rounded-lg border border-slate-100 px-3 py-2 text-sm">
+                        <div key={item.id} className="grid grid-cols-4 items-center rounded-lg border border-slate-100 bg-white px-2.5 py-1.5 text-xs shadow-sm">
                           <div className="font-semibold text-slate-900">{item.year}</div>
                           <div className="text-center text-slate-600">{item.leaves_taken} taken</div>
                           <div className="text-center text-slate-600">{item.annual_allowed} allowed</div>
@@ -1298,15 +1304,15 @@ export default function HRDashboard() {
                         </div>
                       ))}
                     </div>
-                    <div className="rounded-lg border border-slate-100">
-                      <div className="border-b border-slate-100 px-3 py-2 text-xs font-semibold uppercase text-slate-500">
+                    <div className="rounded-lg border border-slate-100 bg-white">
+                      <div className="border-b border-slate-100 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold uppercase text-slate-500">
                         Leave History
                       </div>
-                      <div className="max-h-44 overflow-y-auto">
+                      <div className="max-h-32 overflow-y-auto">
                         {selectedDetail.leave_entries.length === 0 ? (
-                          <div className="px-4 py-5 text-center text-sm text-slate-500">No leave records added.</div>
+                          <div className="px-3 py-4 text-center text-xs text-slate-500">No leave records added.</div>
                         ) : selectedDetail.leave_entries.map(item => (
-                          <div key={item.id} className="grid gap-2 border-b border-slate-100 px-3 py-2 text-sm last:border-b-0 md:grid-cols-[110px_70px_1fr]">
+                          <div key={item.id} className="grid gap-2 border-b border-slate-100 px-3 py-1.5 text-xs last:border-b-0 md:grid-cols-[90px_52px_1fr]">
                             <div className="font-medium text-slate-900">{item.leave_date ? new Date(item.leave_date).toLocaleDateString() : '---'}</div>
                             <div className="text-slate-600">{item.leave_days} day</div>
                             <div className="text-slate-600">{item.reason}</div>
