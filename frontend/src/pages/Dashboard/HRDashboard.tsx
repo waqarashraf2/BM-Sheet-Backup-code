@@ -10,7 +10,7 @@ const documentTypes = [
   { value: 'copy_of_cnic', label: 'Copy of CNIC' },
   { value: 'two_pics', label: '2 Pics' },
   { value: 'nda', label: 'NDA' },
-  { value: 'contract_letter', label: 'Contract Letter' },
+  { value: 'contract_letter', label: 'Appointment Letter' },
   { value: 'extra', label: 'Extra' },
 ] as const;
 
