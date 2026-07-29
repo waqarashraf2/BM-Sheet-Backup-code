@@ -904,7 +904,6 @@ export default function HRDashboard() {
                     <th className="px-4 py-3 text-left">Attendance</th>
                     <th className="px-4 py-3 text-left">Added On</th>
                     <th className="px-4 py-3 text-right">Month Work</th>
-                    <th className="px-4 py-3 text-right">Avg Time</th>
                     <th className="px-4 py-3 text-right">Inactive Days</th>
                     <th className="px-4 py-3 text-right">Documents</th>
                     <th className="px-4 py-3 text-right">Edit</th>
@@ -912,9 +911,9 @@ export default function HRDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {loadingUsers ? (
-                    <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-500">Loading...</td></tr>
+                    <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">Loading...</td></tr>
                   ) : users.length === 0 ? (
-                    <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-500">No employees found.</td></tr>
+                    <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">No employees found.</td></tr>
                   ) : users.map((row) => (
                     <tr key={row.id} onClick={() => openDocuments(row)} className="cursor-pointer hover:bg-slate-50">
                       <td className="px-4 py-3">
@@ -932,7 +931,6 @@ export default function HRDashboard() {
                       </td>
                       <td className="px-4 py-3 text-slate-600">{row.created_at ? new Date(row.created_at).toLocaleDateString() : '---'}</td>
                       <td className="px-4 py-3 text-right font-semibold text-slate-900">{row.monthly_completed || 0}</td>
-                      <td className="px-4 py-3 text-right text-slate-600">{row.monthly_avg_minutes ? `${row.monthly_avg_minutes}m` : '---'}</td>
                       <td className="px-4 py-3 text-right text-slate-600">{row.inactive_days || 0}</td>
                       <td className="px-4 py-3 text-right">
                         <Button size="sm" variant="secondary" onClick={(event) => { event.stopPropagation(); openDocuments(row); }} icon={<FileText className="h-4 w-4" />}>
