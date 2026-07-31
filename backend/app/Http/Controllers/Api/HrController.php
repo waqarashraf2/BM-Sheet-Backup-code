@@ -849,7 +849,7 @@ class HrController extends Controller
         $monthStart = $month->copy()->startOfMonth();
         $monthEnd = $month->copy()->endOfMonth();
         $today = now()->startOfDay();
-        $probationStart = $today->copy()->subDays(92)->startOfDay();
+        $probationStart = $today->copy()->subDays(93)->startOfDay();
         $probationEnd = $today->copy()->subDays(90)->endOfDay();
 
         $restrictedForHr = $request->user()?->role === 'hr';
@@ -893,7 +893,6 @@ class HrController extends Controller
             ->where('is_active', true)
             ->whereBetween('created_at', [$probationStart, $probationEnd])
             ->orderBy('created_at')
-            ->limit(20)
             ->get($this->userColumns())
             ->map(function (User $user) use ($today) {
                 $joinedAt = $user->created_at ? Carbon::parse($user->created_at)->startOfDay() : null;

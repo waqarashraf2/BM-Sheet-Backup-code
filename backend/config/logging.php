@@ -65,6 +65,12 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'weekly' => [
+            'driver' => 'monolog',
+            'handler' => App\Logging\WeeklyLogHandler::class,
+            'level' => env('LOG_LEVEL', 'debug'),
+        ],
+
         'daily' => [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),
