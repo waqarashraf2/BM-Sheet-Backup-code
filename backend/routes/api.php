@@ -213,6 +213,7 @@ Route::prefix('assignments')->group(function () {
     Route::middleware('role:operations_manager,project_manager')->get('/dashboard/time-wise-counts', [TimeWiseCountController::class, 'index']);
     Route::middleware('role:operations_manager,project_manager')->get('/dashboard/order-asset-links', [ManagerOrderAssetLinkController::class, 'index']);
     Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa')->get('/dashboard/queues', [DashboardController::class, 'queues']);
+    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,checker')->get('/dashboard/assignment-export/{queueName}', [DashboardController::class, 'assignmentDashboardCsvExport'])->where('queueName', '.*');
     Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,checker')->get('/dashboard/assignment/{queueName}', [DashboardController::class, 'assignmentDashboard'])->where('queueName', '.*');
     Route::middleware('role:drawer,checker,filler,qa,designer')->get('/dashboard/worker', [DashboardController::class, 'worker']);
     Route::middleware('role:ceo,director,operations_manager,project_manager')->get('/dashboard/absentees', [DashboardController::class, 'absentees']);

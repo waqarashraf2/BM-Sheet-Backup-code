@@ -603,6 +603,12 @@ export const dashboardService = {
   assignmentDashboard: (queueName: string, params?: {
     status?: string; date?: string; search?: string; assigned_to?: number; page?: number; per_page?: number; start_date?: string; end_date?: string;
   }) => api.get<AssignmentDashboardData>(`/dashboard/assignment/${encodeURIComponent(queueName)}`, { params }),
+  assignmentDashboardCsvExport: (queueName: string, params?: {
+    status?: string; date?: string; search?: string; assigned_to?: number; start_date?: string; end_date?: string; month?: string; columns?: string;
+  }) => api.get<Blob>(`/dashboard/assignment-export/${encodeURIComponent(queueName)}`, {
+    params,
+    responseType: 'blob',
+  }),
 };
 
 // ═══════════════════════════════════════════

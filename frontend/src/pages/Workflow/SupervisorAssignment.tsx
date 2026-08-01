@@ -2017,35 +2017,10 @@ export default function SupervisorAssignment() {
 
   const ASSIGNMENT_EXPORT_PAGE_RETRIES = 5;
   const ASSIGNMENT_EXPORT_RETRY_DELAY_MS = 800;
-  const CSV_EXPORT_CHUNK_SIZE = 1000;
-  const CSV_EXPORT_CACHE_KEY = 'supervisor-assignment-csv-export';
 
   const waitForAssignmentExportRetry = (attempt: number) => new Promise<void>((resolve) => {
     window.setTimeout(resolve, ASSIGNMENT_EXPORT_RETRY_DELAY_MS * attempt);
   });
-
-  const saveCsvExportCheckpoint = (checkpoint: {
-    filename: string;
-    totalPages: number;
-    completedPages: number;
-    completedRows: number;
-    currentPage: number;
-    updatedAt: string;
-  }) => {
-    try {
-      window.sessionStorage.setItem(CSV_EXPORT_CACHE_KEY, JSON.stringify(checkpoint));
-    } catch (error) {
-      console.warn('Unable to save CSV export checkpoint:', error);
-    }
-  };
-
-  const clearCsvExportCheckpoint = () => {
-    try {
-      window.sessionStorage.removeItem(CSV_EXPORT_CACHE_KEY);
-    } catch (error) {
-      console.warn('Unable to clear CSV export checkpoint:', error);
-    }
-  };
 
   const buildAssignmentExportParams = useCallback((page: number, perPage: number) => {
     const params: Record<string, string | number> = { page, per_page: perPage };
@@ -2357,41 +2332,6 @@ export default function SupervisorAssignment() {
     }
   };
 
-  const generateMonthCsv = async (
-    filenameBase: string,
-    headers: string[],
-    rows: string[][],
-  ) => {
-    const filename = `${filenameBase}.csv`;
-    const csvParts: BlobPart[] = [`${headers.join(',')}\n`];
-
-    for (let index = 0; index < rows.length; index += CSV_EXPORT_CHUNK_SIZE) {
-      const chunkRows = rows.slice(index, index + CSV_EXPORT_CHUNK_SIZE);
-      const chunk = chunkRows
-        .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-        .join('\n');
-
-      csvParts.push(chunk);
-      if (index + CSV_EXPORT_CHUNK_SIZE < rows.length) {
-        csvParts.push('\n');
-      }
-
-      saveCsvExportCheckpoint({
-        filename,
-        totalPages: Math.ceil(rows.length / CSV_EXPORT_CHUNK_SIZE),
-        completedPages: Math.ceil(Math.min(index + CSV_EXPORT_CHUNK_SIZE, rows.length) / CSV_EXPORT_CHUNK_SIZE),
-        completedRows: Math.min(index + CSV_EXPORT_CHUNK_SIZE, rows.length),
-        currentPage: Math.floor(index / CSV_EXPORT_CHUNK_SIZE) + 1,
-        updatedAt: new Date().toISOString(),
-      });
-
-      await waitForPdfExportFrame();
-    }
-
-    downloadBlobParts(csvParts, 'text/csv;charset=utf-8;', filename);
-    clearCsvExportCheckpoint();
-  };
-
   const generateMonthPdf = async (
     filenameBase: string,
     headers: string[],
@@ -2484,6 +2424,33 @@ export default function SupervisorAssignment() {
     clearPdfExportCheckpoint();
   };
 
+  const downloadBackendCsvExport = async (filenameBase: string, hasDateRangeFilter: boolean) => {
+    const params: Record<string, string | number> = {
+      status: statusFilter,
+      columns: JSON.stringify(exportColumns.map((column) => ({ key: column.key, label: column.label }))),
+    };
+
+    if (searchQuery) params.search = searchQuery;
+    if (selectedWorker) params.assigned_to = selectedWorker;
+
+    if (hasDateRangeFilter) {
+      if (startDate) params.start_date = startDate;
+      if (endDate) params.end_date = endDate;
+    } else if (exportMonth) {
+      const [year, month] = exportMonth.split('-').map(Number);
+      const lastDay = new Date(year, month, 0).getDate();
+      params.start_date = `${exportMonth}-01`;
+      params.end_date = `${exportMonth}-${String(lastDay).padStart(2, '0')}`;
+      params.month = exportMonth;
+    }
+
+    const response = await dashboardService.assignmentDashboardCsvExport(selectedQueue, params);
+    const contentDisposition = String(response.headers?.['content-disposition'] || '');
+    const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+    const filename = filenameMatch?.[1] || `${filenameBase}.csv`;
+    downloadBlobParts([response.data], 'text/csv;charset=utf-8;', filename);
+  };
+
   const handleMonthExport = async (type: 'csv' | 'pdf') => {
     // Check if date range filters are active, otherwise require exportMonth
     const hasDateRangeFilter = !!(startDate || endDate);
@@ -2509,6 +2476,13 @@ export default function SupervisorAssignment() {
 
     try {
       setExportingType(type);
+      if (type === 'csv') {
+        await downloadBackendCsvExport(filenameBase, hasDateRangeFilter);
+        const timeframeLabel = hasDateRangeFilter ? 'date range' : 'month';
+        toast({ title: 'CSV ready', description: `Download started for the selected ${timeframeLabel}.`, type: 'success' });
+        return;
+      }
+
       const exportOrders = await fetchAllOrdersForExport();
 
       // Filter orders: use date range if provided, otherwise use month filter
@@ -2554,18 +2528,13 @@ export default function SupervisorAssignment() {
         }
       }));
 
-      if (type === 'csv') {
-        await generateMonthCsv(filenameBase, headers, rows);
-      } else {
-        const dateRangeLabel = hasDateRangeFilter
-          ? `Date Range: ${startDate || 'start'} to ${endDate || 'end'}`
-          : `Month: ${exportMonth}`;
-        await generateMonthPdf(filenameBase, headers, rows, dateRangeLabel);
-      }
+      const dateRangeLabel = hasDateRangeFilter
+        ? `Date Range: ${startDate || 'start'} to ${endDate || 'end'}`
+        : `Month: ${exportMonth}`;
+      await generateMonthPdf(filenameBase, headers, rows, dateRangeLabel);
 
-      const exportTypeLabel = type === 'csv' ? 'CSV' : 'PDF';
       const timeframeLabel = hasDateRangeFilter ? 'date range' : 'month';
-      toast({ title: `${exportTypeLabel} ready`, description: `${filteredOrders.length} orders exported for the selected ${timeframeLabel}.`, type: 'success' });
+      toast({ title: 'PDF ready', description: `${filteredOrders.length} orders exported for the selected ${timeframeLabel}.`, type: 'success' });
     } catch (error) {
       console.error(error);
       toast({ title: 'Export failed', description: `Could not export ${type.toUpperCase()}.`, type: 'error' });
