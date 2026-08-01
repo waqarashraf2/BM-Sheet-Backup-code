@@ -22,12 +22,64 @@ class ImportFocalCrmPrestigeJobs extends Command
             $this->info('Step 1: Fetching from API...');
             $raw = $service->fetchRaw();
             $allJobs = $raw['jobs'] ?? [];
+            $fallbackDiagnostics = is_array($raw['fallback'] ?? null) ? $raw['fallback'] : [];
             $this->info('  -> Total jobs in API: ' . count($allJobs));
+            if (!empty($raw['meta'])) {
+                $this->line('  -> URL: ' . ($raw['meta']['url'] ?? 'unknown'));
+                $this->line('  -> HTTP status: ' . ($raw['meta']['http_status'] ?? 'unknown'));
+                $this->line('  -> Status fallback URL: ' . ($raw['meta']['status_api_url'] ?? 'unknown'));
+            }
 
             if (empty($allJobs)) {
-                $this->warn('API returned no jobs. Raw response:');
-                $this->line(json_encode($raw, JSON_PRETTY_PRINT));
-                return 1;
+                $this->warn('Primary API returned no jobs.');
+                foreach ($fallbackDiagnostics as $diagnostic) {
+                    $this->line(sprintf(
+                        '  -> Fallback [%s]: HTTP %s, jobs %s, prestige %s',
+                        $diagnostic['status_filter'] ?? 'unknown',
+                        $diagnostic['http_status'] ?? 'error',
+                        $diagnostic['job_count'] ?? 0,
+                        $diagnostic['prestige_count'] ?? 0
+                    ));
+                    if (!empty($diagnostic['product_diagnostic'])) {
+                        $this->line('     ' . $diagnostic['product_diagnostic']);
+                    }
+                }
+
+                $fallbackHasPrestige = collect($fallbackDiagnostics)
+                    ->contains(fn ($diagnostic) => (int) ($diagnostic['prestige_count'] ?? 0) > 0);
+
+                if ($this->option('debug') || !$fallbackHasPrestige) {
+                    $this->warn('Raw diagnostic response:');
+                    $this->line(json_encode($raw, JSON_PRETTY_PRINT));
+                    return $fallbackHasPrestige ? 0 : 1;
+                }
+
+                $this->info('Primary feed is empty, but fallback status feed has Prestige jobs. Continuing import...');
+            }
+
+            $hasPrestigeJob = function (array $jobs): bool {
+                foreach ($jobs as $job) {
+                    if (!is_array($job)) {
+                        continue;
+                    }
+
+                    $product = strtolower(trim((string) ($job['Product'] ?? $job['product'] ?? '')));
+                    $productOption = strtolower(trim((string) ($job['ProductOption'] ?? $job['productOption'] ?? '')));
+                    if ($product === 'prestige photography' || $productOption === 'prestige photography') {
+                        return true;
+                    }
+                }
+
+                return false;
+            };
+
+            if (!$hasPrestigeJob($allJobs)) {
+                $fallbackJobs = $service->fetchFallbackJobsForImport();
+                if (!empty($fallbackJobs)) {
+                    $this->warn('Primary feed has no Prestige jobs. Merging fallback status feed jobs...');
+                    $this->line('  -> Fallback import jobs: ' . count($fallbackJobs));
+                    $allJobs = array_merge($allJobs, $fallbackJobs);
+                }
             }
 
             $productCounts = [];
@@ -46,7 +98,7 @@ class ImportFocalCrmPrestigeJobs extends Command
             }
 
             $this->info('Step 2: Importing Prestige Photography jobs...');
-            $result = $service->import();
+            $result = $service->import($allJobs);
 
             if ($result['success']) {
                 $this->info('Import completed successfully!');
