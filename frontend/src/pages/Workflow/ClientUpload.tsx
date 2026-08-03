@@ -133,10 +133,15 @@ export default function ClientUpload() {
     const [busy, setBusy] = useState<'status' | 'upload' | 'submit' | null>('status');
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
+    const [clientPortalResponse, setClientPortalResponse] = useState<{
+        stage: string;
+        httpStatus: number | null;
+        body: string;
+        failureReason: string;
+    } | null>(null);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [uploadElapsedSeconds, setUploadElapsedSeconds] = useState(0);
     const [uploadMode, setUploadMode] = useState<'direct' | 'server' | null>(null);
-    const [reuploadCompleted, setReuploadCompleted] = useState(false);
 
     const numericOrderId = Number(orderId);
     const orderIdValid = Number.isFinite(numericOrderId) && numericOrderId > 0;
@@ -166,7 +171,6 @@ export default function ClientUpload() {
             .then((statusResponse) => {
                 if (!active) return;
                 setStatus(statusResponse.data);
-                setReuploadCompleted(false);
 
                 if (
                     !statusResponse.data?.job_order_id
@@ -254,7 +258,7 @@ export default function ClientUpload() {
     const currentProjectId = Number(status?.project_id || queryProjectId || orderInfo?.projectId || 0);
     const shouldUseDirectFespUpload = ENABLE_PROJECT_26_DIRECT_UPLOAD && currentProjectId === 26;
     const canSubmitRole = ['operations_manager', 'project_manager', 'qa'].includes(user?.role || '');
-    const canSubmitClientPortal = !!status?.uploaded && (!status?.submitted || (forceReupload && reuploadCompleted));
+    const canSubmitClientPortal = !!status?.uploaded || uploadedFileNames.length > 0;
     const uploadStatusLabel = canUpload && (!status?.status || status.status === 'not_required')
         ? 'not_uploaded'
         : (status?.status || 'not_required');
@@ -294,6 +298,7 @@ export default function ClientUpload() {
         setBusy('upload');
         setMessage('');
         setError('');
+        setClientPortalResponse(null);
         setUploadProgress(0);
         setUploadElapsedSeconds(0);
         setUploadMode(shouldUseDirectFespUpload ? 'direct' : 'server');
@@ -348,7 +353,12 @@ export default function ClientUpload() {
                 );
             }
             setStatus(response.data.status);
-            setReuploadCompleted(forceReupload);
+            setClientPortalResponse({
+                stage: response.data.client_portal_response?.stage || 'upload',
+                httpStatus: response.data.client_portal_response?.http_status ?? response.data.status.upload_http_status ?? null,
+                body: response.data.client_portal_response?.body || response.data.status.upload_response || '',
+                failureReason: response.data.client_portal_response?.failure_reason || response.data.status.failure_reason || '',
+            });
             setMessage(response.data.message || 'Files uploaded successfully.');
         } catch (e: any) {
             if (isNetworkUploadError(e)) {
@@ -363,13 +373,18 @@ export default function ClientUpload() {
                         setStatus(refreshedStatus);
 
                         if (refreshedStatus.uploaded || refreshedStatus.submitted) {
-                            setReuploadCompleted(forceReupload);
                             setError('');
                             setMessage('Upload completed. The browser lost the final response, but the client portal status is now updated.');
                             return;
                         }
 
                         if (refreshedStatus.status === 'failed') {
+                            setClientPortalResponse({
+                                stage: 'upload',
+                                httpStatus: refreshedStatus.upload_http_status ?? null,
+                                body: refreshedStatus.upload_response || '',
+                                failureReason: refreshedStatus.failure_reason || 'Upload failed after the server received the file. Please retry.',
+                            });
                             setMessage('');
                             setError(refreshedStatus.failure_reason || 'Upload failed after the server received the file. Please retry.');
                             return;
@@ -392,6 +407,14 @@ export default function ClientUpload() {
                 : '';
             const responseText = typeof e.response?.data === 'string' ? e.response.data : '';
             const statusDetail = statusCode ? `HTTP ${statusCode}` : (e.code || '');
+            const responseDetails = e.response?.data?.client_portal_response;
+            const uploadStatus = e.response?.data?.upload_status || e.response?.data?.status;
+            setClientPortalResponse({
+                stage: responseDetails?.stage || 'upload',
+                httpStatus: responseDetails?.http_status ?? uploadStatus?.upload_http_status ?? statusCode ?? null,
+                body: responseDetails?.body || uploadStatus?.upload_response || responseText || '',
+                failureReason: responseDetails?.failure_reason || uploadStatus?.failure_reason || fileSizeMessage || serverMessage || (statusDetail ? `Upload failed (${statusDetail}).` : 'Upload failed.'),
+            });
             setError(
                 statusCode === 404 || statusCode === 405
                     ? 'Upload route is not available on the backend server yet. Please deploy the latest backend routes and clear the Laravel route cache.'
@@ -409,13 +432,27 @@ export default function ClientUpload() {
         setBusy('submit');
         setMessage('');
         setError('');
+        setClientPortalResponse(null);
 
         try {
             const response = await workflowService.submitClientPortalOrder(numericOrderId, requestedProjectId);
             setStatus(response.data.status);
-            setReuploadCompleted(false);
+            setClientPortalResponse({
+                stage: response.data.client_portal_response?.stage || 'submit',
+                httpStatus: response.data.client_portal_response?.http_status ?? response.data.status.submit_http_status ?? null,
+                body: response.data.client_portal_response?.body || response.data.status.submit_response || '',
+                failureReason: response.data.client_portal_response?.failure_reason || response.data.status.failure_reason || '',
+            });
             setMessage(response.data.message || 'Order submitted successfully.');
         } catch (e: any) {
+            const responseDetails = e.response?.data?.client_portal_response;
+            const uploadStatus = e.response?.data?.upload_status || e.response?.data?.status;
+            setClientPortalResponse({
+                stage: responseDetails?.stage || 'submit',
+                httpStatus: responseDetails?.http_status ?? uploadStatus?.submit_http_status ?? null,
+                body: responseDetails?.body || uploadStatus?.submit_response || '',
+                failureReason: responseDetails?.failure_reason || uploadStatus?.failure_reason || e.response?.data?.message || 'Submit failed.',
+            });
             setError(e.response?.data?.message || 'Submit failed.');
         } finally {
             setBusy(null);
@@ -424,7 +461,6 @@ export default function ClientUpload() {
 
     const selectFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
         setFiles(Array.from(event.target.files || []));
-        setReuploadCompleted(false);
         setUploadElapsedSeconds(0);
         setUploadMode(null);
     };
@@ -472,6 +508,24 @@ export default function ClientUpload() {
                         {message && (
                             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
                                 {message}
+                            </div>
+                        )}
+
+                        {clientPortalResponse && (
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                                <div className="font-semibold text-slate-900 mb-2">Client Portal Response</div>
+                                <div>Stage: {clientPortalResponse.stage}</div>
+                                <div>HTTP Status: {clientPortalResponse.httpStatus ?? 'Not available'}</div>
+                                {clientPortalResponse.failureReason && (
+                                    <div className="mt-2 text-rose-700 whitespace-pre-wrap break-words">
+                                        {clientPortalResponse.failureReason}
+                                    </div>
+                                )}
+                                {clientPortalResponse.body && (
+                                    <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-white p-3 text-xs text-slate-700 whitespace-pre-wrap break-words">
+                                        {clientPortalResponse.body}
+                                    </pre>
+                                )}
                             </div>
                         )}
 

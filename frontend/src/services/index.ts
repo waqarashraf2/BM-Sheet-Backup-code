@@ -34,6 +34,10 @@ export interface ClientPortalUploadStatus {
   file_names: string[];
   uploaded_at: string | null;
   submitted_at: string | null;
+  upload_http_status?: number | null;
+  upload_response?: string | null;
+  submit_http_status?: number | null;
+  submit_response?: string | null;
   failure_reason: string | null;
 }
 
@@ -71,6 +75,13 @@ export interface ClientPortalDirectUploadUrlResponse {
   upload_url: string | null;
   headers?: Record<string, string>;
   direct_upload: boolean;
+}
+
+export interface ClientPortalApiResponseDetails {
+  stage?: 'upload' | 'submit' | string | null;
+  http_status: number | null;
+  body: string | null;
+  failure_reason: string | null;
 }
 
 // ═══════════════════════════════════════════
@@ -335,7 +346,12 @@ export const workflowService = {
       return formData;
     };
 
-    return api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
+    return api.post<{
+      message: string;
+      status: ClientPortalUploadStatus;
+      upload_id: number;
+      client_portal_response?: ClientPortalApiResponseDetails;
+    }>(
       `/client-portal/orders/${orderId}/asset-upload`,
       payload(),
       {
@@ -386,7 +402,12 @@ export const workflowService = {
     uploadId: number,
     result?: { httpStatus?: number; response?: string; projectId?: number },
   ) =>
-    api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
+    api.post<{
+      message: string;
+      status: ClientPortalUploadStatus;
+      upload_id: number;
+      client_portal_response?: ClientPortalApiResponseDetails;
+    }>(
       `/client-portal/orders/${orderId}/direct-upload-confirm`,
       {
         upload_id: uploadId,
@@ -397,7 +418,12 @@ export const workflowService = {
     ),
 
   submitClientPortalOrder: (orderId: number, projectId?: number) =>
-    api.post<{ message: string; status: ClientPortalUploadStatus; upload_id: number }>(
+    api.post<{
+      message: string;
+      status: ClientPortalUploadStatus;
+      upload_id: number;
+      client_portal_response?: ClientPortalApiResponseDetails;
+    }>(
       `/client-portal/orders/${orderId}/submit`,
       projectId ? { project_id: projectId } : undefined,
     ),

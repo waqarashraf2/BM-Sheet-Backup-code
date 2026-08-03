@@ -19,7 +19,7 @@ use Illuminate\Validation\ValidationException;
 class FocalClientPortalUploadService
 {
     private const FESP_PROJECT_ID = 26;
-    private const DEFAULT_ENABLED_PROJECT_IDS = [22, 23, 25, 26];
+    private const DEFAULT_ENABLED_PROJECT_IDS = [1, 22, 23, 25, 26];
     private const IN_PROGRESS_PRODUCTS = [
         'photography',
         'drone photography',
@@ -95,6 +95,10 @@ class FocalClientPortalUploadService
             'file_names' => $upload?->file_names ?? [],
             'uploaded_at' => $upload?->uploaded_at?->toIso8601String(),
             'submitted_at' => $upload?->submitted_at?->toIso8601String(),
+            'upload_http_status' => $upload?->upload_http_status,
+            'upload_response' => $upload?->upload_response,
+            'submit_http_status' => $upload?->submit_http_status,
+            'submit_response' => $upload?->submit_response,
             'failure_reason' => $upload?->failure_reason,
         ];
     }
@@ -172,7 +176,15 @@ class FocalClientPortalUploadService
                     }
 
                     if (!$lastResponse->successful() && !$this->isAlreadyDoneResponse($lastResponse, ['uploaded', 'exists', 'duplicate'])) {
-                        throw new \RuntimeException($this->responseMessage($lastResponse, 'Client portal upload failed.'));
+                        $failureReason = $this->responseMessage($lastResponse, 'Client portal upload failed.');
+                        $record->update([
+                            'status' => 'failed',
+                            'upload_http_status' => $lastResponse->status(),
+                            'upload_response' => $lastResponse->body(),
+                            'failure_reason' => $failureReason,
+                        ]);
+
+                        throw new \RuntimeException($failureReason);
                     }
                 }
             }
@@ -344,7 +356,7 @@ class FocalClientPortalUploadService
             ->first();
     }
 
-    public function submit(Order $order): ClientPortalUpload
+    public function submit(Order $order, ?User $user = null): ClientPortalUpload
     {
         $record = ClientPortalUpload::query()
             ->where('project_id', $order->project_id)
@@ -354,13 +366,15 @@ class FocalClientPortalUploadService
             ->first();
 
         if (!$record) {
-            throw ValidationException::withMessages([
-                'files' => 'Upload the order files successfully before submitting to the client portal.',
+            $record = ClientPortalUpload::create([
+                'project_id' => (int) $order->project_id,
+                'order_id' => (int) $order->id,
+                'job_order_id' => $this->clientPortalJobId($order),
+                'uploaded_by' => $user?->id ?? auth()->id(),
+                'status' => 'submit_failed',
+                'file_names' => [],
+                'file_count' => 0,
             ]);
-        }
-
-        if ($record->status === 'submitted') {
-            return $record;
         }
 
         try {
@@ -376,7 +390,44 @@ class FocalClientPortalUploadService
             );
 
             if (!$successful) {
-                throw new \RuntimeException($this->responseMessage($response, 'Client portal submit failed.'));
+                $failureReason = $this->responseMessage($response, 'Client portal submit failed.');
+                $record->update([
+                    'status' => 'submit_failed',
+                    'submit_http_status' => $response->status(),
+                    'submit_response' => $response->body(),
+                    'failure_reason' => $failureReason,
+                ]);
+
+                throw new \RuntimeException($failureReason);
+            }
+
+            if ((int) $record->project_id !== self::FESP_PROJECT_ID) {
+                $failedJobs = $this->clientPortalJobsById(['Failed']);
+                if ($failedJobs === null) {
+                    $failureReason = 'Client portal submit accepted, but Failed status could not be checked. Local submitted status was not saved.';
+                    $record->update([
+                        'status' => 'submit_failed',
+                        'submit_http_status' => $response->status(),
+                        'submit_response' => $response->body(),
+                        'failure_reason' => $failureReason,
+                    ]);
+
+                    throw new \RuntimeException($failureReason);
+                }
+
+                $failedJob = $failedJobs->get(strtolower(trim((string) $record->job_order_id)));
+                if ($failedJob) {
+                    $failureReason = $this->clientPortalStatusReason($failedJob, 'Failed')
+                        ?: 'Client portal shows this job as Failed after submit.';
+                    $record->update([
+                        'status' => 'submit_failed',
+                        'submit_http_status' => $response->status(),
+                        'submit_response' => $response->body(),
+                        'failure_reason' => $failureReason,
+                    ]);
+
+                    throw new \RuntimeException($failureReason);
+                }
             }
 
             $record->update([

@@ -21,6 +21,7 @@ use Exception;
 class FocalCrmPhotoService
 {
     protected string $apiUrl;
+    protected string $statusApiUrl;
     protected string $supplierSecret;
     protected string $subscriptionKey;
     protected int $projectId = 22;
@@ -36,6 +37,7 @@ class FocalCrmPhotoService
         'photo enhancement',
         'elevated photography',
     ];
+    protected array $fallbackStatuses = ['Pending', 'InProgress'];
 
     public function __construct()
     {
@@ -44,15 +46,32 @@ class FocalCrmPhotoService
             $this->readEnv('FOCAL_CRM_API_URL', 'https://api.focalagent.com/supplier-enhancement/v3/jobs')
         );
 
+        $this->statusApiUrl = $this->readEnv(
+            'FOCAL_CRM_PHOTO_STATUS_API_URL',
+            $this->readEnv(
+                'FOCAL_CLIENT_PORTAL_STATUS_API_URL',
+                $this->readEnv('FOCAL_CRM_STATUS_API_URL', (string) config('services.focal_client_portal.status_api_url', 'https://api.focalagent.com/supplier-enhancement/v2/jobs'))
+            )
+        );
+
         $this->supplierSecret = $this->readEnv(
             'FOCAL_CRM_PHOTO_SUPPLIER_SECRET',
-            $this->readEnv('FOCAL_CRM_SUPPLIER_SECRET', 'N4ctEg%$SXGg6SF4wu')
+            $this->readEnv(
+                'FOCAL_CLIENT_PORTAL_SUPPLIER_SECRET',
+                $this->readEnv('FOCAL_CRM_SUPPLIER_SECRET', (string) config('services.focal_client_portal.supplier_secret', 'N4ctEg%$SXGg6SF4wu'))
+            )
         );
 
         $this->subscriptionKey = $this->readEnv(
             'FOCAL_CRM_PHOTO_SUBSCRIPTION_KEY',
-            $this->readEnv('FOCAL_CRM_SUBSCRIPTION_KEY', 'daee797833ca4dbd87fc98b1421c57b1')
+            $this->readEnv(
+                'FOCAL_CLIENT_PORTAL_SUBSCRIPTION_KEY',
+                $this->readEnv('FOCAL_CRM_SUBSCRIPTION_KEY', (string) config('services.focal_client_portal.subscription_key', 'daee797833ca4dbd87fc98b1421c57b1'))
+            )
         );
+
+        $statusCsv = $this->readEnv('FOCAL_CRM_PHOTO_FALLBACK_STATUSES', 'Pending,InProgress');
+        $this->fallbackStatuses = array_values(array_filter(array_map('trim', explode(',', $statusCsv))));
     }
 
     protected function readEnv(string $key, string $default = ''): string
@@ -98,12 +117,12 @@ class FocalCrmPhotoService
     /**
      * Fetch jobs from FocalCRM API and import Photo jobs
      */
-    public function import(): array
+    public function import(?array $jobs = null): array
     {
         try {
             Log::info('FocalCRM Photo import started for Project 22');
 
-            $jobs = $this->fetchJobsFromApi();
+            $jobs = $jobs ?? $this->fetchJobsFromApi();
 
             if (empty($jobs)) {
                 Log::warning('No jobs returned from FocalCRM API');
@@ -162,14 +181,34 @@ class FocalCrmPhotoService
     {
         try {
             $response = $this->fetchFromFocalApi($this->apiUrl);
-
-            return $response->json() ?? [
+            $payload = $response->json() ?? [
                 'error' => 'Empty response',
                 'status' => $response->status(),
+            ];
+
+            return [
+                'meta' => [
+                    'url' => $this->apiUrl,
+                    'status_api_url' => $this->statusApiUrl,
+                    'http_status' => $response->status(),
+                    'successful' => $response->successful(),
+                    'fallback_statuses' => $this->fallbackStatuses,
+                    'supplier_secret_set' => $this->supplierSecret !== '',
+                    'subscription_key_set' => $this->subscriptionKey !== '',
+                    'body_preview' => mb_substr($response->body(), 0, 1000),
+                ],
+                'jobs' => is_array($payload['jobs'] ?? null) ? $payload['jobs'] : [],
+                'raw' => $payload,
+                'fallback' => $this->fetchStatusFallbackRaw(),
             ];
         } catch (Exception $e) {
             return ['error' => $e->getMessage()];
         }
+    }
+
+    public function fetchFallbackJobsForImport(): array
+    {
+        return $this->fetchJobsFromStatusFallback();
     }
 
     /**
@@ -199,11 +238,94 @@ class FocalCrmPhotoService
                 return [];
             }
 
-            return $data['jobs'];
+            $jobs = $data['jobs'];
+            if (!empty($jobs)) {
+                return $jobs;
+            }
+
+            return $this->fetchJobsFromStatusFallback();
         } catch (Exception $e) {
             Log::error('FocalCRM API fetch error: ' . $e->getMessage());
             return [];
         }
+    }
+
+    protected function fetchStatusFallbackRaw(): array
+    {
+        $responses = [];
+
+        foreach ($this->fallbackStatuses as $status) {
+            $url = $this->statusJobsUrl($status);
+            try {
+                $response = $this->fetchFromFocalApi($url);
+                $payload = $response->json() ?? [];
+                $jobs = is_array($payload['jobs'] ?? null) ? $payload['jobs'] : [];
+
+                $responses[] = [
+                    'status_filter' => $status,
+                    'url' => $url,
+                    'http_status' => $response->status(),
+                    'successful' => $response->successful(),
+                    'job_count' => count($jobs),
+                    'photo_count' => count($this->filterPhotoJobs($jobs)),
+                    'product_diagnostic' => $this->buildProductDiagnostic($jobs),
+                    'body_preview' => mb_substr($response->body(), 0, 1000),
+                ];
+            } catch (Exception $e) {
+                $responses[] = [
+                    'status_filter' => $status,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        return $responses;
+    }
+
+    protected function fetchJobsFromStatusFallback(): array
+    {
+        $jobs = [];
+
+        foreach ($this->fallbackStatuses as $status) {
+            $url = $this->statusJobsUrl($status);
+            try {
+                $response = $this->fetchFromFocalApi($url);
+
+                if (!$response->successful()) {
+                    Log::warning('FocalCRM Photo fallback status request failed', [
+                        'status_filter' => $status,
+                        'url' => $url,
+                        'http_status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+                    continue;
+                }
+
+                $payload = $response->json() ?? [];
+                $statusJobs = is_array($payload['jobs'] ?? null) ? $payload['jobs'] : [];
+                Log::info('FocalCRM Photo fallback status feed checked', [
+                    'status_filter' => $status,
+                    'job_count' => count($statusJobs),
+                    'photo_count' => count($this->filterPhotoJobs($statusJobs)),
+                ]);
+
+                $jobs = array_merge($jobs, $statusJobs);
+            } catch (Exception $e) {
+                Log::warning('FocalCRM Photo fallback status fetch error', [
+                    'status_filter' => $status,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $jobs;
+    }
+
+    protected function statusJobsUrl(string $status): string
+    {
+        return rtrim($this->statusApiUrl, '/') . '?jobstatus=' . rawurlencode($status);
     }
 
     /**

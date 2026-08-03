@@ -28,7 +28,7 @@ class ClientPortalUploadController extends Controller
 
         $data = $request->validate([
             'status' => 'nullable|string|in:InProgress,Failed',
-            'project_id' => 'nullable|integer|in:22,23,25,26',
+            'project_id' => 'nullable|integer|in:1,22,23,25,26',
         ]);
 
         return response()->json($this->service->inProgressOrdersForUser(
@@ -84,6 +84,7 @@ class ClientPortalUploadController extends Controller
             report($e);
 
             $statusCode = str_contains($e->getMessage(), 'Job Status - Completed') ? 422 : 502;
+            $status = $this->service->status($order, false);
 
             Log::warning('Client portal upload request failed', [
                 'order_id' => $order->id,
@@ -95,13 +96,28 @@ class ClientPortalUploadController extends Controller
             return response()->json([
                 'message' => $e->getMessage(),
                 'status' => 'failed',
+                'upload_status' => $status,
+                'client_portal_response' => [
+                    'stage' => 'upload',
+                    'http_status' => $status['upload_http_status'] ?? null,
+                    'body' => $status['upload_response'] ?? null,
+                    'failure_reason' => $status['failure_reason'] ?? $e->getMessage(),
+                ],
             ], $statusCode);
         }
 
+        $status = $this->service->status($order, false);
+
         return response()->json([
             'message' => 'Files uploaded successfully to the client portal.',
-            'status' => $this->service->status($order, false),
+            'status' => $status,
             'upload_id' => $upload->id,
+            'client_portal_response' => [
+                'stage' => 'upload',
+                'http_status' => $upload->upload_http_status,
+                'body' => $upload->upload_response,
+                'failure_reason' => $upload->failure_reason,
+            ],
         ]);
     }
 
@@ -129,10 +145,18 @@ class ClientPortalUploadController extends Controller
             throw $e;
         } catch (\Throwable $e) {
             report($e);
+            $status = $this->service->status($order, false);
 
             return response()->json([
                 'message' => $e->getMessage(),
                 'status' => 'failed',
+                'upload_status' => $status,
+                'client_portal_response' => [
+                    'stage' => 'upload',
+                    'http_status' => $status['upload_http_status'] ?? null,
+                    'body' => $status['upload_response'] ?? null,
+                    'failure_reason' => $status['failure_reason'] ?? $e->getMessage(),
+                ],
             ], 502);
         }
 
@@ -160,46 +184,79 @@ class ClientPortalUploadController extends Controller
             throw $e;
         } catch (\Throwable $e) {
             report($e);
+            $status = $this->service->status($order, false);
 
             return response()->json([
                 'message' => $e->getMessage(),
                 'status' => 'failed',
+                'upload_status' => $status,
+                'client_portal_response' => [
+                    'stage' => 'upload',
+                    'http_status' => $status['upload_http_status'] ?? null,
+                    'body' => $status['upload_response'] ?? null,
+                    'failure_reason' => $status['failure_reason'] ?? $e->getMessage(),
+                ],
             ], 502);
         }
 
+        $status = $this->service->status($order, false);
+
         return response()->json([
             'message' => 'Files uploaded successfully to the client portal.',
-            'status' => $this->service->status($order, false),
+            'status' => $status,
             'upload_id' => $upload->id,
+            'client_portal_response' => [
+                'stage' => 'upload',
+                'http_status' => $upload->upload_http_status,
+                'body' => $upload->upload_response,
+                'failure_reason' => $upload->failure_reason,
+            ],
         ]);
     }
 
     public function submit(Request $request, int $orderId)
     {
         $order = $this->portalOrder($request, $orderId, false);
+        $user = $request->user();
         abort_unless(
-            in_array($request->user()?->role, ['operations_manager', 'project_manager', 'qa'], true),
+            $user && in_array($user->role, ['operations_manager', 'project_manager', 'qa'], true),
             403,
             'Only OM, PM, or QA can submit orders to the client portal.'
         );
 
         try {
-            $upload = $this->service->submit($order);
+            $upload = $this->service->submit($order, $user);
         } catch (\Illuminate\Validation\ValidationException $e) {
             throw $e;
         } catch (\Throwable $e) {
             report($e);
+            $status = $this->service->status($order, false);
 
             return response()->json([
                 'message' => $e->getMessage(),
                 'status' => 'submit_failed',
+                'upload_status' => $status,
+                'client_portal_response' => [
+                    'stage' => 'submit',
+                    'http_status' => $status['submit_http_status'] ?? null,
+                    'body' => $status['submit_response'] ?? null,
+                    'failure_reason' => $status['failure_reason'] ?? $e->getMessage(),
+                ],
             ], 502);
         }
 
+        $status = $this->service->status($order, false);
+
         return response()->json([
             'message' => 'Order accepted by the client portal. You can now complete it here.',
-            'status' => $this->service->status($order, false),
+            'status' => $status,
             'upload_id' => $upload->id,
+            'client_portal_response' => [
+                'stage' => 'submit',
+                'http_status' => $upload->submit_http_status,
+                'body' => $upload->submit_response,
+                'failure_reason' => $upload->failure_reason,
+            ],
         ]);
     }
 
@@ -214,7 +271,7 @@ class ClientPortalUploadController extends Controller
             default => [],
         };
 
-        $enabledProjectIds = [22, 23, 25, 26];
+        $enabledProjectIds = [1, 22, 23, 25, 26];
         $allowedProjectIds = array_values(array_intersect($allowedProjectIds, $enabledProjectIds));
         abort_unless(!empty($allowedProjectIds), 403, 'Client portal upload is not enabled for your projects.');
 
