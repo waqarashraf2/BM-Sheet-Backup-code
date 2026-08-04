@@ -585,7 +585,7 @@ class FocalCrmService
         ]);
 
         if (empty($images)) {
-            Log::warning('No image URLs found for order', [
+            Log::debug('No image URLs found for order', [
                 'job_order_id' => $jobOrderId,
                 'check_assets' => $job['CheckAssets'] ?? null,
                 'product_option' => $job['ProductOption'] ?? null,
@@ -669,7 +669,7 @@ class FocalCrmService
                 }
 
                 if (in_array($response->status(), [409, 422, 400], true)) {
-                    Log::warning('FocalCRM accept request did not succeed but may already be accepted or invalid', [
+                    Log::debug('FocalCRM accept request did not succeed but may already be accepted or invalid', [
                         'job_order_id' => $jobOrderId,
                         'url' => $acceptUrl,
                         'status' => $response->status(),
@@ -733,7 +733,7 @@ class FocalCrmService
             }
 
             // All endpoints failed
-            Log::warning('Asset detail unavailable on all endpoints', [
+            Log::debug('Asset detail unavailable on all endpoints', [
                 'job_order_id' => $jobOrderId,
             ]);
             return [];

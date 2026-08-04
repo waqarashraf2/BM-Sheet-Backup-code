@@ -37,7 +37,7 @@ class MetroExecutiveImportService
 
         $data = $response->json();
         if (!is_array($data) || !isset($data['data']['orderable']['variantName'])) {
-            Log::warning("Variant not found in JSON for Metro Executive order {$orderId}");
+            Log::debug("Variant not found in JSON for Metro Executive order {$orderId}");
             return null;
         }
 
