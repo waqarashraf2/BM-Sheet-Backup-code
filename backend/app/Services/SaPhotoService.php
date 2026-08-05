@@ -31,7 +31,7 @@ class SaPhotoService
     {
         try {
 
-            $response = Http::timeout(60)->get($this->apiUrl);
+            $response = Http::timeout(120)->get($this->apiUrl);
 
             if (!$response->successful()) {
                 Log::error('Project19 Photo API failed');
@@ -193,7 +193,7 @@ class SaPhotoService
             }
 
         } catch (Exception $e) {
-            Log::error('Project19 Photo Import Error: '.$e->getMessage());
+            Log::warning('Project19 Photo Import Error: '.$e->getMessage());
         }
     }
 

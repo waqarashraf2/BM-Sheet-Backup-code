@@ -31,7 +31,7 @@ class SaFPImportService
     {
         try {
 
-            $response = Http::timeout(60)->get($this->apiUrl);
+            $response = Http::timeout(120)->get($this->apiUrl);
 
             if (!$response->successful()) {
                 Log::error('Project12 API failed');
@@ -194,7 +194,7 @@ class SaFPImportService
             }
 
         } catch (Exception $e) {
-            Log::error('Project12 Import Error: '.$e->getMessage());
+            Log::warning('Project12 Import Error: '.$e->getMessage());
         }
     }
 
