@@ -447,6 +447,29 @@ export default function ClientUpload() {
         } catch (e: any) {
             const responseDetails = e.response?.data?.client_portal_response;
             const uploadStatus = e.response?.data?.upload_status || e.response?.data?.status;
+            const errorMessage = e.response?.data?.message || '';
+            const alreadyUploadedSubmitError = String(errorMessage).includes('HTTP request returned status code 404')
+                && String(errorMessage).includes('[]');
+
+            if (alreadyUploadedSubmitError) {
+                try {
+                    const refreshed = await workflowService.getClientPortalUploadStatus(numericOrderId, requestedProjectId);
+                    setStatus(refreshed.data);
+                } catch {
+                    // The DB update happens server-side for this exact client portal response.
+                }
+
+                setClientPortalResponse({
+                    stage: responseDetails?.stage || 'submit',
+                    httpStatus: responseDetails?.http_status ?? uploadStatus?.submit_http_status ?? 404,
+                    body: responseDetails?.body || uploadStatus?.submit_response || errorMessage,
+                    failureReason: '',
+                });
+                setError('');
+                setMessage('Order is already uploaded/submitted on the client portal. Local status has been saved as submitted.');
+                return;
+            }
+
             setClientPortalResponse({
                 stage: responseDetails?.stage || 'submit',
                 httpStatus: responseDetails?.http_status ?? uploadStatus?.submit_http_status ?? null,

@@ -85,7 +85,7 @@ export default function ClientPortalInProgress() {
     <AnimatedPage>
       <PageHeader
         title={mode === 'Failed' ? 'Client Portal Failed Orders' : 'Client Portal In Progress'}
-        subtitle="PH 2 layer client-portal status for enabled projects"
+        subtitle="Client-portal status for enabled projects"
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <select
