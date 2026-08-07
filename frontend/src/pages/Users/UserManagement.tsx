@@ -25,6 +25,7 @@ export default function UserManagement() {
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [formData, setFormData] = useState(emptyForm);
+  const [originalStoredPassword, setOriginalStoredPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
@@ -110,7 +111,16 @@ export default function UserManagement() {
     finally { setLoadingTeams(false); }
   }, []);
 
-  const openCreate = () => { setEditingUser(null); setFormData(emptyForm); setFormTeams([]); setFormError(''); setShowModal(true); };
+  const openCreate = () => {
+    setEditingUser(null);
+    setOriginalStoredPassword('');
+    setFormData(emptyForm);
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setFormTeams([]);
+    setFormError('');
+    setShowModal(true);
+  };
   const openEdit = async (u: User) => {
     let userToEdit = u;
     try {
@@ -120,7 +130,11 @@ export default function UserManagement() {
       console.error('[Users] fetch user detail failed', e);
     }
     setEditingUser(userToEdit);
-    setFormData({ name: userToEdit.name, email: userToEdit.email, machine_id: userToEdit.machine_id || '', password: '', password_confirmation: '', role: userToEdit.role, project_id: userToEdit.project_id ? String(userToEdit.project_id) : '', team_id: userToEdit.team_id ? String(userToEdit.team_id) : '', department: userToEdit.department || 'floor_plan', layer: userToEdit.layer || '' });
+    const storedPassword = userToEdit.plain_password || '';
+    setOriginalStoredPassword(storedPassword);
+    setFormData({ name: userToEdit.name, email: userToEdit.email, machine_id: userToEdit.machine_id || '', password: storedPassword, password_confirmation: storedPassword, role: userToEdit.role, project_id: userToEdit.project_id ? String(userToEdit.project_id) : '', team_id: userToEdit.team_id ? String(userToEdit.team_id) : '', department: userToEdit.department || 'floor_plan', layer: userToEdit.layer || '' });
+    setShowPassword(Boolean(storedPassword));
+    setShowConfirmPassword(false);
     if (userToEdit.project_id) loadTeamsForProject(String(userToEdit.project_id));
     else setFormTeams([]);
     setFormError(''); setShowModal(true);
@@ -128,14 +142,15 @@ export default function UserManagement() {
 
   const handleSave = async () => {
     if (!formData.name || !formData.email) { setFormError('Name and email are required.'); return; }
+    const passwordChanged = !editingUser || formData.password !== originalStoredPassword;
     if (!editingUser && !formData.password) { setFormError('Password is required.'); return; }
-    if (formData.password && formData.password.length < 8) { setFormError('Password must be at least 8 characters.'); return; }
-    if (formData.password && formData.password !== formData.password_confirmation) { setFormError('Passwords do not match.'); return; }
+    if (passwordChanged && formData.password && formData.password.length < 8) { setFormError('Password must be at least 8 characters.'); return; }
+    if (passwordChanged && formData.password && formData.password !== formData.password_confirmation) { setFormError('Passwords do not match.'); return; }
     try {
       setSaving(true); setFormError('');
       if (editingUser) {
         const d: any = { ...formData };
-        if (!d.password) { delete d.password; delete d.password_confirmation; }
+        if (!d.password || !passwordChanged) { delete d.password; delete d.password_confirmation; }
         await userService.update(editingUser.id, d);
       } else {
         await userService.create(formData as any);

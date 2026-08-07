@@ -132,7 +132,7 @@ if ($request->query('date')) {
         $projectIds = $projects->pluck('id')->toArray();
 
         $selectCols = 'id, order_number, project_id, batch_number, received_at, workflow_state, assigned_to, drawer_id, completed_at, due_in';
-        $batchOptionalCols = ['rejection_type', 'fixing_started_at', 'fixing_completed_at'];
+        $batchOptionalCols = ['rejection_type', 'fixing_started_at', 'fixing_completed_at', 'qa_name', 'final_upload', 'ausFinaldate'];
 
         // Match the Assignment dashboard's normalized deadline for project 16.
         // Its relative due_in values are stored two hours early during import.
@@ -290,6 +290,59 @@ if ($request->query('date')) {
             'drawing_process' => $statusWindowOrders->where('workflow_state', 'IN_DRAW')->count(),
             'sent_to_fixing' => $statusWindowOrders->where('workflow_state', 'PENDING_BY_DRAWER')->count(),
         ];
+
+        $qaSummary = null;
+        if ((int) $projectId === 16) {
+            $qaDoneCounts = DB::table(DB::raw("({$rawUnion}) as orders"))
+                ->where('project_id', 16)
+                ->whereNotNull('qa_name')
+                ->where('qa_name', '!=', '')
+                ->where('final_upload', 'yes')
+                ->where('ausFinaldate', '>=', $shiftStartLocal)
+                ->where('ausFinaldate', '<', $shiftEndLocal)
+                ->selectRaw('qa_name as name, COUNT(*) as done_count')
+                ->groupBy('qa_name')
+                ->pluck('done_count', 'name');
+
+            $qaWipCounts = DB::table(DB::raw("({$rawUnion}) as orders"))
+                ->where('project_id', 16)
+                ->whereNotNull('qa_name')
+                ->where('qa_name', '!=', '')
+                ->where(function ($query) {
+                    $query->whereNull('final_upload')
+                        ->orWhere('final_upload', '!=', 'yes');
+                })
+                ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+                ->selectRaw('qa_name as name, COUNT(*) as wip_count')
+                ->groupBy('qa_name')
+                ->pluck('wip_count', 'name');
+
+            $qaNames = $qaDoneCounts
+                ->keys()
+                ->merge($qaWipCounts->keys())
+                ->unique()
+                ->sort()
+                ->values();
+
+            $qaWorkers = $qaNames->map(function ($name) use ($qaDoneCounts, $qaWipCounts) {
+                $doneCount = (int) ($qaDoneCounts[$name] ?? 0);
+                $wipCount = (int) ($qaWipCounts[$name] ?? 0);
+
+                return [
+                    'name' => $name,
+                    'done_count' => $doneCount,
+                    'wip_count' => $wipCount,
+                    'total_count' => $doneCount + $wipCount,
+                ];
+            })->sortByDesc('total_count')->values();
+
+            $qaSummary = [
+                'total_orders' => (int) $qaWorkers->sum('total_count'),
+                'total_done' => (int) $qaWorkers->sum('done_count'),
+                'total_wip' => (int) $qaWorkers->sum('wip_count'),
+                'workers' => $qaWorkers,
+            ];
+        }
 
         
         /*
@@ -501,6 +554,7 @@ if ($request->query('date')) {
             'batches' => $batches,
             'plans_remaining' => $plansRemaining,
             'hourly_counts' => $hourlyCounts,
+            'qa_summary' => $qaSummary,
             'untouched_min' => $untouchedMin,
             'fixed_min' => $fixedMin,
         ]);
@@ -1359,7 +1413,7 @@ if ($request->query('date')) {
         }
 
         // Cache key includes date range, selected project and role
-        $cacheKey = 'ceo_pstats:v5:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0')
+        $cacheKey = 'ceo_pstats:v6:' . $startDate . ':' . $endDate . ':' . ($selectedProjectId ?? '0')
             . ':' . ($selectedRole ?? 'all') . ':' . ($detailOnly ? 'detail' : ($summaryOnly ? 'summary_only' : 'summary'));
         if (\Illuminate\Support\Facades\Cache::has($cacheKey)) {
             return response()->json(\Illuminate\Support\Facades\Cache::get($cacheKey));
@@ -2025,7 +2079,71 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 $startDate,
                 $endDate
             ),
+            'qa_workers' => (int) $projectId === 16
+                ? $this->buildProject16QaWorkerReport($table, $projectTimezone, $startDate ?: $endDate)
+                : [],
         ];
+    }
+
+    private function buildProject16QaWorkerReport(string $table, string $projectTimezone, ?string $date = null): array
+    {
+        if (
+            !self::columnExists($table, 'qa_name')
+            || !self::columnExists($table, 'final_upload')
+        ) {
+            return [];
+        }
+
+        $reportDate = $date
+            ? Carbon::parse($date, $projectTimezone)
+            : now($projectTimezone);
+        $rangeStart = $reportDate->copy()->startOfDay();
+        $rangeEnd = $reportDate->copy()->addDay()->startOfDay();
+        $doneDateColumn = self::columnExists($table, 'ausFinaldate')
+            ? 'ausFinaldate'
+            : (self::columnExists($table, 'delivered_at') ? 'delivered_at' : null);
+
+        $doneByQa = collect();
+        if ($doneDateColumn !== null) {
+            $doneByQa = DB::table($table)
+                ->whereNotNull('qa_name')
+                ->where('qa_name', '!=', '')
+                ->where('final_upload', 'yes')
+                ->where($doneDateColumn, '>=', $rangeStart->toDateTimeString())
+                ->where($doneDateColumn, '<', $rangeEnd->toDateTimeString())
+                ->selectRaw('qa_name, COUNT(*) as done_count')
+                ->groupBy('qa_name')
+                ->pluck('done_count', 'qa_name');
+        }
+
+        $wipQuery = DB::table($table)
+            ->whereNotNull('qa_name')
+            ->where('qa_name', '!=', '');
+
+        if (self::columnExists($table, 'workflow_state')) {
+            $wipQuery->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED']);
+        }
+
+        $wipByQa = $wipQuery
+            ->where(function ($query) {
+                $query->whereNull('final_upload')
+                    ->orWhere('final_upload', '!=', 'yes');
+            })
+            ->selectRaw('qa_name, COUNT(*) as wip_count')
+            ->groupBy('qa_name')
+            ->pluck('wip_count', 'qa_name');
+
+        return collect($doneByQa->keys())
+            ->merge($wipByQa->keys())
+            ->unique()
+            ->map(fn($name) => [
+                'name' => $name,
+                'done_count' => (int) ($doneByQa[$name] ?? 0),
+                'wip_count' => (int) ($wipByQa[$name] ?? 0),
+            ])
+            ->sortByDesc(fn($row) => $row['done_count'] + $row['wip_count'])
+            ->values()
+            ->all();
     }
 
     private function buildProjectThreeHourlyDoneReport(string $table, string $projectTimezone, ?string $date = null): array
@@ -2859,6 +2977,110 @@ $userCounts = User::whereIn('project_id', $projectIds)
         ];
     }
 
+    if ((int) $projectId === 16 && ($selectedRole === null || $selectedRole === 'qa')) {
+        $project16QaRows = collect();
+
+        if (
+            self::columnExists($table, 'team_id')
+            && self::columnExists($table, 'qa_name')
+            && self::columnExists($table, 'final_upload')
+        ) {
+            $qaUserIdSelect = self::columnExists($table, 'qa_id')
+                ? 'o.qa_id as user_id'
+                : 'NULL as user_id';
+            $qaDoneDateColumn = self::columnExists($table, 'ausFinaldate')
+                ? 'ausFinaldate'
+                : (self::columnExists($table, 'delivered_at') ? 'delivered_at' : null);
+            $qaTeamExpressionParts = ['o.team_id'];
+            if (self::columnExists($table, 'checker_id')) {
+                $qaTeamExpressionParts[] = 'qa_checker_user.team_id';
+            }
+            if (self::columnExists($table, 'drawer_id')) {
+                $qaTeamExpressionParts[] = 'qa_drawer_user.team_id';
+            }
+
+            $makeProject16QaBaseQuery = function () use ($table) {
+                $query = DB::table($table . ' as o');
+
+                if (self::columnExists($table, 'checker_id')) {
+                    $query->leftJoin('users as qa_checker_user', 'o.checker_id', '=', 'qa_checker_user.id');
+                }
+
+                if (self::columnExists($table, 'drawer_id')) {
+                    $query->leftJoin('users as qa_drawer_user', 'o.drawer_id', '=', 'qa_drawer_user.id');
+                }
+
+                return $query;
+            };
+            $qaTeamExpression = 'COALESCE(' . implode(', ', array_unique($qaTeamExpressionParts)) . ')';
+
+            if ($qaDoneDateColumn !== null) {
+                $qaDoneQuery = $makeProject16QaBaseQuery()
+                    ->whereNotNull('o.qa_name')
+                    ->where('o.qa_name', '!=', '')
+                    ->where('o.final_upload', 'yes');
+
+                if ($qaDoneDateColumn === 'ausFinaldate') {
+                    $applyProject16DeliveredRange($qaDoneQuery, 'o.ausFinaldate');
+                } else {
+                    $applyProject16DeliveredRange($qaDoneQuery, 'o.delivered_at');
+                }
+
+                $project16QaRows = $project16QaRows->concat(
+                    $qaDoneQuery
+                        ->whereNotNull(DB::raw($qaTeamExpression))
+                        ->selectRaw("{$qaTeamExpression} as order_team_id, {$qaUserIdSelect}, o.qa_name as name, COUNT(*) as done_count, 0 as wip_count")
+                        ->groupByRaw($qaTeamExpression)
+                        ->groupBy('o.qa_name')
+                        ->when(self::columnExists($table, 'qa_id'), fn($query) => $query->groupBy('o.qa_id'))
+                        ->get()
+                        ->map(fn($row) => [
+                            'role' => 'qa',
+                            'order_team_id' => $row->order_team_id ? (int) $row->order_team_id : null,
+                            'user_id' => $row->user_id ? (int) $row->user_id : null,
+                            'name' => $row->name,
+                            'done_count' => (int) $row->done_count,
+                            'wip_count' => 0,
+                        ])
+                );
+            }
+
+            if (self::columnExists($table, 'workflow_state')) {
+                $qaWipQuery = $makeProject16QaBaseQuery()
+                    ->whereNotNull('o.qa_name')
+                    ->where('o.qa_name', '!=', '')
+                    ->whereNotIn('o.workflow_state', ['DELIVERED', 'CANCELLED'])
+                    ->where(function ($query) {
+                        $query->whereNull('o.final_upload')
+                            ->orWhere('o.final_upload', '!=', 'yes');
+                    });
+
+                $project16QaRows = $project16QaRows->concat(
+                    $qaWipQuery
+                        ->whereNotNull(DB::raw($qaTeamExpression))
+                        ->selectRaw("{$qaTeamExpression} as order_team_id, {$qaUserIdSelect}, o.qa_name as name, 0 as done_count, COUNT(*) as wip_count")
+                        ->groupByRaw($qaTeamExpression)
+                        ->groupBy('o.qa_name')
+                        ->when(self::columnExists($table, 'qa_id'), fn($query) => $query->groupBy('o.qa_id'))
+                        ->get()
+                        ->map(fn($row) => [
+                            'role' => 'qa',
+                            'order_team_id' => $row->order_team_id ? (int) $row->order_team_id : null,
+                            'user_id' => $row->user_id ? (int) $row->user_id : null,
+                            'name' => $row->name,
+                            'done_count' => 0,
+                            'wip_count' => (int) $row->wip_count,
+                        ])
+                );
+            }
+
+            $teamBreakdownRows = $teamBreakdownRows
+                ->reject(fn($row) => ($row['role'] ?? null) === 'qa')
+                ->concat($project16QaRows)
+                ->values();
+        }
+    }
+
     $teamsBreakdown = $this->buildTeamWiseDoneBreakdown($projectId, $teamBreakdownRows, $startDate, $endDate, $selectedRole);
 
     return [
@@ -2947,6 +3169,9 @@ $userCounts = User::whereIn('project_id', $projectIds)
             }
 
             $doneCount = (int) $row['done_count'];
+            $rowWipCount = is_array($row) && array_key_exists('wip_count', $row)
+                ? (int) $row['wip_count']
+                : null;
             $doneKey = "{$role}_done";
             $memberKey = $role === 'qa' ? 'qas' : "{$role}s";
 
@@ -2965,12 +3190,18 @@ $userCounts = User::whereIn('project_id', $projectIds)
                     'team_name' => $teamName,
                     'total_done' => 0,
                     'total_done_selected_date' => 0,
-                    'wip' => (int) ($user?->wip_count ?? 0),
+                    'wip' => $rowWipCount ?? (int) ($user?->wip_count ?? 0),
                 ];
             }
 
             $teamGroups[$teamId][$memberKey][$memberMapKey]['total_done'] += $doneCount;
             $teamGroups[$teamId][$memberKey][$memberMapKey]['total_done_selected_date'] += $doneCount;
+            if ($rowWipCount !== null) {
+                $teamGroups[$teamId][$memberKey][$memberMapKey]['wip'] = max(
+                    (int) ($teamGroups[$teamId][$memberKey][$memberMapKey]['wip'] ?? 0),
+                    $rowWipCount
+                );
+            }
         }
 
         // Fetch pending order counts per team (current snapshot, not date-filtered)

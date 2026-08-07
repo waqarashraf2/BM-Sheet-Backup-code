@@ -118,6 +118,9 @@ class UserController extends Controller
         if (Schema::hasColumn('users', 'machine_id')) {
             $selectColumns[] = 'machine_id';
         }
+        if (Schema::hasColumn('users', 'plain_password')) {
+            $selectColumns[] = 'plain_password';
+        }
 
         $users = $query
             ->select($selectColumns)
@@ -127,7 +130,9 @@ class UserController extends Controller
 
         $users->setCollection(
             $users->getCollection()->map(function (User $user) {
-                return $this->enrichUserWithTeamStatus($user);
+                return $this->exposeStoredPassword(
+                    $this->enrichUserWithTeamStatus($user)
+                );
             })
         );
 
@@ -167,7 +172,9 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'User created successfully',
-            'data' => $this->enrichUserWithTeamStatus($user->load(['project', 'team'])),
+            'data' => $this->exposeStoredPassword(
+                $this->enrichUserWithTeamStatus($user->load(['project', 'team']))
+            ),
         ], 201);
     }
 
@@ -178,7 +185,9 @@ class UserController extends Controller
     {
         $user = User::with(['project', 'team', 'workAssignments.order'])->findOrFail($id);
         abort_if($request->user()?->role === 'hr' && $user->role === 'ceo', 403);
-        $user = $this->enrichUserWithTeamStatus($user);
+        $user = $this->exposeStoredPassword(
+            $this->enrichUserWithTeamStatus($user)
+        );
 
         return response()->json([
             'data' => $user,
@@ -244,7 +253,9 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'User updated successfully',
-            'data' => $this->enrichUserWithTeamStatus($user->load(['project', 'team'])),
+            'data' => $this->exposeStoredPassword(
+                $this->enrichUserWithTeamStatus($user->load(['project', 'team']))
+            ),
         ]);
     }
 
@@ -380,6 +391,15 @@ class UserController extends Controller
 
         $user->setAttribute('team_status', $teamStatus);
         $user->setAttribute('team_status_reason', $teamStatusReason);
+
+        return $user;
+    }
+
+    private function exposeStoredPassword(User $user): User
+    {
+        if (Schema::hasColumn('users', 'plain_password')) {
+            $user->makeVisible('plain_password');
+        }
 
         return $user;
     }

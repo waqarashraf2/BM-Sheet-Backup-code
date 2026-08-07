@@ -47,12 +47,20 @@ interface ProjectThreePendingDate {
     delayed_orders: number;
 }
 
+interface ProjectThreeQaWorker {
+    name: string;
+    done_count: number;
+    wip_count: number;
+}
+
 interface ProjectThreeOperationsReport {
+    project_id?: number;
     project_name?: string;
     generated_at?: string;
     hourly_done: ProjectThreeHourlyDone[];
     last_10_days_pending: ProjectThreePendingDate[];
     previous_pending_summary?: ProjectThreePendingDate;
+    qa_workers?: ProjectThreeQaWorker[];
 }
 
 interface OnlineUser {
@@ -241,6 +249,13 @@ interface BatchHourlyCount {
     orders: number;
 }
 
+interface BatchQaWorker {
+    name: string;
+    done_count: number;
+    wip_count: number;
+    total_count: number;
+}
+
 interface BatchStatusResponse {
     success: boolean;
     total_orders?: {
@@ -254,6 +269,12 @@ interface BatchStatusResponse {
     batches?: BatchStatusItem[];
     plans_remaining?: BatchPlansRemaining[];
     hourly_counts?: BatchHourlyCount[];
+    qa_summary?: {
+        total_orders: number;
+        total_done: number;
+        total_wip: number;
+        workers: BatchQaWorker[];
+    } | null;
     untouched_min?: BatchStatusItem;
     fixed_min?: BatchStatusItem;
 }
@@ -978,6 +999,8 @@ const ProjectsView: React.FC = () => {
                                                         ? allTeams
                                                         : visibleTeams;
                                         const batchTotals = batchStatus?.total_orders;
+                                        const batchQaSummary = batchStatus?.qa_summary;
+                                        const batchQaWorkers = batchQaSummary?.workers ?? [];
                                         const batchCount = batchStatus?.batches?.length ?? detailProject.batch_count ?? 0;
                                         const batchPlansRemaining = batchStatus?.plans_remaining ?? [];
                                         const batchHourlyCounts = batchStatus?.hourly_counts ?? [];
@@ -989,6 +1012,8 @@ const ProjectsView: React.FC = () => {
                                         ];
                                         const projectThreeReport = detailProject.project_operations_report ?? detailProject.project_3_operations_report;
                                         const projectThreeHourlyDone = projectThreeReport?.hourly_done ?? [];
+                                        const showProjectThreeHourlyDone = projectThreeReport?.project_id !== 16;
+                                        const projectThreeQaWorkers = projectThreeReport?.project_id === 16 ? (projectThreeReport?.qa_workers ?? []) : [];
                                         const projectThreeAllPendingDates = projectThreeReport?.last_10_days_pending ?? [];
                                         const projectThreePreviousPending = projectThreeReport?.previous_pending_summary;
                                         const projectThreePendingDates = projectThreeAllPendingDates.filter((item) => item.date !== projectThreePreviousPending?.date && Number(item.pending_orders || 0) > 0);
@@ -1083,28 +1108,61 @@ const ProjectsView: React.FC = () => {
                                                                             </div>
                                                                             <div className="grid gap-4 p-4 lg:grid-cols-2">
                                                                                 <div>
-                                                                                    <div className="mb-2 flex items-center justify-between">
-                                                                                        <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Done by Time</h4>
-                                                                                        <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-[#0f766e] ring-1 ring-teal-100">
-                                                                                            24 hr
-                                                                                        </span>
-                                                                                    </div>
-                                                                                    <div className="grid gap-x-5 gap-y-1.5 sm:grid-cols-2">
-                                                                                        {projectThreeHourlyDone.length > 0 ? projectThreeHourlyDone.map((item) => (
-                                                                                            <div key={`${item.start_at}-${item.end_at}`} className="grid grid-cols-[88px_1fr_38px] items-center gap-2 text-[11px]">
-                                                                                                <span className="font-medium text-slate-500">{item.label}</span>
-                                                                                                <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                                                                                                    <div
-                                                                                                        className="h-full rounded-full bg-[#2AA7A0]"
-                                                                                                        style={{ width: `${Math.max(4, (Number(item.done_orders || 0) / maxProjectThreeDone) * 100)}%` }}
-                                                                                                    />
-                                                                                                </div>
-                                                                                                <span className="text-right font-bold text-slate-700">{Number(item.done_orders || 0)}</span>
+                                                                                    {showProjectThreeHourlyDone ? (
+                                                                                        <>
+                                                                                            <div className="mb-2 flex items-center justify-between">
+                                                                                                <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Done by Time</h4>
+                                                                                                <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-[#0f766e] ring-1 ring-teal-100">
+                                                                                                    24 hr
+                                                                                                </span>
                                                                                             </div>
-                                                                                        )) : (
-                                                                                            <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-400">No done orders in last 24 hours.</div>
-                                                                                        )}
-                                                                                    </div>
+                                                                                            <div className="grid gap-x-5 gap-y-1.5 sm:grid-cols-2">
+                                                                                                {projectThreeHourlyDone.length > 0 ? projectThreeHourlyDone.map((item) => (
+                                                                                                    <div key={`${item.start_at}-${item.end_at}`} className="grid grid-cols-[88px_1fr_38px] items-center gap-2 text-[11px]">
+                                                                                                        <span className="font-medium text-slate-500">{item.label}</span>
+                                                                                                        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                                                                                                            <div
+                                                                                                                className="h-full rounded-full bg-[#2AA7A0]"
+                                                                                                                style={{ width: `${Math.max(4, (Number(item.done_orders || 0) / maxProjectThreeDone) * 100)}%` }}
+                                                                                                            />
+                                                                                                        </div>
+                                                                                                        <span className="text-right font-bold text-slate-700">{Number(item.done_orders || 0)}</span>
+                                                                                                    </div>
+                                                                                                )) : (
+                                                                                                    <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-400">No done orders in last 24 hours.</div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        </>
+                                                                                    ) : (
+                                                                                        <>
+                                                                                            <div className="mb-2 flex items-center justify-between">
+                                                                                                <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">QA</h4>
+                                                                                                <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-100">
+                                                                                                    Done / WIP
+                                                                                                </span>
+                                                                                            </div>
+                                                                                            <div className="space-y-1.5">
+                                                                                                {projectThreeQaWorkers.length > 0 ? projectThreeQaWorkers.map((worker) => (
+                                                                                                    <div key={worker.name} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2 text-xs">
+                                                                                                        <span className="truncate font-semibold text-slate-700">{worker.name}</span>
+                                                                                                        <div className="flex shrink-0 items-center gap-1.5">
+                                                                                                            <span className="rounded-md bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-[#0f766e] ring-1 ring-teal-100">
+                                                                                                                Done {Number(worker.done_count || 0)}
+                                                                                                            </span>
+                                                                                                            <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
+                                                                                                                WIP {Number(worker.wip_count || 0)}
+                                                                                                            </span>
+                                                                                                            <span className="rounded-md bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700 ring-1 ring-violet-100">
+                                                                                                                Total {Number(worker.done_count || 0) + Number(worker.wip_count || 0)}
+                                                                                                            </span>
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                )) : (
+                                                                                                    <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-400">No QA data for selected date.</div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        </>
+                                                                                    )}
                                                                                 </div>
                                                                                 <div>
                                                                                     <div className="mb-2 flex items-center justify-between">
@@ -1253,15 +1311,41 @@ const ProjectsView: React.FC = () => {
 
                                                                             {teamDetailTab === 'batch' ? (
                                                                                 <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                                                                                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
-                                                                                        <div>
+                                                                                    <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
+                                                                                        <div className="shrink-0">
                                                                                             <h3 className="text-xs md:text-sm font-semibold text-slate-950">Cubi Status</h3>
                                                                                             <p className="mt-0.5 text-[10px] md:text-[11px] font-medium text-slate-500">
                                                                                                 Plans, workflow position, hourly load, and remaining time
                                                                                             </p>
                                                                                         </div>
-                                                                                        <div className="flex flex-wrap items-center gap-1.5">
+                                                                                        {batchQaWorkers.length > 0 && (
+                                                                                            <div className="min-w-[240px] flex-1 rounded-lg border border-violet-100 bg-violet-50/40 px-3 py-2">
+                                                                                                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                                                                                                    <span className="text-[10px] font-bold uppercase tracking-wide text-violet-700">QA Orders</span>
+                                                                                                    <span className="rounded-md bg-white px-2 py-0.5 text-[10px] font-semibold text-violet-700 ring-1 ring-violet-100">
+                                                                                                        Total QA {batchQaSummary?.total_done ?? 0}
+                                                                                                    </span>
+                                                                                                </div>
+                                                                                                <div className="flex flex-wrap gap-1.5">
+                                                                                                    {batchQaWorkers.map((worker) => (
+                                                                                                        <span
+                                                                                                            key={`overall-batch-qa-${worker.name}`}
+                                                                                                            className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 ring-1 ring-violet-100"
+                                                                                                        >
+                                                                                                            <span className="max-w-[120px] truncate text-slate-900">{worker.name}</span>
+                                                                                                            <span className="rounded bg-amber-50 px-1 text-amber-700">WIP {worker.wip_count}</span>
+                                                                                                            <span className="rounded bg-violet-50 px-1 text-violet-700">Total {Number(worker.done_count || 0) + Number(worker.wip_count || 0)}</span>
+                                                                                                            <span className="rounded bg-emerald-50 px-1 text-emerald-700">Done {worker.done_count}</span>
+                                                                                                        </span>
+                                                                                                    ))}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        )}
+                                                                                        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                                                                                             <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">Plans {batchTotals?.plans ?? 0}</span>
+                                                                                            {batchQaSummary && (
+                                                                                                <span className="rounded-md bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">In QA {batchQaSummary.total_wip ?? 0}</span>
+                                                                                            )}
                                                                                             <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Done {batchTotals?.done ?? 0}</span>
                                                                                             <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Pending {batchTotals?.pending ?? 0}</span>
                                                                                             <span className="rounded-md bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Draw Orders {batchTotals?.drawing_process ?? 0}</span>

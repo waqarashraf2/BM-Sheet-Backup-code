@@ -86,6 +86,7 @@ export interface User {
   id: number;
   name: string;
   email: string;
+  plain_password?: string | null;
   machine_id?: string | null;
   blood_group?: string | null;
   contact_number?: string | null;
