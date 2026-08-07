@@ -4985,6 +4985,7 @@ $endDate = $request->input('end_date');
             'it_datetime',
             'editor_portal_account_id', 'qc_portal_account_id',
             'editor_login_name', 'qc_account_name',
+            'completed_at',
             'fixing_started_at', 'fixing_completed_at', 'fixing_time_seconds',
         ];
 
@@ -5053,7 +5054,7 @@ $endDate = $request->input('end_date');
             . "COALESCE(coa.ausFinaldate, qo.ausFinaldate) as ausFinaldate, "
             . "qo.amend, qo.recheck_count, qo.is_on_hold, "
             . "qo.due_in, qo.due_date, "
-            . "qo.received_at, qo.delivered_at, qo.created_at "
+            . "qo.received_at, qo.delivered_at, qo.completed_at, qo.created_at "
             . "FROM ({$rawUnion}) as qo "
             . "LEFT JOIN crm_order_assignments coa ON qo.project_id = coa.project_id AND qo.order_number = coa.order_number";
         $unionQueryForDateStats = str_replace($rawUnion, $rawUnionForDateStats, $unionQuery);
@@ -5363,7 +5364,20 @@ if ($statusFilter === 'pending_by_drawer') {
                 ->orderBy($sortColumn, $sortOrder);
         }
 
-if ($useDueInFirstOrdering) {
+        if ($statusFilter === 'completed') {
+            $completedOrderExpr = "GREATEST(
+                COALESCE(delivered_at, '1000-01-01 00:00:00'),
+                COALESCE(completed_at, '1000-01-01 00:00:00')
+            )";
+
+            $orderedQuery->reorder();
+
+            $orderedQuery
+                ->orderByRaw("CASE WHEN delivered_at IS NULL AND completed_at IS NULL THEN 1 ELSE 0 END ASC")
+                ->orderByRaw("{$completedOrderExpr} DESC")
+                ->orderBy('received_at', 'desc')
+                ->orderBy('id', 'desc');
+        } elseif ($useDueInFirstOrdering) {
     $orderedQuery->reorder();
 
     $orderedQuery

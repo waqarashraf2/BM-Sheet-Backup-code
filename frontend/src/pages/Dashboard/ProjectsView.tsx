@@ -1,7 +1,6 @@
 ﻿import React, { useState, useEffect, useMemo } from 'react';
 import apiClient from '../../services/api';
-import { StatCard } from '../../components/ui';
-import { Users, UserCheck, UserX, Package, ChevronDown, ChevronUp, Loader2, Activity } from 'lucide-react';
+import { Package, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 
 /* ================= TYPES ================= */
 
@@ -363,7 +362,6 @@ const ProjectsView: React.FC = () => {
 
     const [data, setData] = useState<ProjectStats[]>([]);
     const [loading, setLoading] = useState(true);
-    const [totals, setTotals] = useState<ProjectStatsResponse['totals'] | null>(null);
     const [countries, setCountries] = useState<CountryStats[]>([]);
 
     // Date state management - locked to date range mode for compact UI
@@ -414,13 +412,11 @@ const ProjectsView: React.FC = () => {
 
                 if (res.data.success) {
                     setData(res.data.projects);
-                    setTotals(res.data.totals);
                     setCountries(Array.isArray(res.data.countries) ? res.data.countries : []);
                 }
 
             } catch {
                 setData([]);
-                setTotals(null);
                 setCountries([]);
             } finally {
                 setLoading(false);
@@ -859,7 +855,7 @@ const ProjectsView: React.FC = () => {
             {/* DATE FILTERS */}
             <div className="mb-6 px-4 md:px-0">
                 <div className="bg-white rounded-xl ring-1 ring-black/[0.04] shadow-sm p-4 mb-4">
-                    <div className="flex flex-col gap-3 md:gap-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                         {/* Date Inputs */}
                         <div className="flex flex-col md:flex-row gap-3">
                             <>
@@ -883,38 +879,27 @@ const ProjectsView: React.FC = () => {
                                 </div>
                             </>
                         </div>
+                        <div className="w-full rounded-xl border border-violet-200 bg-violet-50 p-3 lg:w-64">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Package className="h-4 w-4 text-violet-700" />
+                                <h3 className="text-xs font-semibold text-violet-900">Project Count (Country-wise)</h3>
+                            </div>
+                            <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                                {countries.length > 0 ? (
+                                    countries.map((item) => (
+                                        <div key={`received-${item.country}`} className="flex items-center justify-between gap-3 text-[11px]">
+                                            <span className="text-violet-900 truncate">{item.country}</span>
+                                            <span className="font-semibold text-violet-800">{item.projects_count ?? item.project_count ?? item.projects?.length ?? 0}</span>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-[11px] text-violet-700">No country data</div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
-
-            {/* STATS */}
-            {totals && (
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 mb-6 px-4 md:px-0">
-                    <StatCard label="Total Staff" value={totals.total_staff} icon={Users} color="blue" />
-                    <StatCard label="Online Staff" value={totals.online_staff ?? 0} icon={Activity} color="green" />
-                    <StatCard label="Present Staff" value={totals.present_staff} icon={UserCheck} color="green" />
-                    <StatCard label="Absent Staff" value={totals.absent_staff} icon={UserX} color="rose" />
-
-                    <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
-                        <div className="flex items-center gap-2 mb-2">
-                            <Package className="h-4 w-4 text-violet-700" />
-                            <h3 className="text-xs font-semibold text-violet-900">Project Count (Country-wise)</h3>
-                        </div>
-                        <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
-                            {countries.length > 0 ? (
-                                countries.map((item) => (
-                                    <div key={`received-${item.country}`} className="flex items-center justify-between text-[11px]">
-                                        <span className="text-violet-900 truncate">{item.country}</span>
-                                        <span className="font-semibold text-violet-800">{item.projects_count ?? item.project_count ?? item.projects?.length ?? 0}</span>
-                                    </div>
-                                ))
-                            ) : (
-                                <div className="text-[11px] text-violet-700">No country data</div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {/* TABLE */}
             <div className="px-4 md:px-0">

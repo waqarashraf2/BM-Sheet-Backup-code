@@ -1886,10 +1886,12 @@ export default function SupervisorAssignment() {
       }
 
       const configuredDrawer = columns.find((column) => column.key === 'drawer_name');
+      const configuredQa = columns.find((column) => column.key === 'qa_name');
 
       return [
         configuredDrawer || roleColumnMap.drawer_name,
         configuredChecker || roleColumnMap.checker_name,
+        configuredQa || roleColumnMap.qa_name,
       ];
     };
 
