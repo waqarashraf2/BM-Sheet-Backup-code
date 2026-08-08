@@ -152,6 +152,15 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const [helpQuestion, setHelpQuestion] = useState('');
   const [editableArea, setEditableArea] = useState(String(metadata.enter_area ?? metadata.area ?? ''));
   const [clientPortalStatus, setClientPortalStatus] = useState<ClientPortalUploadStatus | null>(null);
+  const isProject16 = order.project_id === 16;
+  const [cubiBwBugsCount, setCubiBwBugsCount] = useState('');
+  const [cubiBwBugsComment, setCubiBwBugsComment] = useState('');
+  const [cubiMbOkCount, setCubiMbOkCount] = useState('');
+  const [cubiMbOkComment, setCubiMbOkComment] = useState('');
+  const [cubiOtherFieldCount, setCubiOtherFieldCount] = useState('');
+  const [cubiOtherFieldComment, setCubiOtherFieldComment] = useState('');
+  const [cubiOkFieldCount, setCubiOkFieldCount] = useState('');
+  const [cubiOkFieldComment, setCubiOkFieldComment] = useState('');
 
   // PH_2_LAYER image counts
   const isPh2Layer = order.workflow_type === 'PH_2_LAYER';
@@ -266,9 +275,10 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const visibleChecklist = isPh2Layer ? [] : checklist;
   const allChecked = isPh2Layer ? true : checklist.every(c => c.checked);
   const checkedCount = isPh2Layer ? visibleChecklist.length : checklist.filter(c => c.checked).length;
+  const checklistRequirementMet = isPh2Layer || isProject16 || allChecked;
 
   const handleApprove = async () => {
-    if (!isPh2Layer && !allChecked) return;
+    if (!checklistRequirementMet) return;
     const hasAnyImageCount = imageCountFields.some((field) => getImageCountValue(field.stateKey));
     if (isPh2Layer && !hasAnyImageCount) return;
     if (clientPortalStatus?.required && !clientPortalStatus.submitted) return;
@@ -280,7 +290,23 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
       const imageCountSummary = isPh2Layer && hasAnyImageCount
         ? `\nPhoto Selections - ${imageCountFields.map((field) => `${field.label}: ${imageCountValues[field.stateKey] || 0}`).join(', ')}`
         : '';
-      const comment = `QA Approved${checklistSummary ? `\n\nChecklist:\n${checklistSummary}` : ''}${areaSummary}${imageCountSummary}${notes ? `\n\nNotes: ${notes}` : ''}`;
+      const cubiQaDetailsSummary = isProject16
+        ? [
+          cubiBwBugsCount.trim() || cubiBwBugsComment.trim()
+            ? `\nCubi QA Details:\n- BW Bugs Count: ${cubiBwBugsCount.trim() || '0'}\n- BW Bugs Comment: ${cubiBwBugsComment.trim() || '—'}`
+            : '',
+          cubiMbOkCount.trim() || cubiMbOkComment.trim()
+            ? `\n- MB OK Count: ${cubiMbOkCount.trim() || '0'}\n- MB OK Comment: ${cubiMbOkComment.trim() || '—'}`
+            : '',
+          cubiOtherFieldCount.trim() || cubiOtherFieldComment.trim()
+            ? `\n- Other Field Count: ${cubiOtherFieldCount.trim() || '0'}\n- Other Field Comment: ${cubiOtherFieldComment.trim() || '—'}`
+            : '',
+          cubiOkFieldCount.trim() || cubiOkFieldComment.trim()
+            ? `\n- OK Field Count: ${cubiOkFieldCount.trim() || '0'}\n- OK Field Comment: ${cubiOkFieldComment.trim() || '—'}`
+            : '',
+        ].filter(Boolean).join('')
+        : '';
+      const comment = `QA Approved${checklistSummary ? `\n\nChecklist:\n${checklistSummary}` : ''}${areaSummary}${imageCountSummary}${cubiQaDetailsSummary}${notes ? `\n\nNotes: ${notes}` : ''}`;
       await workflowService.submitWork(order.id, comment);
 
       if (isPh2Layer && imageCountFields.some((field) => field.payloadKey)) {
@@ -580,6 +606,90 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                       className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                     />
                   </div>
+                  {isProject16 && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <label className="mb-2 block text-xs font-semibold text-slate-700">Cubi QA Details</label>
+                      <p className="mb-3 text-[11px] text-slate-500">These values are saved with the QA submission comment for now.</p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <label className="mb-1 block text-xs font-semibold text-slate-700">BW Bugs Count</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="0"
+                            value={cubiBwBugsCount}
+                            onChange={(e) => setCubiBwBugsCount(e.target.value)}
+                          />
+                          <label className="mt-2 mb-1 block text-xs font-semibold text-slate-700">BW Bugs Comment</label>
+                          <textarea
+                            rows={2}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="Add notes for BW Bugs"
+                            value={cubiBwBugsComment}
+                            onChange={(e) => setCubiBwBugsComment(e.target.value)}
+                          />
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <label className="mb-1 block text-xs font-semibold text-slate-700">MB OK Count</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="0"
+                            value={cubiMbOkCount}
+                            onChange={(e) => setCubiMbOkCount(e.target.value)}
+                          />
+                          <label className="mt-2 mb-1 block text-xs font-semibold text-slate-700">MB OK Comment</label>
+                          <textarea
+                            rows={2}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="Add notes for MB OK"
+                            value={cubiMbOkComment}
+                            onChange={(e) => setCubiMbOkComment(e.target.value)}
+                          />
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <label className="mb-1 block text-xs font-semibold text-slate-700">Other Field Count</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="0"
+                            value={cubiOtherFieldCount}
+                            onChange={(e) => setCubiOtherFieldCount(e.target.value)}
+                          />
+                          <label className="mt-2 mb-1 block text-xs font-semibold text-slate-700">Other Field Comment</label>
+                          <textarea
+                            rows={2}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="Add notes for the other field"
+                            value={cubiOtherFieldComment}
+                            onChange={(e) => setCubiOtherFieldComment(e.target.value)}
+                          />
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <label className="mb-1 block text-xs font-semibold text-slate-700">OK Field Count</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="0"
+                            value={cubiOkFieldCount}
+                            onChange={(e) => setCubiOkFieldCount(e.target.value)}
+                          />
+                          <label className="mt-2 mb-1 block text-xs font-semibold text-slate-700">OK Field Comment</label>
+                          <textarea
+                            rows={2}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="Add notes for OK field"
+                            value={cubiOkFieldComment}
+                            onChange={(e) => setCubiOkFieldComment(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {/* PH_2_LAYER Photo Selections */}
                   {isPh2Layer && (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -793,13 +903,13 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
               onClick={handleApprove}
               loading={submitting}
               disabled={
-                (isPh2Layer ? !imageCountFields.some((field) => getImageCountValue(field.stateKey)) : !allChecked)
+                (isPh2Layer ? !imageCountFields.some((field) => getImageCountValue(field.stateKey)) : !checklistRequirementMet)
                 || (clientPortalStatus?.required === true && !clientPortalStatus.submitted)
               }
               icon={<Send className="h-4 w-4" />}
               className="flex-[2] bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500/30"
             >
-              {isPh2Layer ? 'Approve & Deliver' : allChecked ? 'Approve & Deliver' : `Complete Checklist (${checkedCount}/${checklist.length})`}
+              {isPh2Layer || isProject16 ? 'Approve & Deliver' : allChecked ? 'Approve & Deliver' : `Complete Checklist (${checkedCount}/${checklist.length})`}
             </Button>
           </div>
         )}
