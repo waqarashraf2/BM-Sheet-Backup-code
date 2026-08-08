@@ -121,6 +121,47 @@ type BatchStatusResponse = {
   summary: BatchSummary;
 };
 
+export type CubiQaReportRow = {
+  checker_name: string;
+  total_plans: number;
+  bw: number;
+  bugs: number;
+  mb: number;
+  ok: number;
+  mistakes_remarks: string;
+};
+
+export type CubiQaReportResponse = {
+  success: boolean;
+  project_id: number;
+  selected_date: string;
+  selected_date_display: string;
+  start_time: string;
+  end_time: string;
+  rows: CubiQaReportRow[];
+  totals: {
+    total_plans: number;
+    bw: number;
+    bugs: number;
+    mb: number;
+    ok: number;
+  };
+  percentages: {
+    total_plans: number;
+    bw: number;
+    bugs: number;
+    mb: number;
+    ok: number;
+  };
+  upload_summary: {
+    date: string;
+    total_plans: number;
+    upload: number;
+    pending: number;
+  };
+  qa_counts: Array<{ name: string; count: number }>;
+};
+
 // ═══════════════════════════════════════════
 // WORKFLOW SERVICE (State Machine)
 // ═══════════════════════════════════════════
@@ -621,6 +662,9 @@ export const dashboardService = {
 
   batchStatus: (params?: { date?: string; project_id?: number }) =>
     api.get<BatchStatusResponse>('/dashboard/batch-status', { params }),
+
+  cubiQaReport: (params?: { date?: string }) =>
+    api.get<CubiQaReportResponse>('/dashboard/cubi-qa-report', { params }),
 
   // Queues list — returns distinct queue names with their projects
   queues: () => api.get<{ queues: import('../types').QueueInfo[] }>('/dashboard/queues'),

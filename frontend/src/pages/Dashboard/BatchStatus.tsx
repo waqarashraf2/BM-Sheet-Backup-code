@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { dashboardService } from '../../services';
+import CubiQaReport from './CubiQaReport';
 
 /* ---------------------- Types ---------------------- */
 
@@ -89,6 +90,7 @@ export default function BatchStatus() {
 
   const [selectedDate, setSelectedDate] = useState<string>(getTodayInputValue());
   const [rawResponse, setRawResponse] = useState<BatchStatusResponse | null>(null);
+  const [showCubiQaReport, setShowCubiQaReport] = useState(false);
 
   /* ---------------------- Fetch Data ---------------------- */
 
@@ -310,6 +312,18 @@ plansRemaining.forEach((p) => {
 
               <button
                 type="button"
+                onClick={() => setShowCubiQaReport((value) => !value)}
+                className={`h-8 rounded-lg px-3 text-xs font-semibold shadow-sm transition focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25 ${
+                  showCubiQaReport
+                    ? 'bg-slate-900 text-white hover:bg-slate-800'
+                    : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                Cubi QA Report
+              </button>
+
+              <button
+                type="button"
                 onClick={copyText}
                 className="h-8 rounded-lg bg-[#2AA7A0] px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-[#238f89] focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25"
               >
@@ -338,6 +352,12 @@ plansRemaining.forEach((p) => {
               </span>
             ))}
           </div>
+
+          {showCubiQaReport && (
+            <div className="border-b border-slate-200 bg-slate-50 p-4">
+              <CubiQaReport date={selectedDate} />
+            </div>
+          )}
 
           {loading ? (
             <div className="flex items-center justify-center py-12">
