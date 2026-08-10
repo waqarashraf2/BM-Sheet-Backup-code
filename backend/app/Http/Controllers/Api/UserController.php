@@ -267,6 +267,11 @@ class UserController extends Controller
         $user = User::findOrFail($id);
         $authUser = auth()->user();
 
+        // Only CEO is allowed to delete users
+        if ($authUser->role !== 'ceo') {
+            return response()->json(['message' => 'Only CEO can delete users.'], 403);
+        }
+
         // Prevent self-deletion
         if ((int)$id === (int)$authUser->id) {
             return response()->json(['message' => 'You cannot delete yourself.'], 403);

@@ -21,16 +21,36 @@ class CubiQaReportController extends Controller
         $shiftStartUtc = $shiftStartPkt->copy()->utc();
         $shiftEndUtc = $shiftEndPkt->copy()->utc();
 
-        $workItems = WorkItem::query()
+        // Option B: Query orders received within this shift window (received_at)
+        $shiftOrderIds = [];
+        if (Schema::hasTable('project_16_orders') && Schema::hasColumn('project_16_orders', 'received_at')) {
+            $shiftOrderIds = DB::table('project_16_orders')
+                ->where('received_at', '>=', $shiftStartPkt->format('Y-m-d H:i:s'))
+                ->where('received_at', '<', $shiftEndPkt->format('Y-m-d H:i:s'))
+                ->pluck('id')
+                ->all();
+        }
+
+        $workItemsQuery = WorkItem::query()
             ->with('assignedUser:id,name')
             ->where('project_id', self::PROJECT_ID)
             ->where('stage', 'QA')
-            ->where('status', 'completed')
-            ->whereNotNull('completed_at')
-            ->where('completed_at', '>=', $shiftStartUtc)
-            ->where('completed_at', '<', $shiftEndUtc)
-            ->orderBy('completed_at')
-            ->get();
+            ->where('status', 'completed');
+
+        if (!empty($shiftOrderIds)) {
+            $workItemsQuery->whereIn('order_id', $shiftOrderIds);
+        } else {
+            // Fallback to completed_at window if no orders found in received_at range
+            $workItemsQuery->whereNotNull('completed_at')
+                ->where('completed_at', '>=', $shiftStartUtc)
+                ->where('completed_at', '<', $shiftEndUtc);
+        }
+
+        $workItems = $workItemsQuery->orderBy('completed_at', 'desc')
+            ->get()
+            ->unique('order_id')
+            ->reverse()
+            ->values();
 
         $orderRows = $this->projectOrderRows($workItems->pluck('order_id')->filter()->unique()->values()->all());
 

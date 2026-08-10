@@ -277,7 +277,9 @@ export default function UserManagement() {
                     {u.is_active ? <UserX className="w-3.5 h-3.5 text-amber-500" /> : <UserCheck className="w-3.5 h-3.5 text-brand-500" />}
                   </Button>
                   <Button variant="ghost" size="xs" onClick={() => openEdit(u)}><Edit className="w-3.5 h-3.5" /></Button>
-                  <Button variant="ghost" size="xs" onClick={() => setDeleteConfirm(u.id)}><Trash2 className="w-3.5 h-3.5 text-rose-500" /></Button>
+                  {currentUser?.role === 'ceo' && (
+                    <Button variant="ghost" size="xs" onClick={() => setDeleteConfirm(u.id)}><Trash2 className="w-3.5 h-3.5 text-rose-500" /></Button>
+                  )}
                 </div>
               ) : null
             },
