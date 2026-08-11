@@ -78,6 +78,14 @@ export default function DocumentGenerator() {
       });
   }, [userId]);
 
+  const handleCancelOrBack = () => {
+    if (window.opener) {
+      window.close();
+    } else {
+      navigate('/hr-panel');
+    }
+  };
+
   // Configure Canvas Drawing (Employee)
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -618,16 +626,16 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
         doc.text(`Authorized Signatory: ${hrName}`, 15, yOffset + 8);
         doc.text('Designation: HR Department', 15, yOffset + 14);
         
-        // Render HR Signature on the left side
-        doc.addImage(hrSignatureImgBase64, 'PNG', 15, yOffset + 17, 45, 12);
+        // Render HR Signature on the left side (shifted right to sit directly over the underline)
+        doc.addImage(hrSignatureImgBase64, 'PNG', 65, yOffset + 17, 45, 12);
         doc.text('Signature & Company Stamp: __________________', 15, yOffset + 30);
         doc.text(`Date: ${formattedJoinDate}`, 15, yOffset + 36);
 
         doc.text(`Full Name: ${fullEmployeeNameString}`, 110, yOffset + 8);
         doc.text(`CNIC: ${cnic || '—'}`, 110, yOffset + 14);
         
-        // Render Employee Signature on the right side
-        doc.addImage(signatureImgBase64, 'PNG', 110, yOffset + 17, 45, 12);
+        // Render Employee Signature on the right side (shifted right to sit directly over the underline)
+        doc.addImage(signatureImgBase64, 'PNG', 127, yOffset + 17, 45, 12);
         doc.text('Signature: __________________', 110, yOffset + 30);
         doc.text(`Date: ${formattedJoinDate}`, 110, yOffset + 36);
       }
@@ -643,7 +651,16 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
       formData.append('documents[0][file]', pdfFile, filename);
 
       await hrService.uploadDocuments(Number(userId), formData);
-      navigate(`/hr-panel`);
+      if (window.opener) {
+        try {
+          window.opener.location.reload();
+        } catch (e) {
+          console.error('Failed to reload parent:', e);
+        }
+        window.close();
+      } else {
+        navigate(`/hr-panel`);
+      }
 
     } catch (err: any) {
       console.error(err);
@@ -671,7 +688,7 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
 
       {/* Back button */}
       <button
-        onClick={() => navigate('/hr-panel')}
+        onClick={handleCancelOrBack}
         className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -995,7 +1012,7 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
           <div className="flex items-center gap-3">
             <Button
               variant="secondary"
-              onClick={() => navigate('/hr-panel')}
+              onClick={handleCancelOrBack}
               className="flex-1"
             >
               Cancel
