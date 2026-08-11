@@ -6,6 +6,8 @@ import { Button, PageHeader } from '../../components/ui';
 import BenchmarkLogo from '../../components/ui/BenchmarkLogo';
 import { hrService } from '../../services';
 
+type SignatureFont = 'GreatVibes' | 'AlexBrush' | 'Playball' | 'DancingScript' | 'Parisienne' | 'HerrVonMuellerhoff';
+
 export default function DocumentGenerator() {
   const { userId, docType } = useParams<{ userId: string; docType: string }>();
   const navigate = useNavigate();
@@ -18,19 +20,32 @@ export default function DocumentGenerator() {
   // Form Fields
   const [name, setName] = useState('');
   const [cnic, setCnic] = useState('');
+  const [relationshipType, setRelationshipType] = useState<'S/O' | 'D/O' | 'W/O' | ''>('');
+  const [relativeName, setRelativeName] = useState('');
   const [joiningDate, setJoiningDate] = useState('');
   const [stipend, setStipend] = useState('28000');
   const [projectName, setProjectName] = useState('ESOFT Photos');
 
-  // Signature state
+  // Employee Signature state
   const [signatureMode, setSignatureMode] = useState<'draw' | 'type'>('draw');
   const [typedName, setTypedName] = useState('');
-  const [selectedFont, setSelectedFont] = useState<'GreatVibes' | 'AlexBrush' | 'Playball'>('GreatVibes');
+  const [selectedFont, setSelectedFont] = useState<SignatureFont>('GreatVibes');
 
-  // Canvas ref
+  // Employee Canvas ref
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [canvasHasDrawing, setCanvasHasDrawing] = useState(false);
+
+  // HR Signature state
+  const [hrName, setHrName] = useState('Ali Shan');
+  const [hrSignatureMode, setHrSignatureMode] = useState<'draw' | 'type'>('type');
+  const [hrTypedName, setHrTypedName] = useState('Ali Shan');
+  const [hrSelectedFont, setHrSelectedFont] = useState<SignatureFont>('GreatVibes');
+
+  // HR Canvas ref
+  const hrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isHrDrawing, setIsHrDrawing] = useState(false);
+  const [hrCanvasHasDrawing, setHrCanvasHasDrawing] = useState(false);
 
   // Load user details
   useEffect(() => {
@@ -63,7 +78,7 @@ export default function DocumentGenerator() {
       });
   }, [userId]);
 
-  // Configure Canvas Drawing
+  // Configure Canvas Drawing (Employee)
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -124,11 +139,75 @@ export default function DocumentGenerator() {
     setCanvasHasDrawing(false);
   };
 
-  // Font choices for Option B (Type-to-Sign)
-  const fontStyles: Record<string, string> = {
+  // Configure Canvas Drawing (HR)
+  const startHrDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = hrCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+
+    const rect = canvas.getBoundingClientRect();
+    let clientX, clientY;
+    if ('touches' in e) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(clientX - rect.left, clientY - rect.top);
+    setIsHrDrawing(true);
+  };
+
+  const drawHr = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isHrDrawing) return;
+    const canvas = hrCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    let clientX, clientY;
+    if ('touches' in e) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+
+    ctx.lineTo(clientX - rect.left, clientY - rect.top);
+    ctx.stroke();
+    setHrCanvasHasDrawing(true);
+  };
+
+  const stopHrDrawing = () => {
+    setIsHrDrawing(false);
+  };
+
+  const clearHrCanvas = () => {
+    const canvas = hrCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHrCanvasHasDrawing(false);
+  };
+
+  // Font choices for Option B (Type-to-Sign) with CSS mapping
+  const fontStyles: Record<SignatureFont, string> = {
     GreatVibes: 'font-["Great_Vibes",cursive] text-4xl italic tracking-wider',
     AlexBrush: 'font-["Alex_Brush",cursive] text-4xl tracking-wider',
     Playball: 'font-["Playball",cursive] text-3xl tracking-wide',
+    DancingScript: 'font-["Dancing_Script",cursive] text-3xl italic tracking-wide',
+    Parisienne: 'font-["Parisienne",cursive] text-3xl tracking-widest',
+    HerrVonMuellerhoff: 'font-["Herr_Von_Muellerhoff",cursive] text-4xl italic tracking-widest',
   };
 
   // Format Pakistani Date (DD/MM/YYYY)
@@ -171,6 +250,48 @@ export default function DocumentGenerator() {
     doc.setTextColor(0, 0, 0); // reset
   };
 
+  // Helper to get relationship string (S/O, D/O, W/O)
+  const getFullEmployeeNameString = () => {
+    if (relationshipType && relativeName.trim()) {
+      return `${name} ${relationshipType} ${relativeName.trim()}`;
+    }
+    return name;
+  };
+
+  // Helper to generate signature base64
+  const generateSignatureBase64 = (mode: 'draw' | 'type', canvas: HTMLCanvasElement | null, typedText: string, font: SignatureFont, hasDrawing: boolean) => {
+    if (mode === 'draw') {
+      if (!hasDrawing) return '';
+      return canvas?.toDataURL('image/png') || '';
+    } else {
+      if (!typedText.trim()) return '';
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = 400;
+      tempCanvas.height = 100;
+      const ctx = tempCanvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        ctx.fillStyle = '#000000';
+        
+        let fontName = 'Georgia';
+        if (font === 'GreatVibes') fontName = 'Brush Script MT, Great Vibes, cursive';
+        else if (font === 'AlexBrush') fontName = 'Lucida Handwriting, Alex Brush, cursive';
+        else if (font === 'Playball') fontName = 'Comic Sans MS, Playball, cursive';
+        else if (font === 'DancingScript') fontName = 'Dancing Script, cursive';
+        else if (font === 'Parisienne') fontName = 'Parisienne, cursive';
+        else if (font === 'HerrVonMuellerhoff') fontName = 'Herr Von Muellerhoff, cursive';
+
+        ctx.font = `italic 36px ${fontName}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(typedText, 200, 50);
+        return tempCanvas.toDataURL('image/png');
+      }
+      return '';
+    }
+  };
+
   // Generate & Upload PDF
   const handleGenerateAndUpload = async () => {
     if (!userId || !docType) return;
@@ -178,45 +299,19 @@ export default function DocumentGenerator() {
     setError('');
 
     try {
-      // 1. Capture signature image
-      let signatureImgBase64 = '';
-      if (signatureMode === 'draw') {
-        if (!canvasHasDrawing) {
-          throw new Error('Please draw a signature first.');
-        }
-        signatureImgBase64 = canvasRef.current?.toDataURL('image/png') || '';
-      } else {
-        if (!typedName.trim()) {
-          throw new Error('Please type a signature name first.');
-        }
-        // Draw typed name to a temp canvas to export as PNG
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = 400;
-        tempCanvas.height = 100;
-        const ctx = tempCanvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-          ctx.fillStyle = '#000000';
-          
-          let fontName = 'Georgia';
-          if (selectedFont === 'GreatVibes') fontName = 'Brush Script MT, cursive';
-          else if (selectedFont === 'AlexBrush') fontName = 'Lucida Handwriting, cursive';
-          else if (selectedFont === 'Playball') fontName = 'Comic Sans MS, cursive';
-
-          ctx.font = `italic 36px ${fontName}`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(typedName, 200, 50);
-          signatureImgBase64 = tempCanvas.toDataURL('image/png');
-        }
-      }
-
+      // 1. Capture employee signature image
+      const signatureImgBase64 = generateSignatureBase64(signatureMode, canvasRef.current, typedName, selectedFont, canvasHasDrawing);
       if (!signatureImgBase64) {
-        throw new Error('Failed to generate signature image.');
+        throw new Error('Please draw or type the Employee signature.');
       }
 
-      // 2. Generate PDF using jsPDF
+      // 2. Capture HR signature image
+      const hrSignatureImgBase64 = generateSignatureBase64(hrSignatureMode, hrCanvasRef.current, hrTypedName, hrSelectedFont, hrCanvasHasDrawing);
+      if (!hrSignatureImgBase64) {
+        throw new Error('Please draw or type the HR signature.');
+      }
+
+      // 3. Generate PDF using jsPDF
       const doc = new jsPDF({
         orientation: 'p',
         unit: 'mm',
@@ -226,6 +321,7 @@ export default function DocumentGenerator() {
       const formattedJoinDate = formatPakistaniDate(joiningDate);
       const formattedEndDate = formatPakistaniDate(getEndDate(joiningDate));
       const formattedLongJoinDate = formatLongDate(joiningDate);
+      const fullEmployeeNameString = getFullEmployeeNameString();
 
       const handlePageAdd = () => {
         doc.addPage();
@@ -254,9 +350,9 @@ export default function DocumentGenerator() {
         doc.text('1-Montgomery Road, Lahore', 15, 47);
         doc.text(formattedLongJoinDate, 15, 52);
         
-        // Recipient Name (Bold)
+        // Recipient Name (Bold, containing S/O, D/O, W/O if selected)
         doc.setFont('Helvetica', 'bold');
-        doc.text(`Mr. ${name}`, 15, 65);
+        doc.text(`Mr. ${fullEmployeeNameString}`, 15, 65);
         // Project (Normal)
         doc.setFont('Helvetica', 'normal');
         doc.text(`Project: ${projectName}`, 15, 70);
@@ -386,14 +482,15 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
         doc.setFont('Helvetica', 'normal');
         doc.text(`I, ${name}, accept the internship offer outlined above.`, 15, yOffset + 13);
         
-        // Add signature image
+        // Add signatures inside box
         doc.addImage(signatureImgBase64, 'PNG', 15, yOffset + 16, 45, 12);
         doc.text('______________________', 15, yOffset + 28);
-        doc.text('Signature', 15, yOffset + 32);
+        doc.text('Signature (Employee)', 15, yOffset + 32);
 
-        doc.text(formattedJoinDate, 120, yOffset + 24);
+        // Render HR Signature on the right side of the box
+        doc.addImage(hrSignatureImgBase64, 'PNG', 120, yOffset + 16, 45, 12);
         doc.text('______________________', 120, yOffset + 28);
-        doc.text('Date', 120, yOffset + 32);
+        doc.text(`Date & HR Stamp / Sign`, 120, yOffset + 32);
 
       } else {
         // --- NON-DISCLOSURE AGREEMENT (NDA) TEMPLATE ---
@@ -518,18 +615,21 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
         doc.text('Recipient / Employee', 110, yOffset);
         doc.setFont('Helvetica', 'normal');
 
-        doc.text('Authorized Signatory:', 15, yOffset + 8);
+        doc.text(`Authorized Signatory: ${hrName}`, 15, yOffset + 8);
         doc.text('Designation: HR Department', 15, yOffset + 14);
-        doc.text('Signature & Company Stamp: __________________', 15, yOffset + 20);
-        doc.text(`Date: ${formattedJoinDate}`, 15, yOffset + 26);
+        
+        // Render HR Signature on the left side
+        doc.addImage(hrSignatureImgBase64, 'PNG', 15, yOffset + 17, 45, 12);
+        doc.text('Signature & Company Stamp: __________________', 15, yOffset + 30);
+        doc.text(`Date: ${formattedJoinDate}`, 15, yOffset + 36);
 
-        doc.text(`Full Name: ${name}`, 110, yOffset + 8);
+        doc.text(`Full Name: ${fullEmployeeNameString}`, 110, yOffset + 8);
         doc.text(`CNIC: ${cnic || '—'}`, 110, yOffset + 14);
         
-        // Render Employee Signature
+        // Render Employee Signature on the right side
         doc.addImage(signatureImgBase64, 'PNG', 110, yOffset + 17, 45, 12);
-        doc.text('Signature: __________________', 110, yOffset + 28);
-        doc.text(`Date: ${formattedJoinDate}`, 110, yOffset + 34);
+        doc.text('Signature: __________________', 110, yOffset + 30);
+        doc.text(`Date: ${formattedJoinDate}`, 110, yOffset + 36);
       }
 
       // Convert PDF to Blob
@@ -562,9 +662,13 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
   }
 
   const isNda = docType === 'nda';
+  const fullEmployeeNameString = getFullEmployeeNameString();
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      {/* Import beautiful handwriting cursive fonts from Google Fonts */}
+      <link href="https://fonts.googleapis.com/css2?family=Alex+Brush&family=Dancing+Script&family=Great+Vibes&family=Herr+Von+Muellerhoff&family=Parisienne&family=Playball&display=swap" rel="stylesheet" />
+
       {/* Back button */}
       <button
         onClick={() => navigate('/hr-panel')}
@@ -593,15 +697,47 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
             <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500">Document Settings</h3>
             
             <div className="space-y-4">
-              <label className="block text-sm">
-                <span className="mb-1 block font-medium text-slate-700">Employee Name</span>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
-                />
-              </label>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">Employee Name</span>
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                    />
+                  </label>
+                </div>
+                <div>
+                  <label className="block text-sm">
+                    <span className="mb-1 block font-medium text-slate-700">Relationship</span>
+                    <select
+                      value={relationshipType}
+                      onChange={(e) => setRelationshipType(e.target.value as any)}
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                    >
+                      <option value="">None</option>
+                      <option value="S/O">S/O (Son of)</option>
+                      <option value="D/O">D/O (Daughter of)</option>
+                      <option value="W/O">W/O (Wife of)</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              {relationshipType && (
+                <label className="block text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Relative / Guardian Name</span>
+                  <input
+                    type="text"
+                    value={relativeName}
+                    onChange={(e) => setRelativeName(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                    placeholder="e.g. Guardian / Husband Name"
+                  />
+                </label>
+              )}
 
               {isNda && (
                 <label className="block text-sm">
@@ -654,10 +790,10 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
             </div>
           </div>
 
-          {/* Signature Panel */}
+          {/* Employee Signature Panel */}
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">Digital Signature</h3>
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">Employee Signature</h3>
               <div className="flex gap-2 rounded-lg bg-slate-100 p-1">
                 <button
                   onClick={() => setSignatureMode('draw')}
@@ -666,7 +802,7 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                   }`}
                 >
                   <Brush className="h-3.5 w-3.5" />
-                  Draw Sign
+                  Draw
                 </button>
                 <button
                   onClick={() => setSignatureMode('type')}
@@ -675,7 +811,7 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                   }`}
                 >
                   <Edit3 className="h-3.5 w-3.5" />
-                  Type Sign
+                  Type
                 </button>
               </div>
             </div>
@@ -686,7 +822,7 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                   <canvas
                     ref={canvasRef}
                     width={500}
-                    height={180}
+                    height={120}
                     onMouseDown={startDrawing}
                     onMouseMove={draw}
                     onMouseUp={stopDrawing}
@@ -694,12 +830,12 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                     onTouchStart={startDrawing}
                     onTouchMove={draw}
                     onTouchEnd={stopDrawing}
-                    className="h-[180px] w-full cursor-crosshair bg-slate-50 touch-none"
+                    className="h-[120px] w-full cursor-crosshair bg-slate-50 touch-none"
                   />
                   {!canvasHasDrawing && (
                     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-slate-400">
                       <Brush className="mb-1 h-5 w-5 opacity-40 animate-pulse" />
-                      <span className="text-xs">Draw signature here</span>
+                      <span className="text-xs">Draw Employee Signature</span>
                     </div>
                   )}
                 </div>
@@ -728,7 +864,7 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                 <div>
                   <span className="mb-2 block text-xs font-medium text-slate-500">CHOOSE FONT STYLE</span>
                   <div className="grid gap-2 sm:grid-cols-3">
-                    {(['GreatVibes', 'AlexBrush', 'Playball'] as const).map((font) => (
+                    {(['GreatVibes', 'AlexBrush', 'Playball', 'DancingScript', 'Parisienne', 'HerrVonMuellerhoff'] as const).map((font) => (
                       <button
                         key={font}
                         onClick={() => setSelectedFont(font)}
@@ -740,6 +876,113 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                       >
                         <span className={`${fontStyles[font]} text-slate-800`}>
                           {typedName || 'Signature'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* HR Signature Panel */}
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">HR / Authorized Signatory</h3>
+                <input
+                  type="text"
+                  value={hrName}
+                  onChange={(e) => {
+                    setHrName(e.target.value);
+                    setHrTypedName(e.target.value);
+                  }}
+                  placeholder="HR Signatory Name"
+                  className="mt-1 rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs focus:bg-white focus:outline-none"
+                />
+              </div>
+              <div className="flex gap-2 rounded-lg bg-slate-100 p-1 self-start">
+                <button
+                  onClick={() => setHrSignatureMode('draw')}
+                  className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
+                    hrSignatureMode === 'draw' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  <Brush className="h-3.5 w-3.5" />
+                  Draw
+                </button>
+                <button
+                  onClick={() => setHrSignatureMode('type')}
+                  className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
+                    hrSignatureMode === 'type' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  <Edit3 className="h-3.5 w-3.5" />
+                  Type
+                </button>
+              </div>
+            </div>
+
+            {hrSignatureMode === 'draw' ? (
+              <div className="space-y-3">
+                <div className="relative overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50">
+                  <canvas
+                    ref={hrCanvasRef}
+                    width={500}
+                    height={120}
+                    onMouseDown={startHrDrawing}
+                    onMouseMove={drawHr}
+                    onMouseUp={stopHrDrawing}
+                    onMouseLeave={stopHrDrawing}
+                    onTouchStart={startHrDrawing}
+                    onTouchMove={drawHr}
+                    onTouchEnd={stopHrDrawing}
+                    className="h-[120px] w-full cursor-crosshair bg-slate-50 touch-none"
+                  />
+                  {!hrCanvasHasDrawing && (
+                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-slate-400">
+                      <Brush className="mb-1 h-5 w-5 opacity-40 animate-pulse" />
+                      <span className="text-xs">Draw HR Signature</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={clearHrCanvas}
+                    className="flex items-center gap-1 rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200 transition-colors"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Clear Draw
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <label className="block text-sm">
+                  <span className="mb-1 block font-medium text-slate-600 font-semibold">HR Typed Signature</span>
+                  <input
+                    type="text"
+                    value={hrTypedName}
+                    onChange={(e) => setHrTypedName(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                  />
+                </label>
+                
+                <div>
+                  <span className="mb-2 block text-xs font-medium text-slate-500">CHOOSE FONT STYLE</span>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {(['GreatVibes', 'AlexBrush', 'Playball', 'DancingScript', 'Parisienne', 'HerrVonMuellerhoff'] as const).map((font) => (
+                      <button
+                        key={font}
+                        onClick={() => setHrSelectedFont(font)}
+                        className={`rounded-lg border px-3 py-3 text-center transition-all ${
+                          hrSelectedFont === font
+                            ? 'border-teal-500 bg-teal-50/50 ring-1 ring-teal-500'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className={`${fontStyles[font]} text-slate-800`}>
+                          {hrTypedName || 'HR Signature'}
                         </span>
                       </button>
                     ))}
@@ -785,7 +1028,7 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                   Non-Disclosure Agreement (NDA)
                 </h4>
                 <p className="text-xs text-slate-700">
-                  This Non-Disclosure Agreement ("Agreement") is entered into between <strong>BenchMark</strong> ("Company") and the undersigned individual <strong>{name || '[Employee Name]'}</strong> ("Recipient/Employee") on the date of signing.
+                  This Non-Disclosure Agreement ("Agreement") is entered into between <strong>BenchMark</strong> ("Company") and the undersigned individual <strong>{fullEmployeeNameString || '[Employee Name]'}</strong> ("Recipient/Employee") on the date of signing.
                 </p>
 
                 {/* dividing line */}
@@ -879,9 +1122,18 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                 <div className="pt-6 border-t border-slate-200 grid grid-cols-2 gap-4 text-xs">
                   <div className="space-y-1">
                     <p className="font-bold text-slate-900 text-sm">For Benchmark</p>
-                    <p className="mt-2 text-slate-600">Authorized Signatory: __________________</p>
+                    <p className="mt-2 text-slate-600">Authorized Signatory: {hrName}</p>
                     <p className="text-slate-600">Designation: HR Department</p>
-                    <p className="text-slate-600">Signature & Company Stamp: __________________</p>
+                    <div className="h-10 flex items-center border border-dashed border-slate-200 bg-slate-50 px-2 rounded mt-1 overflow-hidden">
+                      {hrSignatureMode === 'draw' && hrCanvasHasDrawing && hrCanvasRef.current ? (
+                        <img src={hrCanvasRef.current.toDataURL()} className="max-h-8 object-contain" alt="HR Sign" />
+                      ) : hrSignatureMode === 'type' && hrTypedName ? (
+                        <span className={`${fontStyles[hrSelectedFont]} text-slate-900`}>{hrTypedName}</span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400">HR Signature placeholder</span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-slate-600">Signature & Stamp: __________________</p>
                     <p className="text-slate-600">Date: {formatPakistaniDate(joiningDate) || '[Date]'}</p>
                   </div>
                   <div className="space-y-1">
@@ -921,7 +1173,7 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                 </div>
 
                 <div className="pt-2 text-xs">
-                  <p className="font-bold text-slate-900 text-sm">Mr. {name || '[Employee Name]'}</p>
+                  <p className="font-bold text-slate-900 text-sm">Mr. {fullEmployeeNameString || '[Employee Name]'}</p>
                   <p className="text-slate-500">Project: {projectName || '[Project Name]'}</p>
                 </div>
 
@@ -956,7 +1208,7 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
 
                 <div className="pt-4 border-t text-xs">
                   <p>Sincerely,</p>
-                  <p className="font-bold">Ali Shan</p>
+                  <p className="font-bold">{hrName}</p>
                   <p className="text-slate-500">Human Resource Department</p>
                 </div>
 
@@ -974,11 +1226,19 @@ In case repeated mistakes are observed and sufficient improvement is not shown d
                           <span className="text-[10px] text-slate-400">Signature placeholder</span>
                         )}
                       </div>
-                      <p className="mt-1 text-[10px] text-slate-500">Signature</p>
+                      <p className="mt-1 text-[10px] text-slate-500">Signature (Employee)</p>
                     </div>
                     <div>
-                      <p className="font-semibold text-slate-800 border-b pb-2 pt-2">{formatPakistaniDate(joiningDate)}</p>
-                      <p className="text-[10px] text-slate-500">Date</p>
+                      <div className="h-10 flex items-center border border-dashed border-slate-200 bg-white px-2 rounded overflow-hidden">
+                        {hrSignatureMode === 'draw' && hrCanvasHasDrawing && hrCanvasRef.current ? (
+                          <img src={hrCanvasRef.current.toDataURL()} className="max-h-8 object-contain" alt="HR Sign" />
+                        ) : hrSignatureMode === 'type' && hrTypedName ? (
+                          <span className={`${fontStyles[hrSelectedFont]} text-slate-900`}>{hrTypedName}</span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">HR Signature placeholder</span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-[10px] text-slate-500">HR Stamp / Sign</p>
                     </div>
                   </div>
                 </div>
