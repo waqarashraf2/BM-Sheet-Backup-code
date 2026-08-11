@@ -621,7 +621,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                             value={cubiBwBugsCount}
                             onChange={(e) => setCubiBwBugsCount(e.target.value)}
                           />
-                          <label className="mt-2 mb-1 block text-xs font-semibold text-slate-700">BW Bugs Comment</label>
+                          <label className="mt-2 mb-1 block text-xs font-semibold text-slate-700">BW Comment</label>
                           <textarea
                             rows={2}
                             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
