@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertCircle, Calendar, Download, Edit, FileText, Search, ShieldCheck, Trash2, Upload, UserCheck, UserX, Users } from 'lucide-react';
 import { useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import { AnimatedPage, Button, Modal, PageHeader, StatusBadge } from '../../components/ui';
 import { hrService } from '../../services';
 import type { RootState } from '../../store/store';
@@ -95,6 +96,7 @@ type UserDetail = {
 
 export default function HRDashboard() {
   const currentUser = useSelector((state: RootState) => state.auth.user);
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'users'>('dashboard');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [stats, setStats] = useState<HrStats>({ total: 0, active: 0, inactive: 0, absent: 0, present: 0 });
@@ -1390,6 +1392,18 @@ export default function HRDashboard() {
                       <div className="mt-2 text-xs text-slate-400">
                         {(documentFiles[type.value]?.length || 0) > 0 ? `${documentFiles[type.value]?.length} selected` : 'No file selected'}
                       </div>
+                      {(type.value === 'nda' || type.value === 'contract_letter') && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            navigate(`/hr-panel/generate/${selectedDetail.user.id}/${type.value}`);
+                          }}
+                          className="mt-2 w-full rounded bg-teal-600 px-2 py-1.5 text-[11px] font-medium text-white hover:bg-teal-700 transition-colors cursor-pointer text-center"
+                        >
+                          Generate {type.value === 'nda' ? 'NDA' : 'Offer Letter'}
+                        </button>
+                      )}
                     </label>
                   ))}
                 </div>

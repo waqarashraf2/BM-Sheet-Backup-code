@@ -19,6 +19,7 @@ const ProjectManagerDashboard = lazy(() => import('./pages/Dashboard/ProjectMana
 const WorkerDashboard = lazy(() => import('./pages/Dashboard/WorkerDashboard'));
 const AccountsManagerDashboard = lazy(() => import('./pages/Dashboard/AccountsManagerDashboard'));
 const HRDashboard = lazy(() => import('./pages/Dashboard/HRDashboard'));
+const DocumentGenerator = lazy(() => import('./pages/Dashboard/DocumentGenerator'));
 const BatchStatus = lazy(() => import('./pages/Dashboard/BatchStatus'));
 const ColumnAssignment = lazy(() => import('./pages/Dashboard/ColumnAssignment'));
 
@@ -168,6 +169,16 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager', 'hr']}>
                   <UserManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="hr-panel/generate/:userId/:docType"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'hr', 'director']}>
+                  <Suspense fallback={<PageLoader />}>
+                    <DocumentGenerator />
+                  </Suspense>
                 </ProtectedRoute>
               }
             />
