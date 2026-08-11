@@ -612,7 +612,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                       <p className="mb-3 text-[11px] text-slate-500">These values are saved with the QA submission comment for now.</p>
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="rounded-lg border border-slate-200 bg-white p-3">
-                          <label className="mb-1 block text-xs font-semibold text-slate-700">BW Bugs Count</label>
+                          <label className="mb-1 block text-xs font-semibold text-slate-700">BW Count</label>
                           <input
                             type="number"
                             min="0"

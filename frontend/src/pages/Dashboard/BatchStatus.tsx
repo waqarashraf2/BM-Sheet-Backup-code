@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RotateCw } from 'lucide-react';
 import { dashboardService } from '../../services';
 import CubiQaReport from './CubiQaReport';
 
@@ -299,37 +299,48 @@ plansRemaining.forEach((p) => {
               </div>
             )}
 
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <input
-                type="date"
-                value={selectedDate}
-                className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 outline-none transition focus:border-[#2AA7A0] focus:ring-2 focus:ring-[#2AA7A0]/15"
-                onChange={(e) => {
-                  setSelectedDate(e.target.value);
-                  fetchData(e.target.value);
-                }}
-              />
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  value={selectedDate}
+                  className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 outline-none transition focus:border-[#2AA7A0] focus:ring-2 focus:ring-[#2AA7A0]/15"
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value);
+                    fetchData(e.target.value);
+                  }}
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setShowCubiQaReport((value) => !value)}
+                  className={`h-8 rounded-lg px-3 text-xs font-semibold shadow-sm transition focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25 ${
+                    showCubiQaReport
+                      ? 'bg-slate-900 text-white hover:bg-slate-800'
+                      : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  Cubi QA Report
+                </button>
+
+                <button
+                  type="button"
+                  onClick={copyText}
+                  className="h-8 rounded-lg bg-[#2AA7A0] px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-[#238f89] focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25"
+                >
+                  Copy Report
+                </button>
+              </div>
 
               <button
                 type="button"
-                onClick={() => setShowCubiQaReport((value) => !value)}
-                className={`h-8 rounded-lg px-3 text-xs font-semibold shadow-sm transition focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25 ${
-                  showCubiQaReport
-                    ? 'bg-slate-900 text-white hover:bg-slate-800'
-                    : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50'
-                }`}
+                onClick={() => fetchData(selectedDate)}
+                disabled={loading}
+                className="h-8 rounded-lg bg-white ring-1 ring-slate-200 px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25 flex items-center gap-1.5 disabled:opacity-50"
               >
-                Cubi QA Report
+                <RotateCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
               </button>
-
-              <button
-                type="button"
-                onClick={copyText}
-                className="h-8 rounded-lg bg-[#2AA7A0] px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-[#238f89] focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25"
-              >
-                Copy Report
-              </button>
-              
             </div>
           </div>
 

@@ -40,10 +40,8 @@ class CubiQaReportController extends Controller
         if (!empty($shiftOrderIds)) {
             $workItemsQuery->whereIn('order_id', $shiftOrderIds);
         } else {
-            // Fallback to completed_at window if no orders found in received_at range
-            $workItemsQuery->whereNotNull('completed_at')
-                ->where('completed_at', '>=', $shiftStartUtc)
-                ->where('completed_at', '<', $shiftEndUtc);
+            // Force empty result set if no orders were received in this shift
+            $workItemsQuery->whereRaw('1 = 0');
         }
 
         $workItems = $workItemsQuery->orderBy('completed_at', 'desc')

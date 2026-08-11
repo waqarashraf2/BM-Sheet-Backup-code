@@ -298,8 +298,8 @@ if ($request->query('date')) {
                 ->whereNotNull('qa_name')
                 ->where('qa_name', '!=', '')
                 ->where('final_upload', 'yes')
-                ->where('ausFinaldate', '>=', $shiftStartLocal)
-                ->where('ausFinaldate', '<', $shiftEndLocal)
+                ->where('received_at', '>=', $shiftStartLocal)
+                ->where('received_at', '<', $shiftEndLocal)
                 ->selectRaw('qa_name as name, COUNT(*) as done_count')
                 ->groupBy('qa_name')
                 ->pluck('done_count', 'name');
