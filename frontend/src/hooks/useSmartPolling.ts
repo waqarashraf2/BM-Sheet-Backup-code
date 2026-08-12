@@ -39,11 +39,12 @@ export function useSmartPolling({
   onDataChanged,
   enabled = true,
 }: SmartPollingOptions) {
+  const effectiveInterval = Math.max(interval, 60_000);
   const isAuthenticated = useSelector((s: RootState) => !!s.auth.token);
   const hashRef = useRef<string>('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const errorCountRef = useRef(0);
-  const currentIntervalRef = useRef(interval);
+  const currentIntervalRef = useRef(effectiveInterval);
   const isVisibleRef = useRef(!document.hidden);
   const isPollingRef = useRef(false);
   const onDataChangedRef = useRef(onDataChanged);
@@ -69,7 +70,7 @@ export function useSmartPolling({
       // Reset error state on success
       if (errorCountRef.current > 0) {
         errorCountRef.current = 0;
-        currentIntervalRef.current = interval;
+        currentIntervalRef.current = effectiveInterval;
         // Restart with normal interval
         restartInterval();
       }
@@ -91,14 +92,14 @@ export function useSmartPolling({
       }
       // Backoff
       currentIntervalRef.current = Math.min(
-        interval * Math.pow(ERROR_BACKOFF_MULTIPLIER, errorCountRef.current),
+        effectiveInterval * Math.pow(ERROR_BACKOFF_MULTIPLIER, errorCountRef.current),
         MAX_INTERVAL
       );
       restartInterval();
     } finally {
       isPollingRef.current = false;
     }
-  }, [isAuthenticated, projectIds.join(','), scope, interval]);
+  }, [isAuthenticated, projectIds.join(','), scope, effectiveInterval]);
 
   const stopInterval = useCallback(() => {
     if (intervalRef.current) {
@@ -122,13 +123,13 @@ export function useSmartPolling({
 
     // Reset hash when dependencies change (so first poll doesn't trigger false change)
     hashRef.current = '';
-    currentIntervalRef.current = interval;
+    currentIntervalRef.current = effectiveInterval;
 
     // Initial poll (gets baseline hash)
     poll();
 
     // Start interval
-    intervalRef.current = setInterval(poll, interval);
+    intervalRef.current = setInterval(poll, effectiveInterval);
 
     // Page Visibility handling — pause when hidden, resume when visible
     const handleVisibility = () => {

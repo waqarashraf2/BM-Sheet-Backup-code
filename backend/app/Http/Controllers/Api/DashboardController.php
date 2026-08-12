@@ -4859,7 +4859,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             if ($response->getStatusCode() === 200) {
                 $responseData = $response->getData(true);
                 try {
-                    Cache::put($cacheKey, $responseData, now()->addSeconds(5));
+                    Cache::put($cacheKey, $responseData, now()->addSeconds(15));
                 } catch (\Throwable $e) {
                     // Fall back to the uncached response when the cache store is unavailable.
                 }
@@ -5044,11 +5044,22 @@ $endDate = $request->input('end_date');
                 ) ?? $genericRange;
         }
 
-        // Keep an unfiltered UNION for the independent seven-day summary.
+        // Keep an unfiltered UNION for the independent seven-day summary (restricted to the last 7 days).
+        $sevenDaysAgo = today()->subDays(6)->toDateString();
+        $dateStatsRanges = [];
+        foreach ($projects as $project) {
+            $dateStatsRanges[(int) $project->id] = [
+                'type' => 'between',
+                'start' => $sevenDaysAgo . ' 00:00:00',
+                'end' => now()->format('Y-m-d H:i:s')
+            ];
+        }
+
         $rawUnionForDateStats = $this->buildQueueUnionQuery(
             $projectIds,
             $selectCols,
-            $optionalCols
+            $optionalCols,
+            $dateStatsRanges
         );
 
         // Build a date-filtered UNION for the current sheet and worker metrics.

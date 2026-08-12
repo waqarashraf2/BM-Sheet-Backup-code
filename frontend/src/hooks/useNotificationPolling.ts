@@ -3,7 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import type { RootState, AppDispatch } from '../store/store';
 import { fetchUnreadCount } from '../store/slices/notificationSlice';
 
-const POLL_INTERVAL = 30_000; // 30 seconds
+const POLL_INTERVAL = 90_000; // 90 seconds
 const MAX_CONSECUTIVE_ERRORS = 3;
 
 export function useNotificationPolling() {
