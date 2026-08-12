@@ -5467,6 +5467,8 @@ if ($statusFilter === 'pending_by_drawer') {
         $assignerMap = [];
         if (!empty($orderIds)) {
             try {
+                $logs = [];
+                /*
                 $logs = DB::table('activity_logs')
                     ->leftJoin('users', 'activity_logs.user_id', '=', 'users.id')
                     ->whereIn('activity_logs.action', [
@@ -5480,6 +5482,7 @@ if ($statusFilter === 'pending_by_drawer') {
                     ->select('activity_logs.project_id', 'activity_logs.model_id', 'activity_logs.entity_id', 'activity_logs.action', 'activity_logs.new_values', 'activity_logs.user_id', 'users.name as user_name', 'activity_logs.id')
                     ->orderBy('activity_logs.id', 'desc')
                     ->get();
+                */
 
                 foreach ($logs as $log) {
                     $oid = (int) ($log->model_id ?: $log->entity_id);
