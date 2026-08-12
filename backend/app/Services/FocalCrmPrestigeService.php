@@ -729,7 +729,7 @@ class FocalCrmPrestigeService
                 }
 
                 if (in_array($response->status(), [400, 409, 422], true)) {
-                    Log::warning('FocalCRM Prestige accept did not succeed but may already be accepted or invalid', [
+                    Log::debug('FocalCRM Prestige accept did not succeed but may already be accepted or invalid', [
                         'job_order_id' => $jobOrderId,
                         'url' => $acceptUrl,
                         'status' => $response->status(),

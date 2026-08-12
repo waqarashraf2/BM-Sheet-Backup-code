@@ -102,19 +102,20 @@ Schedule::command('scrape:focalxactimate')
     ->withoutOverlapping()
     ->runInBackground();
 
-// FocalCRM - Project 1 (PropertyVision FloorPlan)
+// FocalCRM - Project 1 (PropertyVision FloorPlan) //1
 Schedule::command('focalcrm:import')
     ->everyTenMinutes()
     ->withoutOverlapping()
     ->runInBackground();
 
+// FocalCRM - PB Photo Scraper //2
 Schedule::command('scrape:focalpbphoto')
     ->everyTenMinutes()
     ->withoutOverlapping()
     ->runInBackground();
     
     
-// FocalCRM - Project 22 (Photo Jobs - PH_2_LAYER)
+// FocalCRM - Project 22 (Photo Jobs - PH_2_LAYER) //3
 Schedule::command('focalcrm:photo-import')
     ->everyTenMinutes()
     ->withoutOverlapping()
@@ -122,7 +123,7 @@ Schedule::command('focalcrm:photo-import')
     
     
     
-// FocalCRM - Project 25 (Prestige Photography)
+// FocalCRM - Project 25 (Prestige Photography) //4
 Schedule::command('focalcrm:import-prestige')
     ->everyTenMinutes()
     ->withoutOverlapping()
@@ -137,7 +138,7 @@ Schedule::command('focalai:import')
     ->runInBackground();
 
     
-// Focal RTV - Project 26 (Photography)
+// Focal RTV - Project 26 (Photography) //5
 Schedule::command('focalrtv:import')
     ->everyTenMinutes()
     ->withoutOverlapping()

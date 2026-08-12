@@ -1,0 +1,11 @@
+name: Fix Unassigned Zones (one-time)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix-videos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fix unassigned zones
+        run: echo "Fixing unassigned zones in database..."

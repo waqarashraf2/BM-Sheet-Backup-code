@@ -377,7 +377,7 @@ class FocalPb2ScraperService
                     ? 'duplicate_client_portal_id'
                     : 'duplicate_order_number';
 
-                Log::warning('FocalPb2: Skipped row during insert (duplicate)', [
+                Log::debug('FocalPb2: Skipped row during insert (duplicate)', [
                     'reason' => $reason,
                     'client_portal_id' => $portalId,
                     'order_number' => $orderNumber,
@@ -402,7 +402,7 @@ class FocalPb2ScraperService
                 // Duplicate key from DB constraint = expected skip
                 if (str_contains($e->getMessage(), '23000') || str_contains($e->getMessage(), 'Duplicate entry')) {
                     $skipped++;
-                    Log::warning('FocalPb2: Skipped row during insert (duplicate from DB constraint)', [
+                    Log::debug('FocalPb2: Skipped row during insert (duplicate from DB constraint)', [
                         'reason' => 'duplicate_db_constraint',
                         'error' => $e->getMessage(),
                         'client_portal_id' => $portalId,
