@@ -144,7 +144,7 @@ if ($request->query('date')) {
         $rawUnion = $this->buildQueueUnionQuery(
             $projectIds,
             $selectCols,
-            []
+            $batchOptionalCols
         );
 
         $untouchedRawUnion = $this->buildQueueUnionQuery(

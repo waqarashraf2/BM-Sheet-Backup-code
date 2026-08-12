@@ -201,31 +201,70 @@ class UserController extends Controller
     {
         $user = User::findOrFail($id);
         $authUser = $request->user();
-
-        // PM can only update users in their team/project scope — NOT themselves
-        if ($authUser->role === 'project_manager') {
-            // Block self-edit — only OM can edit a PM's own record
-            if ((int)$user->id === (int)$authUser->id) {
-                return response()->json(['message' => 'You cannot edit your own account. Contact your Operations Manager.'], 403);
-            }
-            $canEdit = false;
-            if ($authUser->team_id && $user->team_id === $authUser->team_id) {
-                $canEdit = true;
-            } elseif (!$authUser->team_id) {
-                $managedIds = $authUser->getManagedProjectIds();
-                if (in_array($user->project_id, $managedIds)) {
-                    $canEdit = true;
-                }
-            }
-            if (!$canEdit) {
-                return response()->json(['message' => 'You can only edit users in your team.'], 403);
-            }
-        }
-
         $oldValues = $user->toArray();
         $oldProjectId = $user->project_id;
+        $isSelf = ((int)$user->id === (int)$authUser->id);
 
-        $data = $request->validated();
+        if ($isSelf) {
+            // Self-update is strictly restricted to password changing to prevent privilege escalation.
+            $validated = $request->validated();
+            $data = array_intersect_key($validated, array_flip(['password', 'password_confirmation']));
+            
+            if (empty($data['password'])) {
+                return response()->json(['message' => 'To update your own profile, you can only change your password.'], 400);
+            }
+        } else {
+            // Apply role-based access control when editing others
+            if ($authUser->role === 'project_manager') {
+                $canEdit = false;
+                if ($authUser->team_id && $user->team_id === $authUser->team_id) {
+                    $canEdit = true;
+                } elseif (!$authUser->team_id) {
+                    $managedIds = $authUser->getManagedProjectIds();
+                    if (in_array($user->project_id, $managedIds)) {
+                        $canEdit = true;
+                    }
+                }
+
+                // PM cannot edit other PMs, OMs, Directors, CEOs, HR, etc.
+                if (in_array($user->role, ['project_manager', 'operations_manager', 'director', 'ceo', 'hr', 'accounts_manager'])) {
+                    $canEdit = false;
+                }
+
+                if (!$canEdit) {
+                    return response()->json(['message' => 'You can only edit workers in your team/project.'], 403);
+                }
+            } elseif ($authUser->role === 'operations_manager') {
+                $managedIds = $authUser->getManagedProjectIds();
+                $canEdit = false;
+
+                // OM can edit workers in their managed projects
+                if (in_array($user->project_id, $managedIds)) {
+                    $canEdit = true;
+                } elseif ($user->role === 'project_manager') {
+                    // OM can edit PMs assigned to their projects
+                    $pmProjectIds = $user->getManagedProjectIds();
+                    if (array_intersect($managedIds, $pmProjectIds)) {
+                        $canEdit = true;
+                    }
+                }
+
+                // OM cannot edit other OMs, Directors, CEOs, HR, or accounts_manager
+                if (in_array($user->role, ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager'])) {
+                    $canEdit = false;
+                }
+
+                if (!$canEdit) {
+                    return response()->json(['message' => 'You can only edit PMs and workers in your projects.'], 403);
+                }
+            } elseif ($authUser->role === 'director' || $authUser->role === 'ceo') {
+                // Directors and CEOs can edit any user's profile/password
+            } else {
+                return response()->json(['message' => 'Unauthorized.'], 403);
+            }
+
+            $data = $request->validated();
+        }
         if (!Schema::hasColumn('users', 'machine_id')) {
             unset($data['machine_id']);
         }
