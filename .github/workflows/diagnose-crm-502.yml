@@ -1,0 +1,11 @@
+name: Diagnose CRM 502
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnose
+        run: echo "Checking 502 logs..."

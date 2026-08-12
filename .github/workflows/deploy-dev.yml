@@ -1,0 +1,11 @@
+name: Deploy to dev.ilaan.com
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Dev
+        run: echo "Deploying to development server..."

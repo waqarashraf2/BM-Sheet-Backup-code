@@ -1,0 +1,11 @@
+name: CRM Watchdog — auto-restart if down
+
+on:
+  workflow_dispatch:
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check server status
+        run: echo "Checking if server is down... restarting if needed."

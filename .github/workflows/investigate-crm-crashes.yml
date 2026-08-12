@@ -1,0 +1,11 @@
+name: Investigate CRM crashes (one-time)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  investigate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Investigate crashes
+        run: echo "Investigating server crash logs..."

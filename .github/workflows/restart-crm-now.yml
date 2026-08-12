@@ -1,0 +1,19 @@
+name: Restart CRM now (emergency)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restart-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || '21098' }}
+          script: |
+            # Restart any queues or services if needed
+            php artisan queue:restart || true
