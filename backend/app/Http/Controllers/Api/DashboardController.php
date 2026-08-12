@@ -132,7 +132,6 @@ if ($request->query('date')) {
         $projectIds = $projects->pluck('id')->toArray();
 
         $selectCols = 'id, order_number, project_id, batch_number, received_at, workflow_state, assigned_to, drawer_id, completed_at, due_in';
-        $batchOptionalCols = ['rejection_type', 'fixing_started_at', 'fixing_completed_at'];
 
         // Match the Assignment dashboard's normalized deadline for project 16.
         // Its relative due_in values are stored two hours early during import.
@@ -144,13 +143,13 @@ if ($request->query('date')) {
         $rawUnion = $this->buildQueueUnionQuery(
             $projectIds,
             $selectCols,
-            $batchOptionalCols
+            []
         );
 
         $untouchedRawUnion = $this->buildQueueUnionQuery(
             $projectIds,
             $selectCols,
-            array_merge(['checker_id'], $batchOptionalCols)
+            ['checker_id']
         );
 
         /*
@@ -426,40 +425,10 @@ if ($request->query('date')) {
             ];
         }
 
-        $fixedOrderMin = $orders
-            ->filter(function ($o) {
-                return strtolower((string) ($o->rejection_type ?? '')) === 'pending'
-                    && !in_array((string) ($o->workflow_state ?? ''), ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER'], true)
-                    && !empty($o->due_in)
-                    && $o->batch_remaining_minutes !== null;
-            })
-            ->sortBy(fn($o) => (int) $o->batch_remaining_minutes)
+        $fixedMin = $batches
+            ->where('fixing', '>', 0)
+            ->sortBy('remaining_minutes')
             ->first();
-
-        $fixedMin = null;
-
-        if ($fixedOrderMin) {
-            $remainingMinutes = (int) $fixedOrderMin->batch_remaining_minutes;
-            $fixedMin = [
-                'batch_no' => $fixedOrderMin->batch_number,
-                'batch_label' => $fixedOrderMin->batch_number
-                    ? 'Batch ' . str_pad((string) $fixedOrderMin->batch_number, 2, '0', STR_PAD_LEFT)
-                    : null,
-                'order_number' => $fixedOrderMin->order_number,
-                'received_time' => $fixedOrderMin->received_at
-                    ? \Carbon\Carbon::parse($fixedOrderMin->received_at, 'Asia/Karachi')->format('h:i A')
-                    : null,
-                'remaining_minutes' => $remainingMinutes,
-                'remaining_time' => floor($remainingMinutes / 60) . 'h ' . ($remainingMinutes % 60) . 'm',
-                'plans' => 1,
-                'done' => 0,
-                'pending' => 1,
-                'fixing' => 0,
-                'drawing' => $fixedOrderMin->workflow_state === 'IN_DRAW' ? 1 : 0,
-                'min_remaining_minutes' => $remainingMinutes,
-                'max_remaining_minutes' => $remainingMinutes,
-            ];
-        }
 
         if ($fixedMin) {
             $fixedMin['remaining_time'] =
@@ -4676,174 +4645,6 @@ $userCounts = User::whereIn('project_id', $projectIds)
         }
     }
 
-    public function assignmentDashboardCsvExport(Request $request, string $queueName)
-    {
-        @set_time_limit(0);
-
-        $user = $request->user();
-        $queueName = urldecode($queueName);
-
-        $projects = Project::where('queue_name', $queueName)
-            ->where('status', 'active')
-            ->get();
-
-        if ($projects->isEmpty()) {
-            return response()->json(['message' => 'Queue not found.'], 404);
-        }
-
-        $projectIds = $projects->pluck('id')->toArray();
-
-        if (in_array($user->role, ['ceo', 'director'], true)) {
-            // Full access.
-        } elseif ($user->role === 'operations_manager') {
-            $omProjectIds = $user->getManagedProjectIds();
-            if (!empty($omProjectIds)) {
-                $projectIds = array_intersect($projectIds, $omProjectIds);
-                if (empty($projectIds)) {
-                    return response()->json(['message' => 'Access denied.'], 403);
-                }
-            }
-        } elseif ($user->role === 'project_manager') {
-            $pmProjectIds = $user->getManagedProjectIds();
-            $projectIds = array_intersect($projectIds, $pmProjectIds);
-            if (empty($projectIds)) {
-                return response()->json(['message' => 'Access denied.'], 403);
-            }
-        } elseif ($user->role === 'qa' || $user->role === 'live_qa') {
-            if (!in_array($user->project_id, $projectIds)) {
-                return response()->json(['message' => 'Access denied.'], 403);
-            }
-            $projectIds = [$user->project_id];
-        } else {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
-        $projects = $projects->whereIn('id', $projectIds)->values();
-        $primaryProject = $projects->first();
-        $workflowType = $primaryProject->workflow_type ?? 'FP_3_LAYER';
-
-        $statusFilter = (string) $request->input('status', 'all');
-        $dateFilter = $request->input('date');
-        $startDate = $request->input('start_date');
-        $endDate = $request->input('end_date');
-        $search = $request->input('search');
-        $assignedTo = $request->input('assigned_to');
-
-        $columns = $this->parseAssignmentCsvColumns($request);
-        $headers = array_map(fn ($column) => $column['label'], $columns);
-
-        $selectCols = 'id, order_number, code, plan_type, project_id, client_reference, address, client_name, instruction,'
-            . 'workflow_state, priority, assigned_to, '
-            . 'drawer_id, drawer_name, checker_id, checker_name, qa_id, qa_name, '
-            . 'dassign_time, cassign_time, drawer_done, checker_done, final_upload, '
-            . 'drawer_date, checker_date, ausFinaldate, '
-            . 'amend, recheck_count, is_on_hold, '
-            . 'due_in, due_date, '
-            . 'received_at, delivered_at, created_at';
-
-        $optionalCols = [
-            'VARIANT_no', 'batch_number', 'date', 'bedrooms', 'client_portal_id', 'orignal_image_id', 'clint_order_number',
-            'company', 'branch', 'photographer',
-            'current_layer', 'file_uploader_id', 'file_uploader_name',
-            'fassign_time', 'file_uploaded', 'file_upload_date',
-            'images', 'total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count', 'edited_images_count', 'vf_count',
-            'flambient_order_count', 'day_to_dusk_count', 'object_removal_count',
-            'parent_company', 'CustomerParentCompany',
-            'it_datetime',
-            'editor_portal_account_id', 'qc_portal_account_id',
-            'editor_login_name', 'qc_account_name',
-            'fixing_started_at', 'fixing_completed_at', 'fixing_time_seconds',
-        ];
-
-        $appTimezone = config('app.timezone');
-        $genericRange = $this->buildAssignmentDashboardGenericRange($startDate, $endDate, $dateFilter, $appTimezone);
-        $projectReceivedAtRanges = [];
-        foreach ($projects as $project) {
-            $projectReceivedAtRanges[(int) $project->id] =
-                $this->buildAssignmentDashboardProjectRange(
-                    $project,
-                    $startDate,
-                    $endDate,
-                    $dateFilter,
-                    $appTimezone
-                ) ?? $genericRange;
-        }
-
-        $rawUnion = $this->buildQueueUnionQuery($projectIds, $selectCols, $optionalCols, $projectReceivedAtRanges);
-        $unionQuery = "SELECT qo.id, qo.order_number, qo.client_portal_id, qo.orignal_image_id, qo.clint_order_number, qo.VARIANT_no, qo.batch_number, qo.date, qo.bedrooms, qo.images, qo.total_raw_files, qo.hdr_images_count, qo.single_images_count, qo.final_images_count, qo.edited_images_count, qo.vf_count, qo.flambient_order_count, qo.day_to_dusk_count, qo.object_removal_count, qo.parent_company, qo.CustomerParentCompany, qo.it_datetime, qo.editor_portal_account_id, qo.qc_portal_account_id, qo.editor_login_name, qo.qc_account_name, qo.fixing_started_at, qo.fixing_completed_at, qo.fixing_time_seconds, qo.project_id, qo.client_reference, qo.address, qo.client_name, qo.company, qo.branch, qo.photographer, qo.code, qo.plan_type, qo.instruction,"
-            . "COALESCE(NULLIF(coa.current_layer,''), qo.current_layer) as current_layer, "
-            . "COALESCE(coa.workflow_state, qo.workflow_state) as workflow_state, "
-            . "qo.priority, "
-            . "COALESCE(coa.assigned_to, qo.assigned_to) as assigned_to, "
-            . "COALESCE(coa.drawer_id, qo.drawer_id) as drawer_id, "
-            . "COALESCE(NULLIF(coa.drawer_name,''), qo.drawer_name) as drawer_name, "
-            . "COALESCE(coa.checker_id, qo.checker_id) as checker_id, "
-            . "COALESCE(NULLIF(coa.checker_name,''), qo.checker_name) as checker_name, "
-            . "COALESCE(coa.file_uploader_id, qo.file_uploader_id) as file_uploader_id, "
-            . "COALESCE(NULLIF(coa.file_uploader_name,''), qo.file_uploader_name) as file_uploader_name, "
-            . "COALESCE(coa.qa_id, qo.qa_id) as qa_id, "
-            . "COALESCE(NULLIF(coa.qa_name,''), qo.qa_name) as qa_name, "
-            . "COALESCE(coa.dassign_time, qo.dassign_time) as dassign_time, "
-            . "COALESCE(coa.cassign_time, qo.cassign_time) as cassign_time, "
-            . "COALESCE(coa.fassign_time, qo.fassign_time) as fassign_time, "
-            . "COALESCE(coa.drawer_done, qo.drawer_done) as drawer_done, "
-            . "COALESCE(coa.checker_done, qo.checker_done) as checker_done, "
-            . "COALESCE(coa.file_uploaded, qo.file_uploaded) as file_uploaded, "
-            . "COALESCE(coa.final_upload, qo.final_upload) as final_upload, "
-            . "COALESCE(coa.drawer_date, qo.drawer_date) as drawer_date, "
-            . "COALESCE(coa.checker_date, qo.checker_date) as checker_date, "
-            . "COALESCE(coa.file_upload_date, qo.file_upload_date) as file_upload_date, "
-            . "COALESCE(coa.ausFinaldate, qo.ausFinaldate) as ausFinaldate, "
-            . "qo.amend, qo.recheck_count, qo.is_on_hold, "
-            . "qo.due_in, qo.due_date, "
-            . "qo.received_at, qo.delivered_at, qo.created_at "
-            . "FROM ({$rawUnion}) as qo "
-            . "LEFT JOIN crm_order_assignments coa ON qo.project_id = coa.project_id AND qo.order_number = coa.order_number";
-
-        $query = DB::table(DB::raw("({$unionQuery}) as queue_orders"));
-        $this->applyAssignmentExportFilters($query, $projects, $projectIds, $workflowType, $statusFilter, $dateFilter, $startDate, $endDate, $search, $assignedTo);
-
-        $dueInOrderExpr = "CASE
-            WHEN project_id = 16 AND due_in IS NOT NULL THEN DATE_ADD(due_in, INTERVAL 2 HOUR)
-            ELSE due_in
-        END";
-        $priorityOrderExpr = "FIELD(priority, 'rush', 'urgent', 'priority', 'high', 'normal', 'low', '')";
-
-        $query
-            ->orderByRaw("{$priorityOrderExpr} ASC")
-            ->orderByRaw("CASE WHEN due_in IS NOT NULL THEN TIMESTAMPDIFF(SECOND, NOW(), {$dueInOrderExpr}) ELSE 999999999 END ASC")
-            ->orderBy('received_at', 'asc')
-            ->orderBy('project_id', 'asc')
-            ->orderBy('id', 'asc');
-
-        $filename = $this->assignmentCsvFilename($queueName, $startDate, $endDate, $request->input('month'));
-
-        return response()->streamDownload(function () use ($query, $columns, $headers) {
-            $handle = fopen('php://output', 'w');
-            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF));
-            fputcsv($handle, $headers);
-
-            $query->chunk(1000, function ($orders) use ($handle, $columns) {
-                $commentMap = $this->buildAssignmentDashboardCommentMap($orders);
-
-                foreach ($orders as $order) {
-                    $this->applyAssignmentExportDerivedFields($order, $commentMap);
-                    fputcsv($handle, array_map(
-                        fn ($column) => $this->assignmentCsvValue($order, $column['key']),
-                        $columns
-                    ));
-                }
-
-                fflush($handle);
-            });
-
-            fclose($handle);
-        }, $filename, [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-            'Cache-Control' => 'no-store, no-cache',
-        ]);
-    }
-
     private function buildAssignmentDashboardResponse(Request $request, string $queueName)
     {
         $user = $request->user();
@@ -5040,6 +4841,11 @@ $endDate = $request->input('end_date');
             . "COALESCE(NULLIF(coa.file_uploader_name,''), qo.file_uploader_name) as file_uploader_name, "
             . "COALESCE(coa.qa_id, qo.qa_id) as qa_id, "
             . "COALESCE(NULLIF(coa.qa_name,''), qo.qa_name) as qa_name, "
+            . "coa.drawer_assigned_by_name, "
+            . "coa.checker_assigned_by_name, "
+            . "coa.qa_assigned_by_name, "
+            . "coa.file_uploader_assigned_by_name, "
+            . "coa.assigned_by_name, "
             . "COALESCE(coa.dassign_time, qo.dassign_time) as dassign_time, "
             . "COALESCE(coa.cassign_time, qo.cassign_time) as cassign_time, "
             . "COALESCE(coa.fassign_time, qo.fassign_time) as fassign_time, "
@@ -5400,9 +5206,76 @@ if ($useDueInFirstOrdering) {
 
         $orders = $orderedQuery->get();
 
+        $orderIds = $orders->pluck('id')->filter()->all();
+        $assignerMap = [];
+        if (!empty($orderIds)) {
+            try {
+                $logs = DB::table('activity_logs')
+                    ->leftJoin('users', 'activity_logs.user_id', '=', 'users.id')
+                    ->whereIn('activity_logs.action', [
+                        'assign_role', 'ASSIGN', 'assign_to_drawer', 'assign_to_qa',
+                        'reassigned_work', 'bulk_assign_role', 'ORDER_REASSIGNED', 'QA_ASSIGNED'
+                    ])
+                    ->where(function ($q) use ($orderIds) {
+                        $q->whereIn('activity_logs.model_id', $orderIds)
+                          ->orWhereIn('activity_logs.entity_id', $orderIds);
+                    })
+                    ->select('activity_logs.project_id', 'activity_logs.model_id', 'activity_logs.entity_id', 'activity_logs.action', 'activity_logs.new_values', 'activity_logs.user_id', 'users.name as user_name', 'activity_logs.id')
+                    ->orderBy('activity_logs.id', 'desc')
+                    ->get();
+
+                foreach ($logs as $log) {
+                    $oid = (int) ($log->model_id ?: $log->entity_id);
+                    if (!$oid) continue;
+                    $pid = (int) $log->project_id;
+
+                    $keys = [];
+                    if ($pid) {
+                        $keys[] = "{$pid}:{$oid}";
+                    }
+                    $keys[] = "{$oid}";
+
+                    $newVals = is_string($log->new_values) ? json_decode($log->new_values, true) : (array) $log->new_values;
+                    $roleKey = strtolower(trim((string) ($newVals['role'] ?? '')));
+
+                    if (!$roleKey) {
+                        if ($log->action === 'assign_to_drawer') $roleKey = 'drawer';
+                        elseif ($log->action === 'assign_to_qa' || $log->action === 'QA_ASSIGNED') $roleKey = 'qa';
+                    }
+
+                    $assignerName = (!empty($log->user_id) && !empty($log->user_name)) ? $log->user_name : 'System Auto-Assign';
+
+                    if ($roleKey) {
+                        $col = match ($roleKey) {
+                            'drawer', 'designer' => 'drawer_assigned_by_name',
+                            'checker' => 'checker_assigned_by_name',
+                            'qa' => 'qa_assigned_by_name',
+                            'filler' => 'file_uploader_assigned_by_name',
+                            default => null,
+                        };
+                        if ($col) {
+                            foreach ($keys as $k) {
+                                if (!isset($assignerMap[$k][$col])) {
+                                    $assignerMap[$k][$col] = $assignerName;
+                                }
+                            }
+                        }
+                    }
+
+                    foreach ($keys as $k) {
+                        if (!isset($assignerMap[$k]['assigned_by_name'])) {
+                            $assignerMap[$k]['assigned_by_name'] = $assignerName;
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Ignore if schema mismatch
+            }
+        }
+
         $assignmentCommentMap = $this->buildAssignmentDashboardCommentMap($orders);
 
-        $orders->transform(function ($order) use ($assignmentCommentMap) {
+        $orders->transform(function ($order) use ($assignmentCommentMap, $assignerMap) {
             $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[(int) $order->project_id] ?? 0;
 
             if ($offsetHours !== 0 && !empty($order->due_in)) {
@@ -5433,6 +5306,25 @@ if ($useDueInFirstOrdering) {
                         ->diffInSeconds(Carbon::parse($order->fixing_completed_at), false);
                 } catch (\Throwable $e) {
                     $order->fixing_time_seconds = null;
+                }
+            }
+
+            $m = $assignerMap[$orderKey] ?? $assignerMap[(int) $order->id] ?? null;
+            if ($m) {
+                if (empty($order->drawer_assigned_by_name) && isset($m['drawer_assigned_by_name'])) {
+                    $order->drawer_assigned_by_name = $m['drawer_assigned_by_name'];
+                }
+                if (empty($order->checker_assigned_by_name) && isset($m['checker_assigned_by_name'])) {
+                    $order->checker_assigned_by_name = $m['checker_assigned_by_name'];
+                }
+                if (empty($order->qa_assigned_by_name) && isset($m['qa_assigned_by_name'])) {
+                    $order->qa_assigned_by_name = $m['qa_assigned_by_name'];
+                }
+                if (empty($order->file_uploader_assigned_by_name) && isset($m['file_uploader_assigned_by_name'])) {
+                    $order->file_uploader_assigned_by_name = $m['file_uploader_assigned_by_name'];
+                }
+                if (empty($order->assigned_by_name) && isset($m['assigned_by_name'])) {
+                    $order->assigned_by_name = $m['assigned_by_name'];
                 }
             }
 
@@ -5669,317 +5561,6 @@ if ($useDueInFirstOrdering) {
                 ->map(fn ($account) => $formatAccount($account, $pendingByQcAccount))
                 ->values(),
         ];
-    }
-
-    private function parseAssignmentCsvColumns(Request $request): array
-    {
-        $fallback = [
-            ['key' => '__received_at_datetime', 'label' => 'Received At Date Time'],
-            ['key' => '__due_in_datetime', 'label' => 'Due In Date Time'],
-            ['key' => 'date', 'label' => 'Date'],
-            ['key' => 'order_number', 'label' => 'Order id'],
-            ['key' => 'address', 'label' => 'Address'],
-            ['key' => 'priority', 'label' => 'Priority'],
-            ['key' => 'drawer_name', 'label' => 'Drawer'],
-            ['key' => 'checker_name', 'label' => 'Checker'],
-            ['key' => 'workflow_state', 'label' => 'Status'],
-        ];
-
-        $raw = $request->input('columns');
-        if (!is_string($raw) || trim($raw) === '') {
-            return $fallback;
-        }
-
-        $decoded = json_decode($raw, true);
-        if (!is_array($decoded)) {
-            return $fallback;
-        }
-
-        $columns = [];
-        foreach ($decoded as $column) {
-            if (!is_array($column)) {
-                continue;
-            }
-
-            $key = trim((string) ($column['key'] ?? ''));
-            $label = trim((string) ($column['label'] ?? ''));
-            if ($key === '' || $label === '') {
-                continue;
-            }
-
-            $columns[] = [
-                'key' => substr($key, 0, 100),
-                'label' => substr($label, 0, 160),
-            ];
-        }
-
-        return empty($columns) ? $fallback : array_slice($columns, 0, 80);
-    }
-
-    private function applyAssignmentExportFilters(
-        $query,
-        \Illuminate\Support\Collection $projects,
-        array $projectIds,
-        string $workflowType,
-        string $statusFilter,
-        ?string $dateFilter,
-        ?string $startDate,
-        ?string $endDate,
-        $search,
-        $assignedTo
-    ): void {
-        if ($statusFilter !== 'completed' && $statusFilter !== 'pending_by_drawer' && $statusFilter !== 'cancelled') {
-            $query->where('workflow_state', '!=', 'DELIVERED');
-            $query->where('workflow_state', '!=', 'PENDING_BY_DRAWER');
-        }
-
-        if (!in_array($statusFilter, ['completed', 'rejected', 'pending_by_drawer', 'cancelled'], true)) {
-            $query->where('workflow_state', '!=', 'DELIVERED')
-                ->where('workflow_state', 'NOT LIKE', '%REJECT%')
-                ->where('workflow_state', 'NOT LIKE', '%CANCEL%');
-        }
-
-        if ($statusFilter === 'completed') {
-            $query->where('workflow_state', 'DELIVERED');
-        } elseif ($statusFilter === 'rejected') {
-            $query->where('workflow_state', 'LIKE', '%REJECT%');
-        } elseif ($statusFilter === 'pending_by_drawer') {
-            $query->where('workflow_state', 'PENDING_BY_DRAWER');
-        } elseif ($statusFilter === 'cancelled') {
-            $query->where('workflow_state', 'LIKE', '%CANCEL%');
-        } elseif ($statusFilter === 'pending') {
-            $query->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
-                ->where(function ($q) use ($workflowType) {
-                    if ($workflowType === 'PH_2_LAYER') {
-                        $q->where('final_upload', '!=', 'yes')
-                            ->orWhereNull('final_upload');
-                    } else {
-                        $q->where('drawer_done', '!=', 'yes')
-                            ->orWhereNull('drawer_done');
-                    }
-                });
-        } elseif ($statusFilter === 'amends') {
-            $query->where('amend', 'yes');
-        } elseif ($statusFilter === 'unassigned') {
-            $query->whereNull('drawer_id')
-                ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED']);
-        }
-
-        $this->applyAssignmentDashboardDateFilter($query, $projects, $projectIds, $dateFilter, $startDate, $endDate);
-
-        if ($search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('order_number', 'like', "%{$search}%")
-                    ->orWhere('clint_order_number', 'like', "%{$search}%")
-                    ->orWhere('address', 'like', "%{$search}%")
-                    ->orWhere('client_reference', 'like', "%{$search}%")
-                    ->orWhere('client_name', 'like', "%{$search}%")
-                    ->orWhere('drawer_name', 'like', "%{$search}%")
-                    ->orWhere('checker_name', 'like', "%{$search}%")
-                    ->orWhere('file_uploader_name', 'like', "%{$search}%")
-                    ->orWhere('qa_name', 'like', "%{$search}%");
-            });
-        }
-
-        if ($assignedTo) {
-            $query->where(function ($q) use ($assignedTo) {
-                $q->where('assigned_to', $assignedTo)
-                    ->orWhere('drawer_id', $assignedTo)
-                    ->orWhere('checker_id', $assignedTo)
-                    ->orWhere('file_uploader_id', $assignedTo)
-                    ->orWhere('qa_id', $assignedTo);
-            });
-        }
-    }
-
-    private function applyAssignmentExportDerivedFields(object $order, array $commentMap): void
-    {
-        $offsetHours = self::ASSIGNMENT_DASHBOARD_DUE_IN_OFFSETS[(int) $order->project_id] ?? 0;
-        if ($offsetHours !== 0 && !empty($order->due_in)) {
-            try {
-                $order->due_in = Carbon::parse($order->due_in)->addHours($offsetHours)->toDateTimeString();
-            } catch (\Throwable $e) {
-                // Keep original value if parsing fails.
-            }
-        }
-
-        $orderKey = ((int) $order->project_id) . ':' . ((int) $order->id);
-        $commentMeta = $commentMap[$orderKey] ?? [];
-        $order->area = $commentMeta['area'] ?? null;
-        $order->total_images = $commentMeta['total_images'] ?? null;
-        $order->edited_images = $commentMeta['edited_images'] ?? null;
-        $order->final_images = $commentMeta['final_images'] ?? null;
-
-        if ((int) $order->project_id === 50) {
-            foreach ($this->project50ReportCountKeys() as $project50Key) {
-                $order->{$project50Key} = $commentMeta[$project50Key] ?? 0;
-            }
-        }
-    }
-
-    private function assignmentCsvValue(object $order, string $key): string
-    {
-        return match ($key) {
-            '__display_date' => $this->assignmentCsvDisplayDate($order),
-            '__received_at_datetime' => $this->assignmentCsvDateTime($order->received_at ?? null),
-            '__due_in_datetime' => $this->assignmentCsvDateTime($order->due_in ?? null),
-            '__received_time' => $this->assignmentCsvTime($order->received_at ?? null),
-            '__batch_number' => $this->assignmentCsvDefault($order->batch_number ?? null),
-            '__remaining' => $this->assignmentCsvRemaining($order->due_in ?? null, $order->received_at ?? null),
-            'received_at' => $this->assignmentCsvDate($order->received_at ?? null),
-            'workflow_state' => str_replace('_', ' ', (string) ($order->workflow_state ?: 'PENDING')),
-            'area_feet' => $this->assignmentCsvAreaPart($order->area ?? null, 'feet'),
-            'area_meter' => $this->assignmentCsvAreaPart($order->area ?? null, 'meter'),
-            'ph_total_images' => $this->assignmentCsvDefault($order->total_raw_files ?? $order->total_images ?? null),
-            'ph_edited_images' => $this->assignmentCsvDefault($order->edited_images_count ?? $order->edited_images ?? null),
-            'ph_final_images' => $this->assignmentCsvDefault($order->final_images_count ?? $order->final_images ?? null),
-            '__team_name' => '-',
-            default => $this->assignmentCsvDefault($order->{$key} ?? null),
-        };
-    }
-
-    private function assignmentCsvDisplayDate(object $order): string
-    {
-        $source = ((int) ($order->project_id ?? 0) === self::ASSIGNMENT_DASHBOARD_VIETNAM_PROJECT_ID && !empty($order->date))
-            ? $order->date
-            : ($order->received_at ?? null);
-
-        return $this->assignmentCsvDate($source);
-    }
-
-    private function assignmentCsvDefault($value): string
-    {
-        if ($value === null || $value === '') {
-            return '-';
-        }
-
-        if ($value instanceof \DateTimeInterface) {
-            return $value->format('n/j/Y H:i:s');
-        }
-
-        return (string) $value;
-    }
-
-    private function assignmentCsvDate($value): string
-    {
-        if (empty($value)) {
-            return '-';
-        }
-
-        try {
-            return Carbon::parse($value)->format('n/j/Y');
-        } catch (\Throwable $e) {
-            return '-';
-        }
-    }
-
-    private function assignmentCsvTime($value): string
-    {
-        if (empty($value)) {
-            return '-';
-        }
-
-        try {
-            return Carbon::parse($value)->format('H:i');
-        } catch (\Throwable $e) {
-            return '-';
-        }
-    }
-
-    private function assignmentCsvRemaining($dueIn, $receivedAt): string
-    {
-        $target = null;
-
-        if (!empty($dueIn)) {
-            try {
-                $target = Carbon::parse($dueIn);
-            } catch (\Throwable $e) {
-                $target = null;
-            }
-        }
-
-        if ($target === null && !empty($receivedAt)) {
-            try {
-                $target = Carbon::parse($receivedAt)->addDay();
-            } catch (\Throwable $e) {
-                $target = null;
-            }
-        }
-
-        if ($target === null) {
-            return '-';
-        }
-
-        $minutes = (int) now()->diffInMinutes($target, false);
-        $overdue = $minutes < 0;
-        $absoluteMinutes = abs($minutes);
-        $hours = intdiv($absoluteMinutes, 60);
-        $mins = $absoluteMinutes % 60;
-        $label = $hours > 0 ? "{$hours}h {$mins}m" : "{$mins}m";
-
-        return $overdue ? "-{$label}" : $label;
-    }
-
-    private function assignmentCsvDateTime($value): string
-    {
-        if (empty($value)) {
-            return '-';
-        }
-
-        try {
-            return Carbon::parse($value)->format('n/j/Y H:i:s');
-        } catch (\Throwable $e) {
-            return '-';
-        }
-    }
-
-    private function assignmentCsvAreaPart($value, string $part): string
-    {
-        if ($value === null || trim((string) $value) === '') {
-            return '-';
-        }
-
-        $raw = trim((string) $value);
-        $numericCandidate = str_replace(',', '', $raw);
-        if (!preg_match('/^\d+(\.\d+)?$/', $numericCandidate)) {
-            return $raw;
-        }
-
-        $meterValue = (float) $numericCandidate;
-        if (!is_finite($meterValue)) {
-            return $raw;
-        }
-
-        if ($part === 'feet') {
-            return (string) round($meterValue * 10.7639);
-        }
-
-        return floor($meterValue) == $meterValue
-            ? (string) (int) $meterValue
-            : rtrim(rtrim(number_format($meterValue, 2, '.', ''), '0'), '.');
-    }
-
-    private function assignmentCsvFilename(string $queueName, ?string $startDate, ?string $endDate, $month): string
-    {
-        $safeQueue = preg_replace('/[^A-Za-z0-9._-]+/', '_', $queueName) ?: 'orders';
-
-        if ($startDate && $endDate) {
-            return "{$safeQueue}_{$startDate}_to_{$endDate}.csv";
-        }
-
-        if ($startDate) {
-            return "{$safeQueue}_from_{$startDate}.csv";
-        }
-
-        if ($endDate) {
-            return "{$safeQueue}_until_{$endDate}.csv";
-        }
-
-        if (is_string($month) && preg_match('/^\d{4}-\d{2}$/', $month)) {
-            return "{$safeQueue}_{$month}.csv";
-        }
-
-        return "{$safeQueue}_" . now()->format('Y-m-d_His') . '.csv';
     }
 
     private function project51PendingCountByAccount(

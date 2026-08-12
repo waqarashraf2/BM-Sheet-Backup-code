@@ -4179,6 +4179,20 @@ if ($doneCol && strtolower(trim($order->{$doneCol} ?? '')) === 'yes') {
             'updated_at'    => now(),
         ];
 
+        $roleAssignerColMap = [ 
+            'drawer'   => 'drawer_assigned_by_name',
+            'designer' => 'drawer_assigned_by_name',
+            'checker'  => 'checker_assigned_by_name',
+            'qa'       => 'qa_assigned_by_name',
+            'filler'   => 'file_uploader_assigned_by_name',
+        ];
+        if (isset($roleAssignerColMap[$role]) && Schema::hasColumn('crm_order_assignments', $roleAssignerColMap[$role])) {
+            $assignData[$roleAssignerColMap[$role]] = $actor->name;
+        }
+        if (Schema::hasColumn('crm_order_assignments', 'assigned_by_name')) {
+            $assignData['assigned_by_name'] = $actor->name;
+        }
+
         if ($cols['time_col']) {
             $assignData[$cols['time_col']] = now();
         }

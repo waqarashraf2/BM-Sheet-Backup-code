@@ -264,6 +264,22 @@ class AutoAssignOrders implements ShouldQueue
             // Sync to project table + CRM for Live QA dashboard visibility
             AssignmentEngine::syncToProjectTable($order->fresh(), $worker, 'start');
 
+            // Log auto-assignment audit entry
+            \App\Services\AuditService::log(
+                null,
+                'assign_role',
+                'Order',
+                (int) $order->id,
+                (int) $order->project_id,
+                null,
+                [
+                    'role' => $role,
+                    'user_id' => $worker->id,
+                    'user_name' => $worker->name,
+                    'auto' => true,
+                ]
+            );
+
             Log::info("AutoAssignOrders: Assigned order {$order->id} to {$worker->name} (role: {$role})");
         });
     }
