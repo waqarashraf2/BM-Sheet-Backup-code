@@ -10,7 +10,7 @@ import type { AssignmentWorker, AssignmentOrder, AssignmentDateStat, AssignmentR
 import { AnimatedPage, Modal, Button, Textarea, useToast } from '../../components/ui';
 import ChecklistModal from '../../components/ChecklistModal';
 import {
-  Users, RefreshCw, Info, Search, Clock, AlertTriangle,
+  Users, User, RefreshCw, Info, Search, Clock, AlertTriangle,
   Loader2, X, BarChart3, PanelLeftClose, PanelLeftOpen,
   Pencil, CheckSquare, Eye, ShieldCheck, ChevronDown, ChevronUp, Play, Download,
 } from 'lucide-react';
@@ -963,7 +963,7 @@ export default function SupervisorAssignment() {
       if (aMs == null) return 1;
       if (bMs == null) return -1;
 
-    return aMs - bMs;
+      return aMs - bMs;
     });
   }, [displayedOrders, effectiveProjectId, parseDueIn]);
   /** Render remaining time badge with colour coding */
@@ -1336,15 +1336,19 @@ export default function SupervisorAssignment() {
       setAssignDropdown(null);
       setAssignSearch('');
 
-      // Optimistic update: immediately show the assigned name in the table
+      // Optimistic update: immediately show the assigned name and assigner name in the table
       if (worker) {
         const roleColMap: Record<string, string> = { drawer: 'drawer_name', checker: 'checker_name', filler: 'file_uploader_name', qa: 'qa_name' };
         const roleIdMap: Record<string, string> = { drawer: 'drawer_id', checker: 'checker_id', filler: 'file_uploader_id', qa: 'qa_id' };
+        const roleAssignerColMap: Record<string, string> = { drawer: 'drawer_assigned_by_name', checker: 'checker_assigned_by_name', filler: 'file_uploader_assigned_by_name', qa: 'qa_assigned_by_name' };
+        const currentAssignerName = user?.name || 'Supervisor';
 
         setOrders(prev => prev.map(o => o.id === orderId ? {
           ...o,
           [roleColMap[role]]: worker.name,
           [roleIdMap[role]]: worker.id,
+          [roleAssignerColMap[role]]: currentAssignerName,
+          assigned_by_name: currentAssignerName,
         } : o));
       }
 
@@ -1356,7 +1360,7 @@ export default function SupervisorAssignment() {
       console.error(e);
       toast({ type: 'error', title: 'Assignment Failed', description: e?.response?.data?.message || 'Could not assign role' });
     } finally { setAssigning(false); }
-  }, [allWorkers, assignDropdown?.mode, canReassignDoneOrders, hasAssigneeForRole, isOrderDoneForReassignmentRestriction, isPhotoEnhancementQueue, loadData, orders, toast]);
+  }, [allWorkers, assignDropdown?.mode, canReassignDoneOrders, hasAssigneeForRole, isOrderDoneForReassignmentRestriction, isPhotoEnhancementQueue, loadData, orders, toast, user?.name]);
 
   const toggleBulkOrder = useCallback((order: AssignmentOrder) => {
     if (!isBulkAssignableOrder(order, bulkRole)) return;
@@ -1411,6 +1415,23 @@ export default function SupervisorAssignment() {
           : res.data?.message || `${assignedCount} order(s) assigned.`,
       });
 
+      const worker = allWorkers.find(w => w.id === userId);
+      const currentAssignerName = user?.name || 'Supervisor';
+      if (worker && selectedBulkOrders.length > 0) {
+        const targetIds = new Set(selectedBulkOrders.map(o => o.id));
+        const roleColMap: Record<string, string> = { drawer: 'drawer_name', designer: 'drawer_name', checker: 'checker_name', filler: 'file_uploader_name', qa: 'qa_name' };
+        const roleIdMap: Record<string, string> = { drawer: 'drawer_id', designer: 'drawer_id', checker: 'checker_id', filler: 'file_uploader_id', qa: 'qa_id' };
+        const roleAssignerColMap: Record<string, string> = { drawer: 'drawer_assigned_by_name', designer: 'drawer_assigned_by_name', checker: 'checker_assigned_by_name', filler: 'file_uploader_assigned_by_name', qa: 'qa_assigned_by_name' };
+
+        setOrders(prev => prev.map(o => targetIds.has(o.id) ? {
+          ...o,
+          [roleColMap[bulkRole]]: worker.name,
+          [roleIdMap[bulkRole]]: worker.id,
+          [roleAssignerColMap[bulkRole]]: currentAssignerName,
+          assigned_by_name: currentAssignerName,
+        } : o));
+      }
+
       setBulkSelectedKeys(new Set());
       loadData(currentPage, true);
     } catch (e: any) {
@@ -1419,7 +1440,7 @@ export default function SupervisorAssignment() {
     } finally {
       setBulkAssigning(false);
     }
-  }, [bulkRole, bulkUserId, currentPage, loadData, selectedBulkOrders, toast]);
+  }, [allWorkers, bulkRole, bulkUserId, currentPage, loadData, selectedBulkOrders, toast, user?.name]);
 
   const openAssignDropdown = (
     e: React.MouseEvent,
@@ -1523,6 +1544,42 @@ export default function SupervisorAssignment() {
     return false;
   }, []);
 
+  const getRoleAssignerName = useCallback((order: AssignmentOrder, role: 'drawer' | 'checker' | 'filler' | 'qa'): string => {
+    const o = order as Record<string, any>;
+
+    if (role === 'drawer') {
+      if (o.drawer_assigned_by_name) return String(o.drawer_assigned_by_name);
+      if (o.drawer_assigned_by) return typeof o.drawer_assigned_by === 'string' ? o.drawer_assigned_by : (o.drawer_assigned_by.name || String(o.drawer_assigned_by));
+      if (o.dassigned_by_name) return String(o.dassigned_by_name);
+      if (o.dassigned_by) return typeof o.dassigned_by === 'string' ? o.dassigned_by : (o.dassigned_by.name || String(o.dassigned_by));
+    }
+    if (role === 'checker') {
+      if (o.checker_assigned_by_name) return String(o.checker_assigned_by_name);
+      if (o.checker_assigned_by) return typeof o.checker_assigned_by === 'string' ? o.checker_assigned_by : (o.checker_assigned_by.name || String(o.checker_assigned_by));
+      if (o.cassigned_by_name) return String(o.cassigned_by_name);
+      if (o.cassigned_by) return typeof o.cassigned_by === 'string' ? o.cassigned_by : (o.cassigned_by.name || String(o.cassigned_by));
+    }
+    if (role === 'filler') {
+      if (o.file_uploader_assigned_by_name) return String(o.file_uploader_assigned_by_name);
+      if (o.file_uploader_assigned_by) return typeof o.file_uploader_assigned_by === 'string' ? o.file_uploader_assigned_by : (o.file_uploader_assigned_by.name || String(o.file_uploader_assigned_by));
+      if (o.fassigned_by_name) return String(o.fassigned_by_name);
+    }
+    if (role === 'qa') {
+      if (o.qa_assigned_by_name) return String(o.qa_assigned_by_name);
+      if (o.qa_assigned_by) return typeof o.qa_assigned_by === 'string' ? o.qa_assigned_by : (o.qa_assigned_by.name || String(o.qa_assigned_by));
+      if (o.qassigned_by_name) return String(o.qassigned_by_name);
+    }
+
+    if (o.assigned_by_name) return String(o.assigned_by_name);
+    if (o.assigned_by) return typeof o.assigned_by === 'string' ? o.assigned_by : (o.assigned_by.name || String(o.assigned_by));
+    if (o.assigned_by_user) return typeof o.assigned_by_user === 'string' ? o.assigned_by_user : (o.assigned_by_user.name || String(o.assigned_by_user));
+
+    if (user?.name) return user.name;
+    if (user?.role) return user.role.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+    return 'System Auto-Assign';
+  }, [user?.name, user?.role]);
+
   const RoleCell = ({ order, role, name, userId: _userId, done, color, startTime, endTime }: { order: AssignmentOrder; role: 'drawer' | 'checker' | 'filler' | 'qa'; name: string | null; userId?: number | null; done: string | null; color: string; startTime?: string | null; endTime?: string | null }) => {
     const duration = fmtDuration(startTime || null, endTime || null);
     const isDone = isRoleCompleted(order, role, done);
@@ -1531,9 +1588,10 @@ export default function SupervisorAssignment() {
     const isDoneReassignBlocked = isDoneOrder && !!name && isDone && !canReassignDoneOrders;
     const waiting = !name && !isDone && isWaiting(order, role);
     const roleLabel = getRoleDisplayLabel(role);
+    const assignerName = getRoleAssignerName(order, role);
 
     return (
-      <td className="px-3 py-2">
+      <td className="px-3 py-2 relative group/cell hover:z-[999]">
         {waiting ? (
           <div className="flex items-center gap-1 px-1 py-0.5">
             <div className="w-5 h-5 rounded-full bg-amber-100 text-amber-500 flex items-center justify-center flex-shrink-0">
@@ -1542,55 +1600,79 @@ export default function SupervisorAssignment() {
             <span className="text-amber-500 text-xs font-medium">Waiting</span>
           </div>
         ) : (
-          <button onClick={(e) => {
-            if (isExistingAssignmentChangeBlocked) {
-              e.stopPropagation();
-              toast({
-                type: 'error',
-                title: 'Reassignment blocked',
-                description: 'Assigned orders can only be changed by OM/PM/Director. Non-management users can assign only unassigned orders.',
-              });
-              return;
-            }
+          <>
+            <button onClick={(e) => {
+              if (isExistingAssignmentChangeBlocked) {
+                e.stopPropagation();
+                toast({
+                  type: 'error',
+                  title: 'Reassignment blocked',
+                  description: 'Assigned orders can only be changed by OM/PM/Director. Non-management users can assign only unassigned orders.',
+                });
+                return;
+              }
 
-            if (isDoneReassignBlocked) {
-              e.stopPropagation();
-              toast({
-                type: 'error',
-                title: 'Reassignment blocked',
-                description: 'Done orders can only be reassigned by OM/PM/Director.',
-              });
-              return;
-            }
+              if (isDoneReassignBlocked) {
+                e.stopPropagation();
+                toast({
+                  type: 'error',
+                  title: 'Reassignment blocked',
+                  description: 'Done orders can only be reassigned by OM/PM/Director.',
+                });
+                return;
+              }
 
-            openAssignDropdown(e, order.id, role, { confirmReassign: !!name && isDone });
-          }}
-            className={`flex flex-col group rounded px-1 -mx-1 py-0.5 transition-colors w-full text-left ${isDone ? 'cursor-pointer opacity-70 hover:bg-slate-50' : 'cursor-pointer hover:bg-slate-50'
-              }`}
-            title={isExistingAssignmentChangeBlocked
-              ? `${roleLabel} reassignment blocked for non-management users`
-              : isDoneReassignBlocked
-                ? `${roleLabel} reassignment blocked for done orders`
-                : (name ? `Click to change ${roleLabel}` : `Assign ${roleLabel}`)}>
-            <div className="flex items-center gap-1 min-w-0">
-              {name ? (
-                <>
-                  <div className={`w-5 h-5 rounded-full ${isDone ? 'bg-green-400' : color} text-white flex items-center justify-center text-[9px] font-bold flex-shrink-0`}>
-                    {isDone ? '✓' : name.charAt(0)}
-                  </div>
-                  <span className={`truncate ${isDone ? 'text-green-700 font-medium' : 'text-slate-700'}`}>{name}</span>
-                  {isDone && <span className="text-green-500 text-[10px] font-bold ml-0.5">✓</span>}
-                </>
-              ) : (
-                <span className="text-slate-300 group-hover:text-brand-500 text-xs">- assign</span>
+              openAssignDropdown(e, order.id, role, { confirmReassign: !!name && isDone });
+            }}
+              className={`flex flex-col group/btn rounded px-1 -mx-1 py-0.5 transition-colors w-full text-left ${isDone ? 'cursor-pointer opacity-70 hover:bg-slate-50' : 'cursor-pointer hover:bg-slate-50'
+                }`}
+              title={isExistingAssignmentChangeBlocked
+                ? `${roleLabel} reassignment blocked for non-management users`
+                : isDoneReassignBlocked
+                  ? `${roleLabel} reassignment blocked for done orders`
+                  : (name ? `Assigned by: ${assignerName}\nClick to change ${roleLabel}` : `Assign ${roleLabel}`)}>
+              <div className="flex items-center gap-1 min-w-0">
+                {name ? (
+                  <>
+                    <div className={`w-5 h-5 rounded-full ${isDone ? 'bg-green-400' : color} text-white flex items-center justify-center text-[9px] font-bold flex-shrink-0`}>
+                      {isDone ? '✓' : name.charAt(0)}
+                    </div>
+                    <span className={`truncate ${isDone ? 'text-green-700 font-medium' : 'text-slate-700'}`}>{name}</span>
+                    {isDone && <span className="text-green-500 text-[10px] font-bold ml-0.5">✓</span>}
+                  </>
+                ) : (
+                  <span className="text-slate-300 group-hover/btn:text-brand-500 text-xs">- assign</span>
+                )}
+              </div>
+              {duration && (
+                <div className="text-[10px] text-slate-400 ml-6 mt-0.5 flex items-center gap-0.5">
+                  <Clock className="w-2.5 h-2.5" />{duration}
+                </div>
               )}
-            </div>
-            {duration && (
-              <div className="text-[10px] text-slate-400 ml-6 mt-0.5 flex items-center gap-0.5">
-                <Clock className="w-2.5 h-2.5" />{duration}
+            </button>
+
+            {/* Custom Tooltip on Hover showing Assigner Name on Left Side */}
+            {name && (
+              <div className="absolute right-full top-1/2 -translate-y-1/2 mr-2 hidden group-hover/cell:flex items-center z-[999] pointer-events-none transition-all duration-200">
+                <div className="bg-slate-900/95 backdrop-blur-md text-white text-[11px] font-medium py-1.5 px-3 rounded-lg shadow-2xl whitespace-nowrap border border-slate-700/80 flex flex-col gap-0.5">
+                  <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-semibold tracking-wider uppercase">
+                    <User className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Assigned By</span>
+                  </div>
+                  <div className="text-white text-xs font-semibold">
+                    {assignerName}
+                  </div>
+                  {startTime && (
+                    <div className="text-[10px] text-slate-400 border-t border-slate-800 pt-0.5 mt-0.5 flex items-center gap-1">
+                      <Clock className="w-2.5 h-2.5 text-slate-400" />
+                      <span>{fmtReceivedTime(startTime)}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="w-2 h-2 bg-slate-900/95 rotate-45 -ml-1 border-r border-t border-slate-700/80 z-10" />
               </div>
             )}
-          </button>
+          </>
         )}
       </td>
     );
@@ -1934,6 +2016,7 @@ export default function SupervisorAssignment() {
     '__batch_number',
   ]), []);
 
+
   const getAdjustedColumnWidths = useCallback((column: AssignmentTableColumn) => {
     const totalColumnsCount = dynamicPrimaryColumns.length + visibleRoleColumns.length + (showTeamNameColumn ? 1 : 0) + 1;
     const isCrowded = totalColumnsCount > 8;
@@ -2019,10 +2102,35 @@ export default function SupervisorAssignment() {
 
   const ASSIGNMENT_EXPORT_PAGE_RETRIES = 5;
   const ASSIGNMENT_EXPORT_RETRY_DELAY_MS = 800;
+  const CSV_EXPORT_CHUNK_SIZE = 1000;
+  const CSV_EXPORT_CACHE_KEY = 'supervisor-assignment-csv-export';
 
   const waitForAssignmentExportRetry = (attempt: number) => new Promise<void>((resolve) => {
     window.setTimeout(resolve, ASSIGNMENT_EXPORT_RETRY_DELAY_MS * attempt);
   });
+
+  const saveCsvExportCheckpoint = (checkpoint: {
+    filename: string;
+    totalPages: number;
+    completedPages: number;
+    completedRows: number;
+    currentPage: number;
+    updatedAt: string;
+  }) => {
+    try {
+      window.sessionStorage.setItem(CSV_EXPORT_CACHE_KEY, JSON.stringify(checkpoint));
+    } catch (error) {
+      console.warn('Unable to save CSV export checkpoint:', error);
+    }
+  };
+
+  const clearCsvExportCheckpoint = () => {
+    try {
+      window.sessionStorage.removeItem(CSV_EXPORT_CACHE_KEY);
+    } catch (error) {
+      console.warn('Unable to clear CSV export checkpoint:', error);
+    }
+  };
 
   const buildAssignmentExportParams = useCallback((page: number, perPage: number) => {
     const params: Record<string, string | number> = { page, per_page: perPage };
@@ -2334,6 +2442,41 @@ export default function SupervisorAssignment() {
     }
   };
 
+  const generateMonthCsv = async (
+    filenameBase: string,
+    headers: string[],
+    rows: string[][],
+  ) => {
+    const filename = `${filenameBase}.csv`;
+    const csvParts: BlobPart[] = [`${headers.join(',')}\n`];
+
+    for (let index = 0; index < rows.length; index += CSV_EXPORT_CHUNK_SIZE) {
+      const chunkRows = rows.slice(index, index + CSV_EXPORT_CHUNK_SIZE);
+      const chunk = chunkRows
+        .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+
+      csvParts.push(chunk);
+      if (index + CSV_EXPORT_CHUNK_SIZE < rows.length) {
+        csvParts.push('\n');
+      }
+
+      saveCsvExportCheckpoint({
+        filename,
+        totalPages: Math.ceil(rows.length / CSV_EXPORT_CHUNK_SIZE),
+        completedPages: Math.ceil(Math.min(index + CSV_EXPORT_CHUNK_SIZE, rows.length) / CSV_EXPORT_CHUNK_SIZE),
+        completedRows: Math.min(index + CSV_EXPORT_CHUNK_SIZE, rows.length),
+        currentPage: Math.floor(index / CSV_EXPORT_CHUNK_SIZE) + 1,
+        updatedAt: new Date().toISOString(),
+      });
+
+      await waitForPdfExportFrame();
+    }
+
+    downloadBlobParts(csvParts, 'text/csv;charset=utf-8;', filename);
+    clearCsvExportCheckpoint();
+  };
+
   const generateMonthPdf = async (
     filenameBase: string,
     headers: string[],
@@ -2426,33 +2569,6 @@ export default function SupervisorAssignment() {
     clearPdfExportCheckpoint();
   };
 
-  const downloadBackendCsvExport = async (filenameBase: string, hasDateRangeFilter: boolean) => {
-    const params: Record<string, string | number> = {
-      status: statusFilter,
-      columns: JSON.stringify(exportColumns.map((column) => ({ key: column.key, label: column.label }))),
-    };
-
-    if (searchQuery) params.search = searchQuery;
-    if (selectedWorker) params.assigned_to = selectedWorker;
-
-    if (hasDateRangeFilter) {
-      if (startDate) params.start_date = startDate;
-      if (endDate) params.end_date = endDate;
-    } else if (exportMonth) {
-      const [year, month] = exportMonth.split('-').map(Number);
-      const lastDay = new Date(year, month, 0).getDate();
-      params.start_date = `${exportMonth}-01`;
-      params.end_date = `${exportMonth}-${String(lastDay).padStart(2, '0')}`;
-      params.month = exportMonth;
-    }
-
-    const response = await dashboardService.assignmentDashboardCsvExport(selectedQueue, params);
-    const contentDisposition = String(response.headers?.['content-disposition'] || '');
-    const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
-    const filename = filenameMatch?.[1] || `${filenameBase}.csv`;
-    downloadBlobParts([response.data], 'text/csv;charset=utf-8;', filename);
-  };
-
   const handleMonthExport = async (type: 'csv' | 'pdf') => {
     // Check if date range filters are active, otherwise require exportMonth
     const hasDateRangeFilter = !!(startDate || endDate);
@@ -2478,13 +2594,6 @@ export default function SupervisorAssignment() {
 
     try {
       setExportingType(type);
-      if (type === 'csv') {
-        await downloadBackendCsvExport(filenameBase, hasDateRangeFilter);
-        const timeframeLabel = hasDateRangeFilter ? 'date range' : 'month';
-        toast({ title: 'CSV ready', description: `Download started for the selected ${timeframeLabel}.`, type: 'success' });
-        return;
-      }
-
       const exportOrders = await fetchAllOrdersForExport();
 
       // Filter orders: use date range if provided, otherwise use month filter
@@ -2530,13 +2639,18 @@ export default function SupervisorAssignment() {
         }
       }));
 
-      const dateRangeLabel = hasDateRangeFilter
-        ? `Date Range: ${startDate || 'start'} to ${endDate || 'end'}`
-        : `Month: ${exportMonth}`;
-      await generateMonthPdf(filenameBase, headers, rows, dateRangeLabel);
+      if (type === 'csv') {
+        await generateMonthCsv(filenameBase, headers, rows);
+      } else {
+        const dateRangeLabel = hasDateRangeFilter
+          ? `Date Range: ${startDate || 'start'} to ${endDate || 'end'}`
+          : `Month: ${exportMonth}`;
+        await generateMonthPdf(filenameBase, headers, rows, dateRangeLabel);
+      }
 
+      const exportTypeLabel = type === 'csv' ? 'CSV' : 'PDF';
       const timeframeLabel = hasDateRangeFilter ? 'date range' : 'month';
-      toast({ title: 'PDF ready', description: `${filteredOrders.length} orders exported for the selected ${timeframeLabel}.`, type: 'success' });
+      toast({ title: `${exportTypeLabel} ready`, description: `${filteredOrders.length} orders exported for the selected ${timeframeLabel}.`, type: 'success' });
     } catch (error) {
       console.error(error);
       toast({ title: 'Export failed', description: `Could not export ${type.toUpperCase()}.`, type: 'error' });
@@ -3593,11 +3707,10 @@ export default function SupervisorAssignment() {
                       {project51EditorAccountSummary.map((account) => (
                         <span
                           key={account.id}
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                            account.count === 0
-                              ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-100'
-                              : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
-                          }`}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${account.count === 0
+                            ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-100'
+                            : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
+                            }`}
                           title={`${account.label}: ${account.count} active orders`}
                         >
                           {account.label}
@@ -3611,11 +3724,10 @@ export default function SupervisorAssignment() {
                       {project51QcAccountSummary.map((account) => (
                         <span
                           key={account.id}
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                            account.count === 0
-                              ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-100'
-                              : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
-                          }`}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${account.count === 0
+                            ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-100'
+                            : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
+                            }`}
                           title={`${account.label}: ${account.count} active orders`}
                         >
                           {account.label}
@@ -3845,7 +3957,7 @@ export default function SupervisorAssignment() {
                           <motion.tr key={o.id}
                             initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                             transition={{ delay: idx * 0.02 }}
-                            className={`border-b border-slate-100 hover:bg-brand-50/40 transition-colors ${o.is_on_hold ? 'bg-red-50/50' : ''} ${recentlyReassignedOrderIds.has(o.id) ? 'bg-amber-50/90 ring-1 ring-inset ring-amber-200' : ''} ${highlightedIds.has(o.id) ? 'new-order-highlight' : ''} ${urgentOrderIds.has(o.id) ? 'bg-red-100/80' : ''} ${blinkingUrgentOrderIds.has(o.id) ? 'animate-pulse' : ''}`}>
+                            className={`border-b border-slate-100 hover:bg-brand-50/40 transition-colors relative hover:z-[999] ${o.is_on_hold ? 'bg-red-50/50' : ''} ${recentlyReassignedOrderIds.has(o.id) ? 'bg-amber-50/90 ring-1 ring-inset ring-amber-200' : ''} ${highlightedIds.has(o.id) ? 'new-order-highlight' : ''} ${urgentOrderIds.has(o.id) ? 'bg-red-100/80' : ''} ${blinkingUrgentOrderIds.has(o.id) ? 'animate-pulse' : ''}`}>
 
                             {bulkMode && (
                               <td className="px-2 py-2 text-center">
@@ -3969,7 +4081,7 @@ export default function SupervisorAssignment() {
 
                                         {/* Variant */}
                                         <td className="px-2 py-2 text-slate-600">
-                                          {(o as any).VARIANT_no || '-'}
+                                          {(o as any).VARIANT_no || (o as any).variant_no || (o as any).variant || '-'}
                                         </td>
 
                                         {/* Address */}
@@ -4250,11 +4362,10 @@ export default function SupervisorAssignment() {
                     key={account.id}
                     type="button"
                     onClick={() => handleUpdateProject51PortalAccount(portalAccountMenu.order, portalAccountMenu.accountType, String(account.id))}
-                    className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
-                      isSelected
-                        ? 'bg-brand-50 font-semibold text-brand-700'
-                        : 'text-slate-700 hover:bg-brand-50 hover:text-brand-700'
-                    }`}
+                    className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${isSelected
+                      ? 'bg-brand-50 font-semibold text-brand-700'
+                      : 'text-slate-700 hover:bg-brand-50 hover:text-brand-700'
+                      }`}
                   >
                     <span className="truncate">{accountLabel}</span>
                     {isSelected && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />}
