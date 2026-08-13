@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 
 import { logout } from '../../store/slices/authSlice';
@@ -9,6 +9,7 @@ import { LogOut, Search, Command, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import NotificationBell from '../Notifications/NotificationBell';
 import { useNotificationPolling } from '../../hooks/useNotificationPolling';
+import type { RootState } from '../../store/store';
 
 const PAGES = [
   { name: 'Dashboard', path: '/dashboard', keywords: 'home overview stats' },
@@ -24,6 +25,7 @@ const PAGES = [
 export default function Header() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const { user } = useSelector((state: RootState) => state.auth);
 
   const [showSearch, setShowSearch] = useState(false);
   const [query, setQuery] = useState('');
@@ -70,10 +72,27 @@ export default function Header() {
         </button>
 
         {/* Right */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-4">
+          {/* Independence Day Banner with Username */}
+          <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50/50 rounded-xl border border-emerald-100/50 select-none">
+            <img 
+              src="https://acegif.com/wp-content/uploads/gifs/pakistan-flag-19.gif"
+              alt="Pakistan Flag" 
+              className="w-10 h-auto"
+            />
+            <div className="flex flex-col text-left">
+              <span className="text-[10px] font-bold text-slate-700 leading-tight">
+                {user?.name || 'User'}
+              </span>
+              <span className="text-[9px] font-semibold text-emerald-600 leading-tight uppercase tracking-wider animate-pulse">
+                Happy Independence Day
+              </span>
+            </div>
+          </div>
+
           <NotificationBell />
 
-          <div className="w-px h-6 bg-slate-200 mx-1" />
+          <div className="w-px h-6 bg-slate-200" />
 
           <button
             onClick={handleLogout}
