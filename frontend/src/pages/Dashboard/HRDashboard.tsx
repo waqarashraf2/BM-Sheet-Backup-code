@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertCircle, Calendar, Download, Edit, FileText, Search, ShieldCheck, Trash2, Upload, UserCheck, UserX, Users } from 'lucide-react';
+import { Activity, AlertCircle, Calendar, Camera, Download, Edit, FileText, Search, ShieldCheck, Trash2, Upload, UserCheck, UserX, Users } from 'lucide-react';
 import { useSelector } from 'react-redux';
 import { AnimatedPage, Button, Modal, PageHeader, StatusBadge } from '../../components/ui';
 import { hrService } from '../../services';
 import type { RootState } from '../../store/store';
 import type { User, UserDocument, UserLeaveBalance, UserLeaveEntry, UserSalaryIncrement } from '../../types';
+import CameraCaptureModal from '../../components/CameraCaptureModal';
 
 const documentTypes = [
   { value: 'copy_of_cnic', label: 'Copy of CNIC' },
@@ -127,6 +128,7 @@ export default function HRDashboard() {
   const [selectedDetail, setSelectedDetail] = useState<UserDetail | null>(null);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentFiles, setDocumentFiles] = useState<Partial<Record<typeof documentTypes[number]['value'], File[]>>>({});
+  const [activeCameraType, setActiveCameraType] = useState<{ value: typeof documentTypes[number]['value']; label: string } | null>(null);
   const [editingUser, setEditingUser] = useState<HrUserRow | null>(null);
   const [editForm, setEditForm] = useState({
     name: '',
@@ -1375,34 +1377,68 @@ export default function HRDashboard() {
 
                 <div className="grid gap-3 border-b border-slate-100 p-4 lg:grid-cols-5">
                   {documentTypes.map(type => (
-                    <label key={type.value} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                      <div className="mb-2 text-xs font-semibold uppercase text-slate-500">{type.label}</div>
-                      <input
-                        type="file"
-                        multiple={type.value === 'two_pics' || type.value === 'extra'}
-                        accept=".jpg,.jpeg,.png,.pdf,.doc,.docx"
-                        onChange={e => setDocumentFiles(prev => ({
-                          ...prev,
-                          [type.value]: Array.from(e.target.files || []),
-                        }))}
-                        className="w-full text-xs text-slate-600"
-                      />
-                      <div className="mt-2 text-xs text-slate-400">
-                        {(documentFiles[type.value]?.length || 0) > 0 ? `${documentFiles[type.value]?.length} selected` : 'No file selected'}
-                      </div>
-                      {(type.value === 'nda' || type.value === 'contract_letter') && (
+                    <div key={type.value} className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex flex-col justify-between">
+                      <div>
+                        <div className="mb-2 text-xs font-semibold uppercase text-slate-500">{type.label}</div>
+                        <input
+                          type="file"
+                          id={`file-input-${type.value}`}
+                          multiple={type.value === 'two_pics' || type.value === 'extra'}
+                          accept=".jpg,.jpeg,.png,.pdf,.doc,.docx"
+                          onChange={e => setDocumentFiles(prev => ({
+                            ...prev,
+                            [type.value]: Array.from(e.target.files || []),
+                          }))}
+                          className="hidden"
+                        />
                         <button
                           type="button"
                           onClick={(e) => {
                             e.preventDefault();
-                            window.open(`/hr-panel/generate/${selectedDetail.user.id}/${type.value}`, '_blank');
+                            e.stopPropagation();
+                            document.getElementById(`file-input-${type.value}`)?.click();
                           }}
-                          className="mt-2 w-full rounded bg-teal-600 px-2 py-1.5 text-[11px] font-medium text-white hover:bg-teal-700 transition-colors cursor-pointer text-center"
+                          className="w-full text-left rounded border border-dashed border-slate-300 hover:border-teal-500 bg-white p-2 text-[11px] text-slate-600 transition-colors cursor-pointer min-h-[36px] overflow-hidden"
+                          title="Browse local files"
                         >
-                          Generate {type.value === 'nda' ? 'NDA' : 'Offer Letter'}
+                          {(documentFiles[type.value]?.length || 0) > 0 ? (
+                            <span className="font-semibold text-teal-600 block truncate">
+                              {documentFiles[type.value]?.map(f => f.name).join(', ')}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 block">Choose File...</span>
+                          )}
                         </button>
-                      )}
-                    </label>
+                      </div>
+                      
+                      <div className="flex gap-1.5 mt-2.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setActiveCameraType({ value: type.value, label: type.label });
+                          }}
+                          className="flex-1 flex items-center justify-center gap-1 rounded bg-slate-200 hover:bg-slate-300 px-2 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors cursor-pointer"
+                        >
+                          <Camera className="h-3.5 w-3.5" />
+                          Scan
+                        </button>
+                        {(type.value === 'nda' || type.value === 'contract_letter') && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              window.open(`/hr-panel/generate/${selectedDetail.user.id}/${type.value}`, '_blank');
+                            }}
+                            className="flex-1 rounded bg-teal-600 px-2 py-1.5 text-[11px] font-semibold text-white hover:bg-teal-700 transition-colors cursor-pointer text-center"
+                          >
+                            Gen {type.value === 'nda' ? 'NDA' : 'Offer'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   ))}
                 </div>
 
@@ -1436,6 +1472,24 @@ export default function HRDashboard() {
                 </div>
             </div>
             )}
+            
+            <CameraCaptureModal
+              open={!!activeCameraType}
+              onClose={() => setActiveCameraType(null)}
+              documentTypeLabel={activeCameraType?.label || ''}
+              documentTypeValue={activeCameraType?.value || ''}
+              onSave={(file) => {
+                if (activeCameraType) {
+                  const isMultiple = activeCameraType.value === 'two_pics' || activeCameraType.value === 'extra';
+                  setDocumentFiles(prev => ({
+                    ...prev,
+                    [activeCameraType.value]: isMultiple 
+                      ? [...(prev[activeCameraType.value] || []), file]
+                      : [file]
+                  }));
+                }
+              }}
+            />
           </div>
         )}
       </Modal>
