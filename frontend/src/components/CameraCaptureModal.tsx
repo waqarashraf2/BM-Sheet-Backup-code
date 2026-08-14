@@ -129,6 +129,17 @@ export default function CameraCaptureModal({
     setCapturedImages(prev => prev.filter((_, i) => i !== index));
   };
 
+  // Helper to load image and extract dimensions
+  const getImageDimensions = (base64Str: string): Promise<{ width: number; height: number }> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      };
+      img.src = base64Str;
+    });
+  };
+
   // Compile PDF and return it to parent component
   const handleSave = async () => {
     if (capturedImages.length === 0) return;
@@ -149,8 +160,31 @@ export default function CameraCaptureModal({
         if (i > 0) {
           doc.addPage();
         }
-        // Add captured image to cover the entire page
-        doc.addImage(capturedImages[i], 'JPEG', 0, 0, pageWidth, pageHeight);
+        
+        // Fetch image dimensions to preserve aspect ratio
+        const dims = await getImageDimensions(capturedImages[i]);
+        const imgRatio = dims.width / dims.height;
+        const pageRatio = pageWidth / pageHeight;
+
+        let drawWidth = pageWidth;
+        let drawHeight = pageHeight;
+        let x = 0;
+        let y = 0;
+
+        if (imgRatio > pageRatio) {
+          // Image is wider than A4 layout
+          drawWidth = pageWidth;
+          drawHeight = pageWidth / imgRatio;
+          y = (pageHeight - drawHeight) / 2; // center vertically
+        } else {
+          // Image is taller than A4 layout
+          drawHeight = pageHeight;
+          drawWidth = pageHeight * imgRatio;
+          x = (pageWidth - drawWidth) / 2; // center horizontally
+        }
+
+        // Draw captured image preserving its original shape
+        doc.addImage(capturedImages[i], 'JPEG', x, y, drawWidth, drawHeight);
       }
 
       const pdfBlob = doc.output('blob');
