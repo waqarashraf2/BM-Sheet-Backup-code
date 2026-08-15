@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import apiClient from '../../services/api';
 import { Package, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 
@@ -869,13 +869,9 @@ const ProjectsView: React.FC = () => {
                 }
             `}</style>
 
-            <h1 className="text-xl md:text-2xl font-bold mb-4 px-4 md:px-0">
-                Project Statistics
-            </h1>
-
             {/* DATE FILTERS */}
-            <div className="mb-6 px-4 md:px-0">
-                <div className="bg-white rounded-xl ring-1 ring-black/[0.04] shadow-sm p-4 mb-4">
+            <div className="mb-4 px-4 md:px-0">
+                <div className="bg-white rounded-xl ring-1 ring-black/[0.04] shadow-sm p-4">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                         {/* Date Inputs */}
                         <div className="flex flex-col md:flex-row gap-3">
