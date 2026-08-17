@@ -49,8 +49,16 @@ export default function CameraCaptureModal({
 
     const constraints: MediaStreamConstraints = {
       video: selectedDeviceId
-        ? { deviceId: { exact: selectedDeviceId } }
-        : { facingMode: { ideal: facingMode } }
+        ? { 
+            deviceId: { exact: selectedDeviceId },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        : { 
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
     };
 
     try {
@@ -113,7 +121,7 @@ export default function CameraCaptureModal({
       }
       
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
       setCapturedImages(prev => [...prev, dataUrl]);
     }
   };
