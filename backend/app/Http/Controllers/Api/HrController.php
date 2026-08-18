@@ -13,6 +13,7 @@ use App\Models\WorkItem;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -643,6 +644,60 @@ class HrController extends Controller
         return response()->json([
             'message' => 'Document deleted successfully.',
         ]);
+    }
+
+    public function emailDocuments(Request $request, string $userId)
+    {
+        $this->authorizeHr($request);
+
+        if (!Schema::hasTable('user_documents')) {
+            return response()->json(['message' => 'User documents table is not ready.'], 503);
+        }
+
+        $user = User::findOrFail($userId);
+        $this->abortIfHrCannotAccessUser($request, $user);
+
+        $validated = $request->validate([
+            'email' => 'required|email',
+            'subject' => 'required|string|max:255',
+            'message' => 'required|string',
+            'document_ids' => 'required|array|min:1',
+            'document_ids.*' => 'integer|exists:user_documents,id',
+        ]);
+
+        $documents = UserDocument::where('user_id', $user->id)
+            ->whereIn('id', $validated['document_ids'])
+            ->get();
+
+        if ($documents->isEmpty()) {
+            return response()->json(['message' => 'No valid documents selected to email.'], 422);
+        }
+
+        try {
+            Mail::send([], [], function ($message) use ($validated, $documents, $user) {
+                $message->to($validated['email'], $user->name)
+                    ->subject($validated['subject'])
+                    ->html(nl2br(e($validated['message'])));
+
+                foreach ($documents as $doc) {
+                    if ($doc->file_path && Storage::disk('local')->exists($doc->file_path)) {
+                        $message->attach(
+                            Storage::disk('local')->path($doc->file_path),
+                            ['as' => $doc->original_name]
+                        );
+                    }
+                }
+            });
+
+            return response()->json([
+                'message' => 'Documents successfully emailed to ' . $validated['email'],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('HR email documents error: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Failed to send email: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     private function storeUserDocument(User $user, $file, string $documentType, int $uploadedBy): UserDocument

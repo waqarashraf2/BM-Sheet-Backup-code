@@ -1,5 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertCircle, Calendar, Camera, Download, Edit, FileText, Search, ShieldCheck, Trash2, Upload, UserCheck, UserX, Users } from 'lucide-react';
+import {
+  Activity,
+  AlertCircle,
+  Calendar,
+  Camera,
+  Check,
+  Copy,
+  Download,
+  Edit,
+  ExternalLink,
+  FileText,
+  Mail,
+  Search,
+  Send,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  UserCheck,
+  UserX,
+  Users,
+} from 'lucide-react';
 import { useSelector } from 'react-redux';
 import { AnimatedPage, Button, Modal, PageHeader, StatusBadge } from '../../components/ui';
 import { hrService } from '../../services';
@@ -176,6 +196,17 @@ export default function HRDashboard() {
   const [deactivating, setDeactivating] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState<{ matched: number; preview: Array<Partial<User> & { inactive_days?: number }> } | null>(null);
   const [error, setError] = useState('');
+
+  // Email / Sharing state
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailRecipient, setEmailRecipient] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [selectedEmailDocIds, setSelectedEmailDocIds] = useState<number[]>([]);
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [copiedEmailText, setCopiedEmailText] = useState(false);
+  const [emailSuccessMsg, setEmailSuccessMsg] = useState('');
+  const [emailErrorMsg, setEmailErrorMsg] = useState('');
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -503,6 +534,119 @@ export default function HRDashboard() {
     } finally {
       setDeletingDocumentId(null);
     }
+  };
+
+  const openEmailModal = (preselectDocId?: number) => {
+    if (!selectedDetail) return;
+    const candUser = selectedDetail.user;
+    setEmailRecipient(candUser.email || '');
+    const defaultSubject = `Benchmark Studio - Offer Letter & NDA Documents - ${candUser.name || 'Candidate'}`;
+    setEmailSubject(defaultSubject);
+    const defaultBody = `Dear ${candUser.name || 'Candidate'},\n\nWe are pleased to share your Appointment / Offer Letter and Non-Disclosure Agreement (NDA) for Benchmark Studio.\n\nPlease find attached the official documents for your review and records.\n\nIf you have any questions or require any assistance, please feel free to reach out to the HR department.\n\nBest regards,\nHR Department\nBenchmark Studio`;
+    setEmailBody(defaultBody);
+
+    if (preselectDocId) {
+      setSelectedEmailDocIds([preselectDocId]);
+    } else {
+      const targetDocs = documents.filter(d => d.document_type === 'nda' || d.document_type === 'contract_letter');
+      if (targetDocs.length > 0) {
+        setSelectedEmailDocIds(targetDocs.map(d => d.id));
+      } else {
+        setSelectedEmailDocIds(documents.map(d => d.id));
+      }
+    }
+
+    setEmailSuccessMsg('');
+    setEmailErrorMsg('');
+    setCopiedEmailText(false);
+    setEmailModalOpen(true);
+  };
+
+  const downloadSelectedDocsForMail = async (docIds: number[]) => {
+    const docsToDownload = documents.filter(d => docIds.includes(d.id));
+    for (let i = 0; i < docsToDownload.length; i++) {
+      const doc = docsToDownload[i];
+      try {
+        const res = await hrService.downloadDocument(doc.id);
+        const url = window.URL.createObjectURL(new Blob([res.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = doc.original_name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        if (i < docsToDownload.length - 1) {
+          await new Promise(r => setTimeout(r, 400));
+        }
+      } catch (e) {
+        console.error('Error downloading doc:', e);
+      }
+    }
+  };
+
+  const handleOpenGmail = async () => {
+    if (!emailRecipient.trim()) {
+      setEmailErrorMsg('Please enter a recipient email address.');
+      return;
+    }
+    setEmailErrorMsg('');
+    if (selectedEmailDocIds.length > 0) {
+      await downloadSelectedDocsForMail(selectedEmailDocIds);
+    }
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(emailRecipient.trim())}&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+    window.open(gmailUrl, '_blank');
+    setEmailSuccessMsg('Gmail compose window opened! Documents downloaded for instant attachment.');
+  };
+
+  const handleOpenOutlook = async () => {
+    if (!emailRecipient.trim()) {
+      setEmailErrorMsg('Please enter a recipient email address.');
+      return;
+    }
+    setEmailErrorMsg('');
+    if (selectedEmailDocIds.length > 0) {
+      await downloadSelectedDocsForMail(selectedEmailDocIds);
+    }
+    const mailtoUrl = `mailto:${encodeURIComponent(emailRecipient.trim())}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+    window.location.href = mailtoUrl;
+    setEmailSuccessMsg('Outlook / Mail client opened! Documents downloaded for instant attachment.');
+  };
+
+  const handleDirectServerSend = async () => {
+    if (!selectedUser) return;
+    if (!emailRecipient.trim()) {
+      setEmailErrorMsg('Please enter a recipient email address.');
+      return;
+    }
+    if (selectedEmailDocIds.length === 0) {
+      setEmailErrorMsg('Please select at least one document to attach.');
+      return;
+    }
+    try {
+      setSendingEmail(true);
+      setEmailErrorMsg('');
+      setEmailSuccessMsg('');
+      const res = await hrService.emailDocuments(selectedUser.id, {
+        email: emailRecipient.trim(),
+        subject: emailSubject,
+        message: emailBody,
+        document_ids: selectedEmailDocIds,
+      });
+      setEmailSuccessMsg(res.data.message || 'Email sent successfully with attachments!');
+    } catch (e: any) {
+      console.error(e);
+      setEmailErrorMsg(e.response?.data?.message || 'Failed to send email. Check SMTP configuration or use the Gmail / Outlook buttons.');
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
+  const handleCopyEmailText = () => {
+    const textToCopy = `To: ${emailRecipient}\nSubject: ${emailSubject}\n\n${emailBody}`;
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedEmailText(true);
+    setTimeout(() => setCopiedEmailText(false), 2500);
   };
 
   const previewDeactivate = async () => {
@@ -1370,9 +1514,20 @@ export default function HRDashboard() {
                     <h3 className="text-sm font-semibold text-slate-900">Documents</h3>
                     <p className="text-xs text-slate-500">Upload all required files together or add any document later.</p>
                   </div>
-                  <Button onClick={uploadDocuments} disabled={selectedFilesCount === 0} loading={uploading} icon={<Upload className="h-4 w-4" />}>
-                    Upload All
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button onClick={uploadDocuments} disabled={selectedFilesCount === 0} loading={uploading} icon={<Upload className="h-4 w-4" />}>
+                      Upload All
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => openEmailModal()}
+                      disabled={documents.length === 0}
+                      icon={<Mail className="h-4 w-4 text-teal-600" />}
+                      className="border-teal-300 text-teal-700 hover:bg-teal-50"
+                    >
+                      Share / Email Docs
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="grid gap-3 border-b border-slate-100 p-4 lg:grid-cols-5">
@@ -1456,6 +1611,15 @@ export default function HRDashboard() {
                   <div className="flex shrink-0 items-center gap-2">
                     <Button
                       size="sm"
+                      variant="secondary"
+                      onClick={() => openEmailModal(doc.id)}
+                      icon={<Mail className="h-3.5 w-3.5 text-teal-600" />}
+                      title="Share / Email this document"
+                    >
+                      Email
+                    </Button>
+                    <Button
+                      size="sm"
                       variant="danger"
                       onClick={() => deleteDocument(doc)}
                       loading={deletingDocumentId === doc.id}
@@ -1492,6 +1656,250 @@ export default function HRDashboard() {
             />
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={emailModalOpen}
+        onClose={() => setEmailModalOpen(false)}
+        title="Share Documents via Email"
+        size="xl"
+      >
+        <div className="space-y-4">
+          {emailSuccessMsg && (
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+              <span>{emailSuccessMsg}</span>
+            </div>
+          )}
+
+          {emailErrorMsg && (
+            <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{emailErrorMsg}</span>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3.5 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <span className="text-xs font-semibold uppercase text-slate-500 block">Candidate</span>
+              <div className="font-semibold text-slate-900 text-sm">{selectedDetail?.user.name || 'Candidate'}</div>
+            </div>
+            {selectedDetail?.user.role && (
+              <div>
+                <span className="text-xs font-semibold uppercase text-slate-500 block">Role</span>
+                <StatusBadge status={selectedDetail.user.role} />
+              </div>
+            )}
+            {selectedDetail?.user.machine_id && (
+              <div>
+                <span className="text-xs font-semibold uppercase text-slate-500 block">Machine ID</span>
+                <span className="text-xs font-mono font-medium text-slate-700">{selectedDetail.user.machine_id}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+                Candidate Email Address <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="email"
+                value={emailRecipient}
+                onChange={e => setEmailRecipient(e.target.value)}
+                placeholder="e.g. candidate@example.com"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+                Email Subject <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={emailSubject}
+                onChange={e => setEmailSubject(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold uppercase text-slate-500">
+                Documents to Attach / Include ({selectedEmailDocIds.length} selected)
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetDocs = documents.filter(d => d.document_type === 'nda' || d.document_type === 'contract_letter');
+                    setSelectedEmailDocIds(targetDocs.map(d => d.id));
+                  }}
+                  className="text-[11px] font-medium text-teal-600 hover:text-teal-800 hover:underline cursor-pointer"
+                >
+                  Select NDA & Offer Only
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedEmailDocIds(documents.map(d => d.id))}
+                  className="text-[11px] font-medium text-slate-600 hover:text-slate-800 hover:underline cursor-pointer"
+                >
+                  Select All
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedEmailDocIds([])}
+                  className="text-[11px] font-medium text-slate-500 hover:text-slate-700 hover:underline cursor-pointer"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            {documents.length === 0 ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-center text-xs text-slate-500">
+                No documents uploaded yet for this candidate.
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-44 overflow-y-auto rounded-lg border border-slate-200 p-2 bg-white">
+                {documents.map(doc => {
+                  const isChecked = selectedEmailDocIds.includes(doc.id);
+                  const isNdaOrOffer = doc.document_type === 'nda' || doc.document_type === 'contract_letter';
+                  return (
+                    <label
+                      key={doc.id}
+                      className={`flex items-center justify-between gap-3 rounded-md p-2 text-xs transition-colors cursor-pointer border ${
+                        isChecked ? 'bg-teal-50/60 border-teal-200' : 'hover:bg-slate-50 border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setSelectedEmailDocIds(prev => [...prev, doc.id]);
+                            } else {
+                              setSelectedEmailDocIds(prev => prev.filter(id => id !== doc.id));
+                            }
+                          }}
+                          className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-900 truncate">{doc.original_name}</div>
+                          <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                            <span className={`inline-block px-1.5 py-0.5 rounded font-semibold text-[10px] ${
+                              isNdaOrOffer ? 'bg-teal-100 text-teal-800' : 'bg-slate-100 text-slate-700'
+                            }`}>
+                              {documentLabel[doc.document_type]}
+                            </span>
+                            {doc.uploaded_at && <span>{new Date(doc.uploaded_at).toLocaleDateString()}</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          downloadDocument(doc);
+                        }}
+                        className="p-1 text-slate-400 hover:text-teal-600 rounded hover:bg-white"
+                        title="Download file"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </button>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold uppercase text-slate-500">
+                Message Body
+              </label>
+              <button
+                type="button"
+                onClick={handleCopyEmailText}
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-teal-600 cursor-pointer"
+              >
+                {copiedEmailText ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    <span className="text-emerald-600 font-semibold">Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5" />
+                    <span>Copy Message</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <textarea
+              rows={5}
+              value={emailBody}
+              onChange={e => setEmailBody(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white p-3 text-xs leading-relaxed focus:border-teal-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="border-t border-slate-100 pt-3">
+            <div className="text-xs font-semibold uppercase text-slate-500 mb-2.5">
+              Choose Mailing / Sharing Action:
+            </div>
+            <div className="grid gap-2.5 sm:grid-cols-3">
+              <button
+                type="button"
+                onClick={handleOpenGmail}
+                className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-gradient-to-b from-red-50/50 to-red-100/30 p-3 text-center transition-all hover:border-red-400 hover:shadow-sm cursor-pointer group"
+              >
+                <div className="flex items-center gap-1.5 font-semibold text-xs text-red-700">
+                  <ExternalLink className="h-4 w-4 text-red-600" />
+                  <span>Open in Gmail (Web)</span>
+                </div>
+                <span className="text-[10px] text-slate-500 leading-tight">
+                  Auto-fills recipient & message + downloads PDFs to attach
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenOutlook}
+                className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-sky-200 bg-gradient-to-b from-sky-50/50 to-sky-100/30 p-3 text-center transition-all hover:border-sky-400 hover:shadow-sm cursor-pointer group"
+              >
+                <div className="flex items-center gap-1.5 font-semibold text-xs text-sky-700">
+                  <Mail className="h-4 w-4 text-sky-600" />
+                  <span>Open in Outlook</span>
+                </div>
+                <span className="text-[10px] text-slate-500 leading-tight">
+                  Launches Outlook app with pre-filled fields + downloads PDFs
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDirectServerSend}
+                disabled={sendingEmail || selectedEmailDocIds.length === 0}
+                className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-teal-600 bg-teal-600 p-3 text-center text-white transition-all hover:bg-teal-700 disabled:opacity-50 cursor-pointer shadow-sm"
+              >
+                <div className="flex items-center gap-1.5 font-semibold text-xs text-white">
+                  <Send className="h-4 w-4" />
+                  <span>{sendingEmail ? 'Sending...' : 'Direct Send (1-Click)'}</span>
+                </div>
+                <span className="text-[10px] text-teal-100 leading-tight">
+                  Sends directly from server with PDF attachments attached
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
       </Modal>
 
       <Modal open={!!editingUser} onClose={() => setEditingUser(null)} title="Edit User" size="lg">

@@ -886,6 +886,8 @@ export const hrService = {
     api.get(`/hr/documents/${documentId}/download`, { responseType: 'blob' }),
   deleteDocument: (documentId: number) =>
     api.delete<{ message: string }>(`/hr/documents/${documentId}`),
+  emailDocuments: (userId: number, data: { email: string; subject: string; message: string; document_ids: number[] }) =>
+    api.post<{ message: string }>(`/hr/users/${userId}/documents/email`, data),
   deactivateLongAbsent: (data?: { days?: number; dry_run?: boolean }) =>
     api.post<{ message: string; affected: number; matched: number; preview: Array<Partial<User> & { inactive_days?: number }> }>('/hr/absent/deactivate', data || {}),
 };
