@@ -16,6 +16,8 @@
     "axios": "^1.13.5",
     "cmdk": "^1.1.1",
     "framer-motion": "^12.34.0",
+    "html-to-image": "^1.11.13",
+    "html2canvas": "^1.4.1",
     "jspdf": "^4.2.0",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.563.0",

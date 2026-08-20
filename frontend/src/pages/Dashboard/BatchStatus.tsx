@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Loader2, RotateCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Download, Copy, Check, Loader2, RotateCw } from 'lucide-react';
+import { toJpeg, toBlob } from 'html-to-image';
+import html2canvas from 'html2canvas';
 import { dashboardService } from '../../services';
 import CubiQaReport from './CubiQaReport';
 
@@ -73,6 +75,10 @@ export default function BatchStatus() {
   const [plansRemaining, setPlansRemaining] = useState<PlansRemaining[]>([]);
   const [hourlyCounts, setHourlyCounts] = useState<Hourly[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exportingJpg, setExportingJpg] = useState(false);
+  const [copiedImage, setCopiedImage] = useState(false);
+  const batchCardRef = useRef<HTMLDivElement>(null);
+
   const getTodayInputValue = () => {
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Ho_Chi_Minh',
@@ -167,10 +173,10 @@ export default function BatchStatus() {
       text += `Batch ${batch.batch_no}\n`;
       text += `Received Time: ${batch.received_time}\n`;
 
-      // 🔥 FIX: avoid duplicate like "8h - 8h"
+      // avoid duplicate like "8h - 8h"
       let remaining = batch.remaining_time;
       if (remaining && remaining.includes('-')) {
-        const [min, max] = remaining.split('-').map(s => s.trim());
+        const [min, max] = remaining.split('-').map((s) => s.trim());
         if (min === max) remaining = min;
       }
 
@@ -202,9 +208,9 @@ export default function BatchStatus() {
     // Plans Remaining
     if (plansRemaining.length) {
       text += `Plans Remaining Time\n\n`;
-plansRemaining.forEach((p) => {
-  text += `${p.plans} Plans : ${p.hour}h\n`; // just hours
-});
+      plansRemaining.forEach((p) => {
+        text += `${p.plans} Plans : ${p.hour}h\n`;
+      });
       text += `\n`;
     }
 
@@ -233,12 +239,91 @@ plansRemaining.forEach((p) => {
     return text;
   };
 
-  /* ---------------------- COPY ---------------------- */
+  /* ---------------------- COPY & EXPORT ---------------------- */
 
   const copyText = () => {
     const text = generateReportText();
     navigator.clipboard.writeText(text);
     alert('Copied Correct Format ✅');
+  };
+
+  const handleDownloadJpg = async () => {
+    if (!batchCardRef.current) return;
+    try {
+      setExportingJpg(true);
+      const element = batchCardRef.current;
+
+      let dataUrl: string;
+      try {
+        dataUrl = await toJpeg(element, {
+          quality: 0.98,
+          pixelRatio: 3, // Ultra-HD 3x sharp scale (no pixel drop)
+          backgroundColor: '#ffffff',
+          cacheBust: true,
+          style: {
+            margin: '0',
+            backgroundColor: '#ffffff',
+          },
+        });
+      } catch (err) {
+        console.warn('html-to-image fallback to html2canvas:', err);
+        const canvas = await html2canvas(element, {
+          scale: 3,
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+        });
+        dataUrl = canvas.toDataURL('image/jpeg', 0.98);
+      }
+
+      const filename = `Cubi_2D_Batch_Status_${formatDate(selectedDate)}.jpg`.replace(/\s+/g, '_');
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('Failed to export batch status JPG:', err);
+      alert('Failed to generate JPG. Please try again.');
+    } finally {
+      setExportingJpg(false);
+    }
+  };
+
+  const handleCopyImage = async () => {
+    if (!batchCardRef.current) return;
+    try {
+      setExportingJpg(true);
+      const element = batchCardRef.current;
+
+      const blob = await toBlob(element, {
+        pixelRatio: 3,
+        backgroundColor: '#ffffff',
+        cacheBust: true,
+        style: {
+          margin: '0',
+          backgroundColor: '#ffffff',
+        },
+      });
+
+      if (blob && navigator.clipboard?.write) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'image/png': blob,
+          }),
+        ]);
+        setCopiedImage(true);
+        setTimeout(() => setCopiedImage(false), 2500);
+      } else {
+        await handleDownloadJpg();
+      }
+    } catch (clipErr) {
+      console.error('Clipboard copy failed:', clipErr);
+      await handleDownloadJpg();
+    } finally {
+      setExportingJpg(false);
+    }
   };
 
   /* ---------------------- UI ---------------------- */
@@ -267,7 +352,12 @@ plansRemaining.forEach((p) => {
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-5">
       <div className="mx-auto max-w-7xl space-y-4">
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        {/* The Full Batch Status Card */}
+        <div
+          ref={batchCardRef}
+          data-report-capture="true"
+          className="rounded-xl border border-slate-200 bg-white shadow-sm"
+        >
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
             <div className="shrink-0">
               <h1 className="text-sm font-bold text-slate-950">Cubi 2D Status</h1>
@@ -332,15 +422,56 @@ plansRemaining.forEach((p) => {
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => fetchData(selectedDate)}
-                disabled={loading}
-                className="h-8 rounded-lg bg-white ring-1 ring-slate-200 px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25 flex items-center gap-1.5 disabled:opacity-50"
-              >
-                <RotateCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyImage}
+                  disabled={exportingJpg || loading}
+                  className="h-8 rounded-lg bg-white ring-1 ring-slate-200 px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25 flex items-center gap-1.5 disabled:opacity-50"
+                  title="Copy screenshot to clipboard for WhatsApp/Slack"
+                >
+                  {copiedImage ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      <span className="text-emerald-600">Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5 text-slate-600" />
+                      <span>Copy Screenshot</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadJpg}
+                  disabled={exportingJpg || loading}
+                  className="h-8 rounded-lg bg-slate-900 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900/25 flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {exportingJpg ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#2AA7A0]" />
+                      <span>Generating JPG...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-3.5 w-3.5" />
+                      <span>Download JPG</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fetchData(selectedDate)}
+                  disabled={loading}
+                  className="h-8 rounded-lg bg-white ring-1 ring-slate-200 px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25 flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <RotateCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
             </div>
           </div>
 
@@ -399,7 +530,6 @@ plansRemaining.forEach((p) => {
                 <div className="rounded-lg border border-slate-200 bg-white p-3 xl:col-span-2">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <h2 className="text-[11px] font-bold uppercase tracking-wide text-slate-700">Hourly Counts</h2>
-                    {/* <span className="text-[10px] font-semibold text-slate-400">{hourlyCounts.reduce((sum, item) => sum + Number(item.orders || 0), 0).toLocaleString()} orders</span> */}
                   </div>
                   <div className="grid grid-cols-1 gap-x-4 gap-y-2 md:grid-cols-2">
                     {hourlyCounts.length > 0 ? hourlyCounts.map((item) => {

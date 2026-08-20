@@ -1925,8 +1925,15 @@ export default function HRDashboard() {
             <label className="text-sm">
               <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Machine ID</span>
               <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={editForm.machine_id}
-                onChange={e => setEditForm(prev => ({ ...prev, machine_id: e.target.value }))}
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '');
+                  setEditForm(prev => ({ ...prev, machine_id: val }));
+                }}
+                placeholder="e.g. 101"
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
               />
             </label>

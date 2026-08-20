@@ -142,6 +142,8 @@ export default function UserManagement() {
 
   const handleSave = async () => {
     if (!formData.name || !formData.email) { setFormError('Name and email are required.'); return; }
+    if (!formData.machine_id || !formData.machine_id.trim()) { setFormError('Machine ID is required.'); return; }
+    if (!/^\d+$/.test(formData.machine_id.trim())) { setFormError('Machine ID must be a valid integer number.'); return; }
     const passwordChanged = !editingUser || formData.password !== originalStoredPassword;
     if (!editingUser && !formData.password) { setFormError('Password is required.'); return; }
     if (passwordChanged && formData.password && formData.password.length < 8) { setFormError('Password must be at least 8 characters.'); return; }
@@ -356,16 +358,21 @@ export default function UserManagement() {
 
           {/* Machine ID */}
           <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Machine ID</label>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Machine ID <span className="text-rose-400">*</span></label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                 <Activity className="h-4 w-4 text-slate-400" />
               </div>
               <input
                 type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={formData.machine_id}
-                onChange={e => setFormData({ ...formData, machine_id: e.target.value })}
-                placeholder="e.g. BM-PC-001"
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '');
+                  setFormData({ ...formData, machine_id: val });
+                }}
+                placeholder="e.g. 101"
                 className="w-full pl-10 pr-4 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200"
               />
             </div>
