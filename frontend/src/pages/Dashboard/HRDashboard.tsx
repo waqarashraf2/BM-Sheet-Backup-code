@@ -46,7 +46,9 @@ type HrStats = {
 type DocumentStats = {
   active_total: number;
   complete_required: number;
+  incomplete_docs: number;
   no_documents: number;
+  uploaded_today: number;
   missing: {
     copy_of_cnic: number;
     two_pics: number;
@@ -128,7 +130,9 @@ export default function HRDashboard() {
   const [documentStats, setDocumentStats] = useState<DocumentStats>({
     active_total: 0,
     complete_required: 0,
+    incomplete_docs: 0,
     no_documents: 0,
+    uploaded_today: 0,
     missing: { copy_of_cnic: 0, two_pics: 0, nda: 0, contract_letter: 0 },
   });
   const [users, setUsers] = useState<HrUserRow[]>([]);
@@ -137,6 +141,7 @@ export default function HRDashboard() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
   const [role, setRole] = useState('all');
+  const [docStatus, setDocStatus] = useState('all');
   const [projectId, setProjectId] = useState<string>('all');
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [userMonth, setUserMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -216,7 +221,9 @@ export default function HRDashboard() {
       setDocumentStats(res.data.document_stats || {
         active_total: 0,
         complete_required: 0,
+        incomplete_docs: 0,
         no_documents: 0,
+        uploaded_today: 0,
         missing: { copy_of_cnic: 0, two_pics: 0, nda: 0, contract_letter: 0 },
       });
       setEmployeeAnalytics(res.data.employee_analytics || emptyEmployeeAnalytics);
@@ -234,7 +241,16 @@ export default function HRDashboard() {
   const loadUsers = useCallback(async () => {
     try {
       setLoadingUsers(true);
-      const res = await hrService.users({ page, per_page: 25, search, status, role, month: userMonth, project_id: projectId });
+      const res = await hrService.users({
+        page,
+        per_page: 25,
+        search,
+        status,
+        role,
+        doc_status: docStatus,
+        month: userMonth,
+        project_id: projectId,
+      });
       setUsers(res.data.data || []);
       setProjectOptions(res.data.project_options || []);
       setPagination({
@@ -251,7 +267,7 @@ export default function HRDashboard() {
     } finally {
       setLoadingUsers(false);
     }
-  }, [page, search, status, role, userMonth, projectId]);
+  }, [page, search, status, role, docStatus, userMonth, projectId]);
 
   useEffect(() => {
     loadDashboard();
@@ -684,12 +700,14 @@ export default function HRDashboard() {
   const endResult = Math.min(pagination.current_page * pagination.per_page, pagination.total);
   const documentLabel = useMemo(() => Object.fromEntries(documentTypes.map(type => [type.value, type.label])), []);
   const requiredDocumentCards = [
-    { label: 'Complete Docs', value: documentStats.complete_required, tone: 'bg-emerald-50 text-emerald-700' },
-    { label: 'No Docs', value: documentStats.no_documents, tone: 'bg-rose-50 text-rose-700' },
-    { label: 'CNIC Missing', value: documentStats.missing.copy_of_cnic, tone: 'bg-amber-50 text-amber-700' },
-    { label: 'Pics Missing', value: documentStats.missing.two_pics, tone: 'bg-sky-50 text-sky-700' },
-    { label: 'NDA Missing', value: documentStats.missing.nda, tone: 'bg-indigo-50 text-indigo-700' },
-    { label: 'Contract Missing', value: documentStats.missing.contract_letter, tone: 'bg-purple-50 text-purple-700' },
+    { key: 'complete', label: 'Complete Docs', badge: '4/4 Ready', value: documentStats.complete_required, tone: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-300', activeTone: 'bg-emerald-100 text-emerald-900 border-emerald-500 ring-2 ring-emerald-500' },
+    { key: 'incomplete', label: 'Partial / Incomplete', badge: '1-3 Uploaded', value: documentStats.incomplete_docs, tone: 'bg-amber-50 text-amber-800 border-amber-200 hover:border-amber-300', activeTone: 'bg-amber-100 text-amber-900 border-amber-500 ring-2 ring-amber-500' },
+    { key: 'uploaded_today', label: 'Uploaded Today', badge: 'Today', value: documentStats.uploaded_today, tone: 'bg-teal-50 text-teal-800 border-teal-200 hover:border-teal-300', activeTone: 'bg-teal-100 text-teal-900 border-teal-500 ring-2 ring-teal-500' },
+    { key: 'no_docs', label: 'No Docs', badge: '0 Docs', value: documentStats.no_documents, tone: 'bg-rose-50 text-rose-700 border-rose-200 hover:border-rose-300', activeTone: 'bg-rose-100 text-rose-900 border-rose-500 ring-2 ring-rose-500' },
+    { key: 'missing_cnic', label: 'CNIC Missing', badge: 'CNIC', value: documentStats.missing.copy_of_cnic, tone: 'bg-orange-50 text-orange-700 border-orange-200 hover:border-orange-300', activeTone: 'bg-orange-100 text-orange-900 border-orange-500 ring-2 ring-orange-500' },
+    { key: 'missing_pics', label: 'Pics Missing', badge: '2 Photos', value: documentStats.missing.two_pics, tone: 'bg-sky-50 text-sky-700 border-sky-200 hover:border-sky-300', activeTone: 'bg-sky-100 text-sky-900 border-sky-500 ring-2 ring-sky-500' },
+    { key: 'missing_nda', label: 'NDA Missing', badge: 'NDA', value: documentStats.missing.nda, tone: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-indigo-300', activeTone: 'bg-indigo-100 text-indigo-900 border-indigo-500 ring-2 ring-indigo-500' },
+    { key: 'missing_contract', label: 'Contract Missing', badge: 'Appointment', value: documentStats.missing.contract_letter, tone: 'bg-purple-50 text-purple-700 border-purple-200 hover:border-purple-300', activeTone: 'bg-purple-100 text-purple-900 border-purple-500 ring-2 ring-purple-500' },
   ];
   const rankedProjectMovement = useMemo(() => (
     employeeAnalytics.project_breakdown
@@ -999,19 +1017,64 @@ export default function HRDashboard() {
       ) : (
         <div className="space-y-4">
           <div className="rounded-lg border border-slate-200 bg-white">
-            <div className="border-b border-slate-100 px-4 py-3">
-              <h2 className="text-sm font-semibold text-slate-900">Active User Documents</h2>
-              <p className="text-xs text-slate-500">
-                Required documents checked for {documentStats.active_total} active users
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-3 xl:grid-cols-6">
-              {requiredDocumentCards.map(item => (
-                <div key={item.label} className={`rounded-lg px-3 py-3 ${item.tone}`}>
-                  <div className="text-2xl font-bold">{item.value}</div>
-                  <div className="mt-1 text-xs font-medium">{item.label}</div>
+            <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Active User Documents</h2>
+                <p className="text-xs text-slate-500">
+                  Required documents checked for {documentStats.active_total} active users &bull; Click any card for 1-click filter
+                </p>
+              </div>
+              {docStatus !== 'all' && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-800 border border-teal-200">
+                    <span className="h-1.5 w-1.5 rounded-full bg-teal-600 animate-pulse" />
+                    Filter: {requiredDocumentCards.find(c => c.key === docStatus)?.label || docStatus}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setDocStatus('all'); setPage(1); }}
+                    className="text-xs font-medium text-slate-500 hover:text-rose-600 hover:underline cursor-pointer"
+                  >
+                    Clear Filter
+                  </button>
                 </div>
-              ))}
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2.5 p-4 sm:grid-cols-4 xl:grid-cols-8">
+              {requiredDocumentCards.map(item => {
+                const isSelected = docStatus === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => {
+                      setDocStatus(curr => (curr === item.key ? 'all' : item.key));
+                      setPage(1);
+                    }}
+                    title={`Click to filter by ${item.label}`}
+                    className={`group text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer relative overflow-hidden flex flex-col justify-between ${
+                      isSelected
+                        ? item.activeTone
+                        : `${item.tone} hover:shadow-md hover:scale-[1.02]`
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-2xl font-black tracking-tight">{item.value}</span>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        isSelected ? 'bg-white/80 text-slate-900 shadow-xs' : 'bg-white/60 text-slate-700'
+                      }`}>
+                        {item.badge}
+                      </span>
+                    </div>
+                    <div className="mt-2">
+                      <div className="text-xs font-bold leading-tight">{item.label}</div>
+                      <div className="mt-0.5 text-[10px] opacity-75">
+                        {isSelected ? 'Active filter' : 'Click to filter'}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -1025,6 +1088,23 @@ export default function HRDashboard() {
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
               />
             </div>
+            <select
+              value={docStatus}
+              onChange={e => { setDocStatus(e.target.value); setPage(1); }}
+              className={`rounded-lg border px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none ${
+                docStatus !== 'all' ? 'border-teal-500 bg-teal-50/70 font-semibold text-teal-900' : 'border-slate-200 bg-slate-50'
+              }`}
+            >
+              <option value="all">All Documents</option>
+              <option value="incomplete">Partial / Incomplete Docs (1-3)</option>
+              <option value="uploaded_today">Uploaded Today</option>
+              <option value="complete">Complete Docs (4/4)</option>
+              <option value="no_docs">No Documents (0/4)</option>
+              <option value="missing_cnic">CNIC Missing</option>
+              <option value="missing_pics">2 Pics Missing</option>
+              <option value="missing_nda">NDA Missing</option>
+              <option value="missing_contract">Appointment Letter Missing</option>
+            </select>
             <select
               value={role}
               onChange={e => { setRole(e.target.value); setPage(1); }}

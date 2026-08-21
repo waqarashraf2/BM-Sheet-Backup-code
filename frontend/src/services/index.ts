@@ -809,7 +809,9 @@ export const hrService = {
       document_stats: {
         active_total: number;
         complete_required: number;
+        incomplete_docs: number;
         no_documents: number;
+        uploaded_today: number;
         missing: {
           copy_of_cnic: number;
           two_pics: number;
@@ -832,7 +834,7 @@ export const hrService = {
         avg_minutes?: number | null;
       }>;
     }>('/hr/dashboard', { params }),
-  users: (params?: { page?: number; per_page?: number; search?: string; role?: string; status?: string; month?: string; project_id?: number | string }) =>
+  users: (params?: { page?: number; per_page?: number; search?: string; role?: string; status?: string; doc_status?: string; month?: string; project_id?: number | string }) =>
     api.get<PaginatedResponse<User> & {
       documents_ready: boolean;
       machine_id_ready: boolean;

@@ -855,7 +855,9 @@ class HrController extends Controller
                 ->when($projectId, fn ($query) => $query->where('project_id', $projectId))
                 ->count(),
             'complete_required' => 0,
+            'incomplete_docs' => 0,
             'no_documents' => 0,
+            'uploaded_today' => 0,
             'missing' => array_fill_keys($requiredTypes, 0),
         ];
 
@@ -863,14 +865,16 @@ class HrController extends Controller
             return $empty;
         }
 
+        $today = now()->toDateString();
+
         $flags = DB::table('user_documents')
             ->select('user_id')
             ->selectRaw("MAX(CASE WHEN document_type = 'copy_of_cnic' THEN 1 ELSE 0 END) as has_copy_of_cnic")
             ->selectRaw("MAX(CASE WHEN document_type = 'two_pics' THEN 1 ELSE 0 END) as has_two_pics")
             ->selectRaw("MAX(CASE WHEN document_type = 'nda' THEN 1 ELSE 0 END) as has_nda")
             ->selectRaw("MAX(CASE WHEN document_type = 'contract_letter' THEN 1 ELSE 0 END) as has_contract_letter")
+            ->selectRaw("MAX(CASE WHEN DATE(COALESCE(uploaded_at, created_at)) = ? THEN 1 ELSE 0 END) as has_uploaded_today", [$today])
             ->whereNotNull('user_id')
-            ->whereIn('document_type', $requiredTypes)
             ->groupBy('user_id');
 
         $summary = DB::table('users as users')
@@ -879,17 +883,21 @@ class HrController extends Controller
             ->when($projectId, fn ($query) => $query->where('users.project_id', $projectId))
             ->selectRaw('COUNT(*) as active_total')
             ->selectRaw('SUM(CASE WHEN docs.user_id IS NULL THEN 1 ELSE 0 END) as no_documents')
+            ->selectRaw('SUM(CASE WHEN docs.user_id IS NOT NULL AND NOT (COALESCE(docs.has_copy_of_cnic, 0) = 1 AND COALESCE(docs.has_two_pics, 0) = 1 AND COALESCE(docs.has_nda, 0) = 1 AND COALESCE(docs.has_contract_letter, 0) = 1) THEN 1 ELSE 0 END) as incomplete_docs')
             ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_copy_of_cnic, 0) = 0 THEN 1 ELSE 0 END) as missing_copy_of_cnic')
             ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_two_pics, 0) = 0 THEN 1 ELSE 0 END) as missing_two_pics')
             ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_nda, 0) = 0 THEN 1 ELSE 0 END) as missing_nda')
             ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_contract_letter, 0) = 0 THEN 1 ELSE 0 END) as missing_contract_letter')
             ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_copy_of_cnic, 0) = 1 AND COALESCE(docs.has_two_pics, 0) = 1 AND COALESCE(docs.has_nda, 0) = 1 AND COALESCE(docs.has_contract_letter, 0) = 1 THEN 1 ELSE 0 END) as complete_required')
+            ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_uploaded_today, 0) = 1 THEN 1 ELSE 0 END) as uploaded_today')
             ->first();
 
         return [
             'active_total' => (int) ($summary->active_total ?? 0),
             'complete_required' => (int) ($summary->complete_required ?? 0),
+            'incomplete_docs' => (int) ($summary->incomplete_docs ?? 0),
             'no_documents' => (int) ($summary->no_documents ?? 0),
+            'uploaded_today' => (int) ($summary->uploaded_today ?? 0),
             'missing' => [
                 'copy_of_cnic' => (int) ($summary->missing_copy_of_cnic ?? 0),
                 'two_pics' => (int) ($summary->missing_two_pics ?? 0),
@@ -1045,6 +1053,105 @@ class HrController extends Controller
                     $q->orWhere('machine_id', 'like', "%{$search}%");
                 }
             });
+        }
+
+        if ($request->filled('doc_status') && $request->input('doc_status') !== 'all' && Schema::hasTable('user_documents')) {
+            $docFilter = $request->input('doc_status');
+            $today = now()->toDateString();
+
+            if ($docFilter === 'complete') {
+                $query->whereExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id')
+                        ->where('document_type', 'copy_of_cnic');
+                })->whereExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id')
+                        ->where('document_type', 'two_pics');
+                })->whereExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id')
+                        ->where('document_type', 'nda');
+                })->whereExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id')
+                        ->where('document_type', 'contract_letter');
+                });
+            } elseif ($docFilter === 'incomplete' || $docFilter === 'partial') {
+                // Has at least 1 document uploaded, BUT not all 4 required documents
+                $query->whereExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id');
+                })->where(function ($q) {
+                    $q->whereNotExists(function ($sub) {
+                        $sub->select(DB::raw(1))
+                            ->from('user_documents')
+                            ->whereColumn('user_documents.user_id', 'users.id')
+                            ->where('document_type', 'copy_of_cnic');
+                    })->orWhereNotExists(function ($sub) {
+                        $sub->select(DB::raw(1))
+                            ->from('user_documents')
+                            ->whereColumn('user_documents.user_id', 'users.id')
+                            ->where('document_type', 'two_pics');
+                    })->orWhereNotExists(function ($sub) {
+                        $sub->select(DB::raw(1))
+                            ->from('user_documents')
+                            ->whereColumn('user_documents.user_id', 'users.id')
+                            ->where('document_type', 'nda');
+                    })->orWhereNotExists(function ($sub) {
+                        $sub->select(DB::raw(1))
+                            ->from('user_documents')
+                            ->whereColumn('user_documents.user_id', 'users.id')
+                            ->where('document_type', 'contract_letter');
+                    });
+                });
+            } elseif ($docFilter === 'no_docs') {
+                $query->whereNotExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id');
+                });
+            } elseif ($docFilter === 'missing_copy_of_cnic' || $docFilter === 'missing_cnic') {
+                $query->whereNotExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id')
+                        ->where('document_type', 'copy_of_cnic');
+                });
+            } elseif ($docFilter === 'missing_two_pics' || $docFilter === 'missing_pics') {
+                $query->whereNotExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id')
+                        ->where('document_type', 'two_pics');
+                });
+            } elseif ($docFilter === 'missing_nda') {
+                $query->whereNotExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id')
+                        ->where('document_type', 'nda');
+                });
+            } elseif ($docFilter === 'missing_contract_letter' || $docFilter === 'missing_contract') {
+                $query->whereNotExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id')
+                        ->where('document_type', 'contract_letter');
+                });
+            } elseif ($docFilter === 'uploaded_today') {
+                $query->whereExists(function ($sub) use ($today) {
+                    $sub->select(DB::raw(1))
+                        ->from('user_documents')
+                        ->whereColumn('user_documents.user_id', 'users.id')
+                        ->whereRaw('DATE(COALESCE(uploaded_at, created_at)) = ?', [$today]);
+                });
+            }
         }
 
         return $query;
