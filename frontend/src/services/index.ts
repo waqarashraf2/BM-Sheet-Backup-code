@@ -812,6 +812,13 @@ export const hrService = {
         incomplete_docs: number;
         no_documents: number;
         uploaded_today: number;
+        today_hr_breakdown?: Array<{
+          hr_id: number;
+          hr_name: string;
+          hr_email?: string | null;
+          users_count: number;
+          documents_count: number;
+        }>;
         missing: {
           copy_of_cnic: number;
           two_pics: number;

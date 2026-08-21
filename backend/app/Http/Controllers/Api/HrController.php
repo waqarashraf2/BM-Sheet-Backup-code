@@ -454,7 +454,7 @@ class HrController extends Controller
 
         $documents = collect();
         if (Schema::hasTable('user_documents')) {
-            $documents = UserDocument::where('user_id', $user->id)->latest()->get();
+            $documents = UserDocument::with('uploader:id,name,email,role')->where('user_id', $user->id)->latest()->get();
         }
 
         $performance = [
@@ -892,12 +892,40 @@ class HrController extends Controller
             ->selectRaw('SUM(CASE WHEN COALESCE(docs.has_uploaded_today, 0) = 1 THEN 1 ELSE 0 END) as uploaded_today')
             ->first();
 
+        $todayHrBreakdown = [];
+        if (Schema::hasTable('user_documents')) {
+            $todayHrBreakdown = DB::table('user_documents as ud')
+                ->join('users as hr', 'hr.id', '=', 'ud.uploaded_by')
+                ->whereRaw('DATE(COALESCE(ud.uploaded_at, ud.created_at)) = ?', [$today])
+                ->when($projectId, function ($query) use ($projectId) {
+                    $query->whereExists(function ($sub) use ($projectId) {
+                        $sub->select(DB::raw(1))
+                            ->from('users as u')
+                            ->whereColumn('u.id', 'ud.user_id')
+                            ->where('u.project_id', $projectId);
+                    });
+                })
+                ->selectRaw('hr.id as hr_id, hr.name as hr_name, hr.email as hr_email, COUNT(DISTINCT ud.user_id) as users_count, COUNT(*) as documents_count')
+                ->groupBy('hr.id', 'hr.name', 'hr.email')
+                ->orderByDesc('documents_count')
+                ->get()
+                ->map(fn ($row) => [
+                    'hr_id' => (int) $row->hr_id,
+                    'hr_name' => $row->hr_name,
+                    'hr_email' => $row->hr_email,
+                    'users_count' => (int) $row->users_count,
+                    'documents_count' => (int) $row->documents_count,
+                ])
+                ->toArray();
+        }
+
         return [
             'active_total' => (int) ($summary->active_total ?? 0),
             'complete_required' => (int) ($summary->complete_required ?? 0),
             'incomplete_docs' => (int) ($summary->incomplete_docs ?? 0),
             'no_documents' => (int) ($summary->no_documents ?? 0),
             'uploaded_today' => (int) ($summary->uploaded_today ?? 0),
+            'today_hr_breakdown' => $todayHrBreakdown,
             'missing' => [
                 'copy_of_cnic' => (int) ($summary->missing_copy_of_cnic ?? 0),
                 'two_pics' => (int) ($summary->missing_two_pics ?? 0),

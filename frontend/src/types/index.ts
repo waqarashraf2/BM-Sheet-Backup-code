@@ -158,6 +158,12 @@ export interface UserDocument {
   mime_type?: string | null;
   file_size?: number | null;
   uploaded_by?: number | null;
+  uploader?: {
+    id: number;
+    name: string;
+    email?: string | null;
+    role?: string | null;
+  } | null;
   uploaded_at?: string | null;
   created_at?: string | null;
 }

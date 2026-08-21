@@ -49,6 +49,13 @@ type DocumentStats = {
   incomplete_docs: number;
   no_documents: number;
   uploaded_today: number;
+  today_hr_breakdown?: Array<{
+    hr_id: number;
+    hr_name: string;
+    hr_email?: string | null;
+    users_count: number;
+    documents_count: number;
+  }>;
   missing: {
     copy_of_cnic: number;
     two_pics: number;
@@ -133,6 +140,7 @@ export default function HRDashboard() {
     incomplete_docs: 0,
     no_documents: 0,
     uploaded_today: 0,
+    today_hr_breakdown: [],
     missing: { copy_of_cnic: 0, two_pics: 0, nda: 0, contract_letter: 0 },
   });
   const [users, setUsers] = useState<HrUserRow[]>([]);
@@ -224,6 +232,7 @@ export default function HRDashboard() {
         incomplete_docs: 0,
         no_documents: 0,
         uploaded_today: 0,
+        today_hr_breakdown: [],
         missing: { copy_of_cnic: 0, two_pics: 0, nda: 0, contract_letter: 0 },
       });
       setEmployeeAnalytics(res.data.employee_analytics || emptyEmployeeAnalytics);
@@ -1040,39 +1049,86 @@ export default function HRDashboard() {
                 </div>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-2.5 p-4 sm:grid-cols-4 xl:grid-cols-8">
+            <div className="grid grid-cols-2 gap-2.5 p-4 sm:grid-cols-4 xl:grid-cols-8 overflow-visible">
               {requiredDocumentCards.map(item => {
                 const isSelected = docStatus === item.key;
+                const isTodayCard = item.key === 'uploaded_today';
                 return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => {
-                      setDocStatus(curr => (curr === item.key ? 'all' : item.key));
-                      setPage(1);
-                    }}
-                    title={`Click to filter by ${item.label}`}
-                    className={`group text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer relative overflow-hidden flex flex-col justify-between ${
-                      isSelected
-                        ? item.activeTone
-                        : `${item.tone} hover:shadow-md hover:scale-[1.02]`
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-2xl font-black tracking-tight">{item.value}</span>
-                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                        isSelected ? 'bg-white/80 text-slate-900 shadow-xs' : 'bg-white/60 text-slate-700'
-                      }`}>
-                        {item.badge}
-                      </span>
-                    </div>
-                    <div className="mt-2">
-                      <div className="text-xs font-bold leading-tight">{item.label}</div>
-                      <div className="mt-0.5 text-[10px] opacity-75">
-                        {isSelected ? 'Active filter' : 'Click to filter'}
+                  <div key={item.key} className="relative group overflow-visible">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDocStatus(curr => (curr === item.key ? 'all' : item.key));
+                        setPage(1);
+                      }}
+                      title={`Click to filter by ${item.label}`}
+                      className={`w-full text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer relative flex flex-col justify-between h-full min-h-[96px] ${
+                        isSelected
+                          ? item.activeTone
+                          : `${item.tone} hover:shadow-md hover:scale-[1.02]`
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-2xl font-black tracking-tight">{item.value}</span>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                          isSelected ? 'bg-white/80 text-slate-900 shadow-xs' : 'bg-white/60 text-slate-700'
+                        }`}>
+                          {item.badge}
+                        </span>
                       </div>
-                    </div>
-                  </button>
+                      <div className="mt-2">
+                        <div className="text-xs font-bold leading-tight">{item.label}</div>
+                        <div className="mt-0.5 text-[10px] opacity-75 truncate">
+                          {isSelected ? 'Active filter' : (isTodayCard ? 'Hover for HR stats' : 'Click to filter')}
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* HR Hover Breakdown Popover for Uploaded Today */}
+                    {isTodayCard && (
+                      <div className="hidden group-hover:block absolute left-1/2 -translate-x-1/2 top-full mt-2 z-[60] w-72 bg-slate-900/95 text-white rounded-xl shadow-2xl p-3.5 text-left border border-slate-700 pointer-events-none transition-all duration-200">
+                        <div className="flex items-center justify-between border-b border-slate-700/80 pb-2 mb-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="h-2 w-2 rounded-full bg-teal-400 animate-ping" />
+                            <span className="text-xs font-bold uppercase tracking-wider text-teal-300">Today's HR Uploads</span>
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            {documentStats.today_hr_breakdown?.length || 0} HR active
+                          </span>
+                        </div>
+                        {(!documentStats.today_hr_breakdown || documentStats.today_hr_breakdown.length === 0) ? (
+                          <div className="text-xs text-slate-400 py-2 text-center">No uploads recorded today yet.</div>
+                        ) : (
+                          <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
+                            {documentStats.today_hr_breakdown.map(hr => (
+                              <div key={hr.hr_id} className="flex items-center justify-between gap-2 text-xs bg-slate-800/90 rounded-lg px-2.5 py-2 border border-slate-700/60 shadow-xs">
+                                <div className="min-w-0 flex items-center gap-2">
+                                  <div className="h-6 w-6 rounded-full bg-teal-600/40 text-teal-300 flex items-center justify-center font-bold text-[11px] shrink-0 border border-teal-500/40">
+                                    {hr.hr_name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="font-semibold text-slate-100 truncate text-xs">{hr.hr_name}</div>
+                                    <div className="text-[10px] text-slate-400 truncate">{hr.users_count} {hr.users_count === 1 ? 'employee' : 'employees'}</div>
+                                  </div>
+                                </div>
+                                <div className="shrink-0 text-right">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-teal-500/25 text-teal-300 text-[11px] font-bold border border-teal-500/40">
+                                    {hr.documents_count} {hr.documents_count === 1 ? 'doc' : 'docs'}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-2.5 pt-2 border-t border-slate-700/80 flex items-center justify-between text-[11px] text-slate-400">
+                          <span>Total Uploads Today:</span>
+                          <span className="font-bold text-teal-300">
+                            {documentStats.today_hr_breakdown?.reduce((sum, h) => sum + h.documents_count, 0) || documentStats.uploaded_today} Files
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -1684,8 +1740,14 @@ export default function HRDashboard() {
                 <div key={doc.id} className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 last:border-b-0">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-slate-900">{doc.original_name}</div>
-                    <div className="text-xs text-slate-500">
-                      {documentLabel[doc.document_type]} {doc.uploaded_at ? `- ${new Date(doc.uploaded_at).toLocaleDateString()}` : ''}
+                    <div className="text-xs text-slate-500 flex flex-wrap items-center gap-1.5 mt-0.5">
+                      <span className="font-semibold text-slate-700">{documentLabel[doc.document_type]}</span>
+                      {doc.uploaded_at && <span>&bull; {new Date(doc.uploaded_at).toLocaleDateString()}</span>}
+                      {doc.uploader?.name && (
+                        <span className="inline-flex items-center gap-1 rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold text-teal-800 border border-teal-200/60">
+                          By: {doc.uploader.name}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
