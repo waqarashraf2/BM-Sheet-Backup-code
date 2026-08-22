@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Trash2, Check, X, RefreshCw, FileText, Loader2 } from 'lucide-react';
+import { Camera, Trash2, Check, X, RefreshCw, FileText, Loader2, Plus } from 'lucide-react';
 import { jsPDF } from 'jspdf';
+import defaultNdaPage1Img from '../assets/benchmark_nda_page1.png';
 
 interface CameraCaptureModalProps {
   open: boolean;
@@ -9,6 +10,32 @@ interface CameraCaptureModalProps {
   documentTypeValue: string;
   onSave: (file: File) => void;
 }
+
+// Convert image src / url to Base64 Data URL
+const imageSrcToDataUrl = (src: string): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/jpeg', 0.95));
+        } else {
+          resolve(src);
+        }
+      } catch (e) {
+        resolve(src);
+      }
+    };
+    img.onerror = () => resolve(src);
+    img.src = src;
+  });
+};
 
 export default function CameraCaptureModal({
   open,
@@ -88,16 +115,32 @@ export default function CameraCaptureModal({
     }
   };
 
-  // Trigger camera on mount/open/device selection
+  // Trigger camera on mount/open/device selection and preload default NDA page 1 if NDA
   useEffect(() => {
+    let isMounted = true;
     if (open) {
       getDevices();
       startCamera();
+
+      // For NDA document type ONLY: pre-load default NDA page 1
+      if (documentTypeValue === 'nda') {
+        imageSrcToDataUrl(defaultNdaPage1Img).then(dataUrl => {
+          if (isMounted) {
+            setCapturedImages([dataUrl]);
+          }
+        });
+      } else {
+        setCapturedImages([]);
+      }
+    } else {
+      setCapturedImages([]);
     }
+
     return () => {
+      isMounted = false;
       stopCamera();
     };
-  }, [open, selectedDeviceId, facingMode]);
+  }, [open, selectedDeviceId, facingMode, documentTypeValue]);
 
   // Capture a single frame
   const capturePhoto = () => {
@@ -135,6 +178,12 @@ export default function CameraCaptureModal({
   // Remove a captured thumbnail
   const removeImage = (index: number) => {
     setCapturedImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Re-add default NDA page 1 if removed
+  const addDefaultNdaPage = async () => {
+    const dataUrl = await imageSrcToDataUrl(defaultNdaPage1Img);
+    setCapturedImages(prev => [dataUrl, ...prev]);
   };
 
   // Helper to load image and extract dimensions
@@ -225,11 +274,15 @@ export default function CameraCaptureModal({
               <Camera className="h-5 w-5 text-[#2AA7A0]" />
               Scan {documentTypeLabel}
             </h3>
-            <p className="text-xs text-slate-500">Capture single or multiple images to compile into a PDF</p>
+            <p className="text-xs text-slate-500">
+              {documentTypeValue === 'nda' 
+                ? 'Page 1 is attached by default. Take a photo of Page 2 (signatures) to generate complete NDA PDF' 
+                : 'Capture single or multiple images to compile into a PDF'}
+            </p>
           </div>
           <button 
-            onClick={() => { stopCamera(); onClose(); }}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors"
+            onClick={() => { stopCamera(); onClose(); setCapturedImages([]); }}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>
@@ -269,7 +322,7 @@ export default function CameraCaptureModal({
                     type="button"
                     onClick={capturePhoto}
                     className="p-5 bg-gradient-to-r from-[#2AA7A0] to-[#238F89] hover:from-[#238F89] hover:to-[#217d78] rounded-full text-white transition-all shadow-xl hover:scale-110 active:scale-95 border-4 border-white/20 cursor-pointer"
-                    title="Capture Photo"
+                    title={documentTypeValue === 'nda' ? 'Capture Page 2 (Signed NDA)' : 'Capture Photo'}
                   >
                     <Camera className="h-6 w-6" />
                   </button>
@@ -279,32 +332,64 @@ export default function CameraCaptureModal({
           </div>
 
           {/* Right: Capture Queue & Preview */}
-          <div className="w-full md:w-64 flex flex-col border border-slate-100 rounded-xl bg-slate-50 p-4 max-h-[450px]">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3 block">
-              Captured Pages ({capturedImages.length})
-            </span>
+          <div className="w-full md:w-72 flex flex-col border border-slate-100 rounded-xl bg-slate-50 p-4 max-h-[450px]">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-600 block">
+                Captured Pages ({capturedImages.length})
+              </span>
+              {documentTypeValue === 'nda' && capturedImages.length === 0 && (
+                <button
+                  type="button"
+                  onClick={addDefaultNdaPage}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 hover:text-teal-800 hover:underline cursor-pointer"
+                >
+                  <Plus className="h-3 w-3" />
+                  Default Page 1
+                </button>
+              )}
+            </div>
             
-            <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-[150px]">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 min-h-[150px]">
               {capturedImages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center text-xs text-slate-400 p-4 border border-dashed border-slate-200 rounded-lg">
                   <FileText className="h-8 w-8 mb-2 text-slate-300" />
                   No pages captured yet. Click the camera button to take a photo.
                 </div>
               ) : (
-                capturedImages.map((img, idx) => (
-                  <div key={idx} className="relative group/thumb border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm flex items-center p-2">
-                    <img src={img} className="w-12 h-16 object-cover rounded border border-slate-100" alt={`Page ${idx + 1}`} />
-                    <span className="ml-3 text-xs font-medium text-slate-700 flex-1">Page {idx + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeImage(idx)}
-                      className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                      title="Delete Page"
+                capturedImages.map((img, idx) => {
+                  const isDefaultNdaPage = documentTypeValue === 'nda' && idx === 0;
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`relative group/thumb border rounded-lg overflow-hidden bg-white shadow-xs flex items-center p-2 ${
+                        isDefaultNdaPage ? 'border-teal-300 bg-teal-50/40 ring-1 ring-teal-200' : 'border-slate-200'
+                      }`}
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))
+                      <img src={img} className="w-12 h-16 object-cover rounded border border-slate-100 shrink-0" alt={`Page ${idx + 1}`} />
+                      <div className="ml-3 min-w-0 flex-1">
+                        <div className="text-xs font-semibold text-slate-800 flex items-center gap-1">
+                          <span>Page {idx + 1}</span>
+                          {isDefaultNdaPage && (
+                            <span className="text-[9px] font-bold text-teal-700 bg-teal-100/90 px-1 py-0.5 rounded border border-teal-200">
+                              Default NDA
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400 block truncate mt-0.5">
+                          {isDefaultNdaPage ? 'Benchmark NDA Page 1' : 'Camera Capture'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeImage(idx)}
+                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer shrink-0"
+                        title="Delete Page"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  );
+                })
               )}
             </div>
 
@@ -323,7 +408,7 @@ export default function CameraCaptureModal({
                 ) : (
                   <>
                     <Check className="h-4 w-4" />
-                    Save as PDF
+                    Save as PDF ({capturedImages.length} {capturedImages.length === 1 ? 'Page' : 'Pages'})
                   </>
                 )}
               </button>
@@ -336,3 +421,4 @@ export default function CameraCaptureModal({
     </div>
   );
 }
+

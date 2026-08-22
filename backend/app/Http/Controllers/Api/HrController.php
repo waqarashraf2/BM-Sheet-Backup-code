@@ -893,7 +893,20 @@ class HrController extends Controller
             ->first();
 
         $todayHrBreakdown = [];
+        $todayTotalDocs = 0;
         if (Schema::hasTable('user_documents')) {
+            $todayTotalDocs = DB::table('user_documents as ud')
+                ->whereRaw('DATE(COALESCE(ud.uploaded_at, ud.created_at)) = ?', [$today])
+                ->when($projectId, function ($query) use ($projectId) {
+                    $query->whereExists(function ($sub) use ($projectId) {
+                        $sub->select(DB::raw(1))
+                            ->from('users as u')
+                            ->whereColumn('u.id', 'ud.user_id')
+                            ->where('u.project_id', $projectId);
+                    });
+                })
+                ->count();
+
             $todayHrBreakdown = DB::table('user_documents as ud')
                 ->join('users as hr', 'hr.id', '=', 'ud.uploaded_by')
                 ->whereRaw('DATE(COALESCE(ud.uploaded_at, ud.created_at)) = ?', [$today])
@@ -925,6 +938,7 @@ class HrController extends Controller
             'incomplete_docs' => (int) ($summary->incomplete_docs ?? 0),
             'no_documents' => (int) ($summary->no_documents ?? 0),
             'uploaded_today' => (int) ($summary->uploaded_today ?? 0),
+            'uploaded_today_docs' => (int) $todayTotalDocs,
             'today_hr_breakdown' => $todayHrBreakdown,
             'missing' => [
                 'copy_of_cnic' => (int) ($summary->missing_copy_of_cnic ?? 0),

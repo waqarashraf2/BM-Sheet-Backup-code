@@ -49,6 +49,7 @@ type DocumentStats = {
   incomplete_docs: number;
   no_documents: number;
   uploaded_today: number;
+  uploaded_today_docs?: number;
   today_hr_breakdown?: Array<{
     hr_id: number;
     hr_name: string;
@@ -709,14 +710,14 @@ export default function HRDashboard() {
   const endResult = Math.min(pagination.current_page * pagination.per_page, pagination.total);
   const documentLabel = useMemo(() => Object.fromEntries(documentTypes.map(type => [type.value, type.label])), []);
   const requiredDocumentCards = [
-    { key: 'complete', label: 'Complete Docs', badge: '4/4 Ready', value: documentStats.complete_required, tone: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-300', activeTone: 'bg-emerald-100 text-emerald-900 border-emerald-500 ring-2 ring-emerald-500' },
-    { key: 'incomplete', label: 'Partial / Incomplete', badge: '1-3 Uploaded', value: documentStats.incomplete_docs, tone: 'bg-amber-50 text-amber-800 border-amber-200 hover:border-amber-300', activeTone: 'bg-amber-100 text-amber-900 border-amber-500 ring-2 ring-amber-500' },
-    { key: 'uploaded_today', label: 'Uploaded Today', badge: 'Today', value: documentStats.uploaded_today, tone: 'bg-teal-50 text-teal-800 border-teal-200 hover:border-teal-300', activeTone: 'bg-teal-100 text-teal-900 border-teal-500 ring-2 ring-teal-500' },
-    { key: 'no_docs', label: 'No Docs', badge: '0 Docs', value: documentStats.no_documents, tone: 'bg-rose-50 text-rose-700 border-rose-200 hover:border-rose-300', activeTone: 'bg-rose-100 text-rose-900 border-rose-500 ring-2 ring-rose-500' },
-    { key: 'missing_cnic', label: 'CNIC Missing', badge: 'CNIC', value: documentStats.missing.copy_of_cnic, tone: 'bg-orange-50 text-orange-700 border-orange-200 hover:border-orange-300', activeTone: 'bg-orange-100 text-orange-900 border-orange-500 ring-2 ring-orange-500' },
-    { key: 'missing_pics', label: 'Pics Missing', badge: '2 Photos', value: documentStats.missing.two_pics, tone: 'bg-sky-50 text-sky-700 border-sky-200 hover:border-sky-300', activeTone: 'bg-sky-100 text-sky-900 border-sky-500 ring-2 ring-sky-500' },
-    { key: 'missing_nda', label: 'NDA Missing', badge: 'NDA', value: documentStats.missing.nda, tone: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-indigo-300', activeTone: 'bg-indigo-100 text-indigo-900 border-indigo-500 ring-2 ring-indigo-500' },
-    { key: 'missing_contract', label: 'Contract Missing', badge: 'Appointment', value: documentStats.missing.contract_letter, tone: 'bg-purple-50 text-purple-700 border-purple-200 hover:border-purple-300', activeTone: 'bg-purple-100 text-purple-900 border-purple-500 ring-2 ring-purple-500' },
+    { key: 'complete', label: 'Complete Docs', badge: '4/4 Ready', value: documentStats.complete_required, sublabel: '4/4 complete', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-300', activeTone: 'bg-emerald-100 text-emerald-900 border-emerald-500 ring-2 ring-emerald-500' },
+    { key: 'incomplete', label: 'Partial / Incomplete', badge: '1-3 Uploaded', value: documentStats.incomplete_docs, sublabel: '1-3 uploaded', tone: 'bg-amber-50 text-amber-800 border-amber-200 hover:border-amber-300', activeTone: 'bg-amber-100 text-amber-900 border-amber-500 ring-2 ring-amber-500' },
+    { key: 'uploaded_today', label: 'Uploaded Today', badge: `${documentStats.uploaded_today_docs || 0} Files`, value: documentStats.uploaded_today, sublabel: `${documentStats.uploaded_today_docs || 0} Files`, tone: 'bg-teal-50 text-teal-800 border-teal-200 hover:border-teal-300', activeTone: 'bg-teal-100 text-teal-900 border-teal-500 ring-2 ring-teal-500' },
+    { key: 'no_docs', label: 'No Docs', badge: '0 Docs', value: documentStats.no_documents, sublabel: '0 uploaded', tone: 'bg-rose-50 text-rose-700 border-rose-200 hover:border-rose-300', activeTone: 'bg-rose-100 text-rose-900 border-rose-500 ring-2 ring-rose-500' },
+    { key: 'missing_cnic', label: 'CNIC Missing', badge: 'CNIC', value: documentStats.missing.copy_of_cnic, sublabel: 'CNIC needed', tone: 'bg-orange-50 text-orange-700 border-orange-200 hover:border-orange-300', activeTone: 'bg-orange-100 text-orange-900 border-orange-500 ring-2 ring-orange-500' },
+    { key: 'missing_pics', label: 'Pics Missing', badge: '2 Photos', value: documentStats.missing.two_pics, sublabel: 'Photos needed', tone: 'bg-sky-50 text-sky-700 border-sky-200 hover:border-sky-300', activeTone: 'bg-sky-100 text-sky-900 border-sky-500 ring-2 ring-sky-500' },
+    { key: 'missing_nda', label: 'NDA Missing', badge: 'NDA', value: documentStats.missing.nda, sublabel: 'NDA needed', tone: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-indigo-300', activeTone: 'bg-indigo-100 text-indigo-900 border-indigo-500 ring-2 ring-indigo-500' },
+    { key: 'missing_contract', label: 'Contract Missing', badge: 'Appointment', value: documentStats.missing.contract_letter, sublabel: 'Offer needed', tone: 'bg-purple-50 text-purple-700 border-purple-200 hover:border-purple-300', activeTone: 'bg-purple-100 text-purple-900 border-purple-500 ring-2 ring-purple-500' },
   ];
   const rankedProjectMovement = useMemo(() => (
     employeeAnalytics.project_breakdown
@@ -1062,7 +1063,7 @@ export default function HRDashboard() {
                         setPage(1);
                       }}
                       title={`Click to filter by ${item.label}`}
-                      className={`w-full text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer relative flex flex-col justify-between h-full min-h-[96px] ${
+                      className={`w-full text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer relative flex flex-col justify-between h-full min-h-[98px] ${
                         isSelected
                           ? item.activeTone
                           : `${item.tone} hover:shadow-md hover:scale-[1.02]`
@@ -1079,25 +1080,26 @@ export default function HRDashboard() {
                       <div className="mt-2">
                         <div className="text-xs font-bold leading-tight">{item.label}</div>
                         <div className="mt-0.5 text-[10px] opacity-75 truncate">
-                          {isSelected ? 'Active filter' : (isTodayCard ? 'Hover for HR stats' : 'Click to filter')}
+                          {isSelected ? 'Active filter' : (isTodayCard ? `${item.value} Users • ${documentStats.uploaded_today_docs || 0} Docs` : 'Click to filter')}
                         </div>
                       </div>
                     </button>
 
                     {/* HR Hover Breakdown Popover for Uploaded Today */}
                     {isTodayCard && (
-                      <div className="hidden group-hover:block absolute left-1/2 -translate-x-1/2 top-full mt-2 z-[60] w-72 bg-slate-900/95 text-white rounded-xl shadow-2xl p-3.5 text-left border border-slate-700 pointer-events-none transition-all duration-200">
+                      <div className="hidden group-hover:block absolute left-1/2 -translate-x-1/2 top-full mt-2 z-[60] w-80 bg-slate-900/95 text-white rounded-xl shadow-2xl p-3.5 text-left border border-slate-700 pointer-events-none transition-all duration-200">
                         <div className="flex items-center justify-between border-b border-slate-700/80 pb-2 mb-2">
                           <div className="flex items-center gap-1.5">
                             <span className="h-2 w-2 rounded-full bg-teal-400 animate-ping" />
-                            <span className="text-xs font-bold uppercase tracking-wider text-teal-300">Today's HR Uploads</span>
+                            <span className="text-xs font-bold uppercase tracking-wider text-teal-300">Today's Upload Activity</span>
                           </div>
-                          <span className="text-[10px] text-slate-400 font-medium">
-                            {documentStats.today_hr_breakdown?.length || 0} HR active
+                          <span className="text-[10px] text-slate-300 bg-slate-800 px-2 py-0.5 rounded-full font-medium border border-slate-700">
+                            {documentStats.today_hr_breakdown?.length || 0} HR Active
                           </span>
                         </div>
+
                         {(!documentStats.today_hr_breakdown || documentStats.today_hr_breakdown.length === 0) ? (
-                          <div className="text-xs text-slate-400 py-2 text-center">No uploads recorded today yet.</div>
+                          <div className="text-xs text-slate-400 py-3 text-center">No uploads recorded today yet.</div>
                         ) : (
                           <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
                             {documentStats.today_hr_breakdown.map(hr => (
@@ -1108,7 +1110,7 @@ export default function HRDashboard() {
                                   </div>
                                   <div className="min-w-0">
                                     <div className="font-semibold text-slate-100 truncate text-xs">{hr.hr_name}</div>
-                                    <div className="text-[10px] text-slate-400 truncate">{hr.users_count} {hr.users_count === 1 ? 'employee' : 'employees'}</div>
+                                    <div className="text-[10px] text-slate-400 truncate">For {hr.users_count} {hr.users_count === 1 ? 'employee' : 'employees'}</div>
                                   </div>
                                 </div>
                                 <div className="shrink-0 text-right">
@@ -1120,11 +1122,16 @@ export default function HRDashboard() {
                             ))}
                           </div>
                         )}
-                        <div className="mt-2.5 pt-2 border-t border-slate-700/80 flex items-center justify-between text-[11px] text-slate-400">
-                          <span>Total Uploads Today:</span>
-                          <span className="font-bold text-teal-300">
-                            {documentStats.today_hr_breakdown?.reduce((sum, h) => sum + h.documents_count, 0) || documentStats.uploaded_today} Files
-                          </span>
+
+                        <div className="mt-2.5 pt-2 border-t border-slate-700/80 grid grid-cols-2 gap-2 text-[11px]">
+                          <div className="bg-slate-800/60 rounded-lg p-1.5 px-2 border border-slate-700/40">
+                            <span className="text-slate-400 block text-[10px]">Unique Employees:</span>
+                            <span className="font-bold text-slate-100 text-xs">{documentStats.uploaded_today} Users</span>
+                          </div>
+                          <div className="bg-slate-800/60 rounded-lg p-1.5 px-2 border border-slate-700/40 text-right">
+                            <span className="text-slate-400 block text-[10px]">Total Files Uploaded:</span>
+                            <span className="font-bold text-teal-300 text-xs">{documentStats.uploaded_today_docs || 0} Files</span>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1144,23 +1151,6 @@ export default function HRDashboard() {
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
               />
             </div>
-            <select
-              value={docStatus}
-              onChange={e => { setDocStatus(e.target.value); setPage(1); }}
-              className={`rounded-lg border px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none ${
-                docStatus !== 'all' ? 'border-teal-500 bg-teal-50/70 font-semibold text-teal-900' : 'border-slate-200 bg-slate-50'
-              }`}
-            >
-              <option value="all">All Documents</option>
-              <option value="incomplete">Partial / Incomplete Docs (1-3)</option>
-              <option value="uploaded_today">Uploaded Today</option>
-              <option value="complete">Complete Docs (4/4)</option>
-              <option value="no_docs">No Documents (0/4)</option>
-              <option value="missing_cnic">CNIC Missing</option>
-              <option value="missing_pics">2 Pics Missing</option>
-              <option value="missing_nda">NDA Missing</option>
-              <option value="missing_contract">Appointment Letter Missing</option>
-            </select>
             <select
               value={role}
               onChange={e => { setRole(e.target.value); setPage(1); }}
