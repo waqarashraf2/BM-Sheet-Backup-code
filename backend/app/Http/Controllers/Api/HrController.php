@@ -913,12 +913,32 @@ class HrController extends Controller
                 $chosenUser = $usersInGroup[0];
             }
 
-            $flags = $userDocFlags->get($chosenUser->id);
-            $hasCnic = (bool) ($flags->has_copy_of_cnic ?? false);
-            $hasPics = (bool) ($flags->has_two_pics ?? false);
-            $hasNda = (bool) ($flags->has_nda ?? false);
-            $hasContract = (bool) ($flags->has_contract_letter ?? false);
-            $hasToday = (bool) ($flags->has_uploaded_today ?? false);
+            $hasCnic = false;
+            $hasPics = false;
+            $hasNda = false;
+            $hasContract = false;
+            $hasToday = false;
+
+            foreach ($usersInGroup as $member) {
+                $flags = $userDocFlags->get($member->id);
+                if ($flags) {
+                    if (!empty($flags->has_copy_of_cnic)) {
+                        $hasCnic = true;
+                    }
+                    if (!empty($flags->has_two_pics)) {
+                        $hasPics = true;
+                    }
+                    if (!empty($flags->has_nda)) {
+                        $hasNda = true;
+                    }
+                    if (!empty($flags->has_contract_letter)) {
+                        $hasContract = true;
+                    }
+                    if (!empty($flags->has_uploaded_today)) {
+                        $hasToday = true;
+                    }
+                }
+            }
 
             $docCount = ($hasCnic ? 1 : 0) + ($hasPics ? 1 : 0) + ($hasNda ? 1 : 0) + ($hasContract ? 1 : 0);
             $status = 'no_docs';
