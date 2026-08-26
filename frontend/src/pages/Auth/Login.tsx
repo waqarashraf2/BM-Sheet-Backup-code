@@ -6,6 +6,7 @@ import { authService } from '../../services';
 import { motion } from 'framer-motion';
 import { LogIn, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import BenchmarkLogo from '../../components/ui/BenchmarkLogo';
+import rabiUlAwalImg from '../../assets/rabi_ul_awal.png';
 
 interface FlyingFlag {
   id: number;
@@ -47,6 +48,9 @@ export default function Login() {
       dispatch(setAuthLoading(true));
       const res = await authService.login({ email, password });
       const { user, token } = res.data;
+      if (user?.id) {
+        sessionStorage.removeItem(`machine_id_prompt_dismissed_${user.id}`);
+      }
       dispatch(setCredentials({ user, token }));
       navigate('/dashboard');
     } catch (err: any) {
@@ -60,7 +64,7 @@ export default function Login() {
   return (
     <div className="min-h-screen flex relative overflow-hidden" style={{ backgroundColor: '#0d1f1e' }}>
 
-      {/* Background Flying Flags */}
+      {/* Background Floating Elements */}
       <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
         {flags.map((flag) => (
           <motion.div
@@ -85,8 +89,8 @@ export default function Login() {
             style={{ width: flag.size }}
           >
             <img
-              src="https://acegif.com/wp-content/uploads/gifs/pakistan-flag-19.gif"
-              alt="Flying Pakistan Flag"
+              src={rabiUlAwalImg}
+              alt="Rabi ul Awal Mubarak"
               style={{ width: '100%', height: 'auto', display: 'block' }}
             />
           </motion.div>
@@ -154,15 +158,15 @@ export default function Login() {
               <h2 className="text-3xl font-bold text-slate-900 tracking-tight">Welcome back</h2>
               <p className="text-slate-500 mt-2">Sign in to continue to your dashboard.</p>
             </div>
-            {/* Pakistan Flag Gif element */}
+            {/* Rabi ul Awal element */}
             <div className="flex flex-col items-center shrink-0 ml-4">
               <img
-                src="https://acegif.com/wp-content/uploads/gifs/pakistan-flag-19.gif"
-                alt="Pakistan Flag"
-                className="w-24 h-auto"
+                src={rabiUlAwalImg}
+                alt="Rabi ul Awal Mubarak"
+                className="w-20 h-20 object-contain drop-shadow-md"
               />
-              <span className="text-[9px] font-bold text-emerald-600 mt-1 uppercase tracking-wider animate-pulse whitespace-nowrap">
-                Happy Independence Day
+              <span className="text-[10px] font-bold text-emerald-600 mt-1 uppercase tracking-wider whitespace-nowrap">
+                Rabi ul Awal Mubarak
               </span>
             </div>
           </div>

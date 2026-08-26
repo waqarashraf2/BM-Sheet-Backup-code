@@ -50,6 +50,7 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/profile', [AuthController::class, 'profile']);
     Route::get('/auth/session-check', [AuthController::class, 'sessionCheck']);
+    Route::post('/auth/update-machine-id', [AuthController::class, 'updateMachineId']);
 
     // ── Notifications (all authenticated users) ──
     Route::get('/notifications', [NotificationController::class, 'index']);

@@ -10,6 +10,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import NotificationBell from '../Notifications/NotificationBell';
 import { useNotificationPolling } from '../../hooks/useNotificationPolling';
 import type { RootState } from '../../store/store';
+import rabiUlAwalImg from '../../assets/rabi_ul_awal.png';
 
 const PAGES = [
   { name: 'Dashboard', path: '/dashboard', keywords: 'home overview stats' },
@@ -73,19 +74,19 @@ export default function Header() {
 
         {/* Right */}
         <div className="flex items-center gap-4">
-          {/* Independence Day Banner with Username */}
-          <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50/50 rounded-xl border border-emerald-100/50 select-none">
+          {/* Rabi ul Awal Banner with Username */}
+          <div className="flex items-center gap-2.5 px-3 py-1 bg-emerald-50/70 rounded-xl border border-emerald-100/70 select-none">
             <img 
-              src="https://acegif.com/wp-content/uploads/gifs/pakistan-flag-19.gif"
-              alt="Pakistan Flag" 
-              className="w-10 h-auto"
+              src={rabiUlAwalImg}
+              alt="Rabi ul Awal Mubarak" 
+              className="w-9 h-9 object-contain drop-shadow-sm"
             />
             <div className="flex flex-col text-left">
               <span className="text-[10px] font-bold text-slate-700 leading-tight">
                 {user?.name || 'User'}
               </span>
-              <span className="text-[9px] font-semibold text-emerald-600 leading-tight uppercase tracking-wider animate-pulse">
-                Happy Independence Day
+              <span className="text-[9px] font-semibold text-emerald-600 leading-tight uppercase tracking-wider">
+                Rabi ul Awal Mubarak
               </span>
             </div>
           </div>

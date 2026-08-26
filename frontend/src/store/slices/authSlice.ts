@@ -32,6 +32,9 @@ const authSlice = createSlice({
       localStorage.setItem('token', action.payload.token);
     },
     logout: (state) => {
+      if (state.user?.id) {
+        sessionStorage.removeItem(`machine_id_prompt_dismissed_${state.user.id}`);
+      }
       state.user = null;
       state.token = null;
       state.isAuthenticated = false;

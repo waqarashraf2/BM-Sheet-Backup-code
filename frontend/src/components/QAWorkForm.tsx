@@ -30,6 +30,7 @@ interface ChecklistItem {
   id: string;
   label: string;
   description: string;
+  category?: string;
   checked: boolean;
 }
 
@@ -78,6 +79,71 @@ const DEFAULT_CHECKLIST: ChecklistItem[] = [
   { id: 'labeling', label: 'Labeling & Annotations', description: 'All labels, text, and annotations are correct and properly placed', checked: false },
   { id: 'completeness', label: 'Completeness Check', description: 'No missing elements — all required items present', checked: false },
 ];
+
+const PROJECT_CHECKLISTS: Record<number, ChecklistItem[]> = {
+  15: [
+    // 1. Template
+    { id: 'p15_template_verify', category: '1. Template', label: 'Template Adherence', description: 'Verify that the drawing strictly follows the updated template, including:', checked: false },
+    { id: 'p15_template_font', category: '1. Template', label: 'Label Font Style', description: 'Label Font style (Type and Size)', checked: false },
+    { id: 'p15_template_textures', category: '1. Template', label: 'Textures & Colors', description: 'Textures and Colors used in template', checked: false },
+    { id: 'p15_template_openings', category: '1. Template', label: 'Door & Window Styles', description: 'Door and window styles', checked: false },
+    { id: 'p15_template_fixtures', category: '1. Template', label: 'Fixtures & Furniture Styles', description: 'Fixtures and furniture styles', checked: false },
+    { id: 'p15_template_lineweight', category: '1. Template', label: 'Stroke & Lineweight', description: 'Stroke & lineweight', checked: false },
+
+    // 2. Video Walkthrough / Meshes
+    { id: 'p15_video_meshes', category: '2. Video Walkthrough / Meshes', label: 'Walkthrough & Structure Meshes', description: 'Perform a complete walkthrough of the tour to ensure no areas, rooms, or elements are missing. Also verify that the structure matches the meshes.', checked: false },
+
+    // 3. Dimensions
+    { id: 'p15_dim_accuracy', category: '3. Dimensions', label: 'Dimensions Accuracy & Consistency', description: 'Confirm that all dimensions are present, accurate, readable, and consistent with the visualizer.', checked: false },
+    { id: 'p15_dim_units', category: '3. Dimensions', label: 'Dimension Units & Decimal Values', description: 'Dimension (SQM, SQFT, BOTH also Decimal value)', checked: false },
+    { id: 'p15_dim_kitchen_bath', category: '3. Dimensions', label: 'Kitchen & Bath/Ldry Dimensions', description: 'Kitchen & Bath/Ldry Dimensions', checked: false },
+
+    // 4. Labeling
+    { id: 'p15_label_standards', category: '4. Labeling', label: 'Rooms & Key Elements Labeling', description: 'Ensure all rooms, areas, and key elements are correctly labeled according to template standards.', checked: false },
+    { id: 'p15_label_language', category: '4. Labeling', label: 'Correct Language', description: 'Correct Language', checked: false },
+    { id: 'p15_label_template_names', category: '4. Labeling', label: 'Template Labels', description: 'Label according to template (Linen, Wir, Robe & Clo)', checked: false },
+    { id: 'p15_label_font_style', category: '4. Labeling', label: 'Label Font Style (Type and Size)', description: 'Label Font style (Type and Size)', checked: false },
+
+    // 5. Site Plan
+    { id: 'p15_site_google_maps', category: '5. Site Plan', label: 'Google Maps Match & Orientation', description: 'Verify that the site plan matches the Google Maps location in terms of orientation and layout.', checked: false },
+    { id: 'p15_site_boundary', category: '5. Site Plan', label: 'Boundary Lines & Property Placement', description: 'Verify boundary lines match and property orientation/palcement is relative to the site boundary', checked: false },
+    { id: 'p15_site_external', category: '5. Site Plan', label: 'External Elements Verification', description: 'Verify external elements are correct: driveway, fences/gates, pools, decks, sheds and other relevant elements are shown accurately.', checked: false },
+    { id: 'p15_site_labels_fp', category: '5. Site Plan', label: 'SP Labels vs FP', description: 'Check SP all labels according to FP. Like (Patio, Porch, Carport, etc)', checked: false },
+
+    // 6. North & Disclaimer
+    { id: 'p15_north_arrow', category: '6. North & Disclaimer', label: 'North Arrow Orientation', description: 'Confirm that the North arrow is present and correctly oriented.', checked: false },
+    { id: 'p15_disclaimer', category: '6. North & Disclaimer', label: 'North , Disclaimer', description: 'North , Disclaimer', checked: false },
+
+    // 7. Address/Title
+    { id: 'p15_address_correct', category: '7. Address/Title', label: 'Property Address / Title', description: 'Ensure the correct Property address or requested title has been added', checked: false },
+    { id: 'p15_address_style', category: '7. Address/Title', label: 'Address & Address Style', description: 'Check Address & Address style', checked: false },
+
+    // 8. Area
+    { id: 'p15_area_calc', category: '8. Area', label: 'Area Measurements Calculation', description: 'Verify that all area measurements (internal, external, total, or as required) are correctly calculated and displayed.', checked: false },
+    { id: 'p15_area_style', category: '8. Area', label: 'Area Style (Decimal Value)', description: 'Area Style (Decimal Value)', checked: false },
+
+    // 9. Data Sheet
+    { id: 'p15_datasheet', category: '9. Data Sheet', label: 'Data Sheet Details', description: 'Ensure all details are accurately included in the data sheet, such as climate control, room names, floor names, kitchen accessories, ceiling height, and floor type.', checked: false },
+
+    // 10. Notes
+    { id: 'p15_notes_follow', category: '10. Notes', label: 'Plan Notes Compliance', description: 'Ensure all provided notes are accurately followed in the plan.', checked: false },
+    { id: 'p15_notes_attachments', category: '10. Notes', label: 'Notes & Attachments', description: 'Check notes & Attachments', checked: false },
+
+    // 11. Final Files (Template Requirements)
+    { id: 'p15_final_deliverables', category: '11. Final Files (Template Requirements)', label: 'Final Deliverables Organization', description: 'Confirm that all final deliverables are exported and organized according to template requirements', checked: false },
+    { id: 'p15_file_formats', category: '11. Final Files (Template Requirements)', label: 'File Formats', description: 'File Formats', checked: false },
+    { id: 'p15_file_naming', category: '11. Final Files (Template Requirements)', label: 'Naming Standards', description: 'Naming', checked: false },
+    { id: 'p15_file_resolution', category: '11. Final Files (Template Requirements)', label: 'Resolution (Crisp & Clear)', description: 'Resolution: crisp and clear (no pixelation)', checked: false },
+    { id: 'p15_svg_export', category: '11. Final Files (Template Requirements)', label: 'SVG Export Settings', description: 'Svg Exported through updated setting values', checked: false },
+    { id: 'p15_final_quality', category: '11. Final Files (Template Requirements)', label: 'Top-Level Quality Check', description: 'Final File – Top-Level Quality Check', checked: false },
+  ],
+};
+
+const getInitialChecklist = (projectId?: number): ChecklistItem[] => {
+  const pId = Number(projectId || 0);
+  const list = PROJECT_CHECKLISTS[pId] ?? DEFAULT_CHECKLIST;
+  return list.map(c => ({ ...c }));
+};
 
 const DEFAULT_IMAGE_COUNT_FIELDS: ImageCountFieldConfig[] = [
   { stateKey: 'totalImages', label: 'Total', commentLabels: ['Total Raw Files', 'Total Images', 'Images', 'Total'], metadataKeys: ['total_raw_files', 'images', 'total_images', 'totalImages'] },
@@ -137,7 +203,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const [details, setDetails] = useState<OrderDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [checklist, setChecklist] = useState<ChecklistItem[]>(DEFAULT_CHECKLIST.map(c => ({ ...c })));
+  const [checklist, setChecklist] = useState<ChecklistItem[]>(() => getInitialChecklist(order.project_id || order.project?.id));
   const [notes, setNotes] = useState('');
   const [showReject, setShowReject] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
@@ -153,6 +219,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const [editableArea, setEditableArea] = useState(String(metadata.enter_area ?? metadata.area ?? ''));
   const [clientPortalStatus, setClientPortalStatus] = useState<ClientPortalUploadStatus | null>(null);
   const isProject16 = order.project_id === 16;
+  const isProject15 = Number(order.project_id || order.project?.id || 0) === 15;
   const [cubiBwBugsCount, setCubiBwBugsCount] = useState('');
   const [cubiBwBugsComment, setCubiBwBugsComment] = useState('');
   const [cubiMbOkCount, setCubiMbOkCount] = useState('');
@@ -177,10 +244,11 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    setChecklist(getInitialChecklist(order.project_id || order.project?.id));
     loadDetails();
     workflowService.startTimer(order.id).catch(() => { });
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [order.id]);
+  }, [order.id, order.project_id, order.project?.id]);
 
   useEffect(() => {
     if (timerRunning) {
@@ -275,7 +343,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const visibleChecklist = isPh2Layer ? [] : checklist;
   const allChecked = isPh2Layer ? true : checklist.every(c => c.checked);
   const checkedCount = isPh2Layer ? visibleChecklist.length : checklist.filter(c => c.checked).length;
-  const checklistRequirementMet = isPh2Layer || isProject16 || allChecked;
+  const checklistRequirementMet = isPh2Layer || isProject16 || isProject15 || allChecked;
 
   const handleApprove = async () => {
     if (!checklistRequirementMet) return;
@@ -284,7 +352,11 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
     if (clientPortalStatus?.required && !clientPortalStatus.submitted) return;
     setSubmitting(true);
     try {
-      const checklistSummary = !isPh2Layer ? checklist.map(c => `✓ ${c.label}`).join('\n') : '';
+      const checklistSummary = !isPh2Layer
+        ? isProject15
+          ? checklist.map(c => `${c.checked ? '✓ [PASS]' : '✗ [UNCHECKED]'} ${c.category ? `(${c.category}) ` : ''}${c.label}`).join('\n')
+          : checklist.map(c => `✓ ${c.label}`).join('\n')
+        : '';
       const areaSummary = editableArea.trim() ? `\nArea: ${editableArea.trim()}` : '';
       const imageCountValues = imageCounts;
       const imageCountSummary = isPh2Layer && hasAnyImageCount
@@ -715,30 +787,76 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                   )}
                   <QAClientPortalUpload order={order} onStatusChange={setClientPortalStatus} />
 
-                  {!isPh2Layer && checklist.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => toggleCheck(item.id)}
-                      className={`w-full flex items-start gap-3 p-4 rounded-xl border transition-all text-left ${item.checked
-                        ? 'border-emerald-200 bg-emerald-50/50'
-                        : 'border-slate-200 bg-white hover:border-slate-300'
-                        }`}
-                    >
-                      {item.checked ? (
-                        <CheckCircle2 className="h-5 w-5 text-emerald-600 mt-0.5 flex-shrink-0" />
-                      ) : (
-                        <Circle className="h-5 w-5 text-slate-300 mt-0.5 flex-shrink-0" />
+                  {!isPh2Layer && (
+                    <div className="space-y-3">
+                      {checklist.length > 6 && (
+                        <div className="flex items-center justify-between px-1 pb-1">
+                          <span className="text-xs font-semibold text-slate-600">
+                            Checklist Items ({checkedCount}/{checklist.length})
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setChecklist(prev => prev.map(c => ({ ...c, checked: true })))}
+                              className="text-xs font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
+                            >
+                              Check All
+                            </button>
+                            <span className="text-slate-300">|</span>
+                            <button
+                              type="button"
+                              onClick={() => setChecklist(prev => prev.map(c => ({ ...c, checked: false })))}
+                              className="text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline"
+                            >
+                              Uncheck All
+                            </button>
+                          </div>
+                        </div>
                       )}
-                      <div>
-                        <div className={`text-sm font-medium ${item.checked ? 'text-emerald-800' : 'text-slate-900'}`}>
-                          {item.label}
-                        </div>
-                        <div className={`text-xs mt-0.5 ${item.checked ? 'text-emerald-600' : 'text-slate-500'}`}>
-                          {item.description}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
+
+                      {checklist.map((item, idx) => {
+                        const showCategoryHeader = item.category && (idx === 0 || checklist[idx - 1].category !== item.category);
+                        return (
+                          <div key={item.id} className="space-y-2">
+                            {showCategoryHeader && (
+                              <div className="pt-2 pb-0.5 first:pt-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold uppercase tracking-wider text-slate-700 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200">
+                                    {item.category}
+                                  </span>
+                                  <div className="h-px flex-1 bg-slate-200" />
+                                </div>
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => toggleCheck(item.id)}
+                              className={`w-full flex items-start gap-3 p-4 rounded-xl border transition-all text-left ${item.checked
+                                ? 'border-emerald-200 bg-emerald-50/50'
+                                : 'border-slate-200 bg-white hover:border-slate-300'
+                                }`}
+                            >
+                              {item.checked ? (
+                                <CheckCircle2 className="h-5 w-5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                              ) : (
+                                <Circle className="h-5 w-5 text-slate-300 mt-0.5 flex-shrink-0" />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className={`text-sm font-medium ${item.checked ? 'text-emerald-800' : 'text-slate-900'}`}>
+                                  {item.label}
+                                </div>
+                                {item.description && (
+                                  <div className={`text-xs mt-0.5 ${item.checked ? 'text-emerald-600' : 'text-slate-500'}`}>
+                                    {item.description}
+                                  </div>
+                                )}
+                              </div>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -909,7 +1027,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
               icon={<Send className="h-4 w-4" />}
               className="flex-[2] bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500/30"
             >
-              {isPh2Layer || isProject16 ? 'Approve & Deliver' : allChecked ? 'Approve & Deliver' : `Complete Checklist (${checkedCount}/${checklist.length})`}
+              {isPh2Layer || isProject16 || isProject15 ? 'Approve & Deliver' : allChecked ? 'Approve & Deliver' : `Complete Checklist (${checkedCount}/${checklist.length})`}
             </Button>
           </div>
         )}

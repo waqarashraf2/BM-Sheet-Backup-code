@@ -9,6 +9,7 @@ use App\Services\AuditService;
 use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -169,6 +170,49 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => "User forcibly logged out. {$reassigned} orders reassigned to queue.",
+        ]);
+    }
+
+    /**
+     * Update authenticated user's machine ID.
+     */
+    public function updateMachineId(Request $request)
+    {
+        $request->validate([
+            'machine_id' => 'required|string|max:100',
+        ]);
+
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $machineId = trim((string) $request->input('machine_id'));
+
+        if (!Schema::hasColumn('users', 'machine_id')) {
+            return response()->json([
+                'message' => 'Machine ID column is not available in database.',
+            ], 500);
+        }
+
+        $oldMachineId = $user->machine_id;
+        $user->update([
+            'machine_id' => $machineId,
+        ]);
+
+        AuditService::log(
+            $user->id,
+            'UPDATE_MACHINE_ID',
+            'User',
+            $user->id,
+            $user->project_id,
+            ['machine_id' => $oldMachineId],
+            ['machine_id' => $machineId]
+        );
+
+        return response()->json([
+            'message' => 'Machine ID updated successfully.',
+            'user' => $user->fresh()->load(['project', 'team']),
         ]);
     }
 }

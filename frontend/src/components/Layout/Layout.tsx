@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import CommandPalette from '../ui/CommandPalette';
+import MachineIdPromptModal from '../Auth/MachineIdPromptModal';
 
 export default function Layout() {
   
@@ -19,6 +20,9 @@ export default function Layout() {
       
       {/* Command Palette */}
       <CommandPalette />
+
+      {/* Machine ID prompt for users with empty machine_id */}
+      <MachineIdPromptModal />
     </div>
   );
 }

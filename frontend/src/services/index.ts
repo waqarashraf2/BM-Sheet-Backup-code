@@ -94,6 +94,8 @@ export const authService = {
   profile: () => api.get<User>('/auth/profile'),
   sessionCheck: () => api.get<SessionCheckResponse>('/auth/session-check'),
   forceLogout: (userId: number) => api.post(`/auth/force-logout/${userId}`),
+  updateMachineId: (machine_id: string) =>
+    api.post<{ message: string; user: User }>('/auth/update-machine-id', { machine_id }),
 };
 
 // Project 16 Batch Report
