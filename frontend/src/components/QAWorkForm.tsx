@@ -32,6 +32,8 @@ interface ChecklistItem {
   description: string;
   category?: string;
   checked: boolean;
+  status?: 'yes' | 'no' | null;
+  type?: 'checkbox' | 'yes_no';
 }
 
 type ImageCountStateKey =
@@ -81,6 +83,154 @@ const DEFAULT_CHECKLIST: ChecklistItem[] = [
 ];
 
 const PROJECT_CHECKLISTS: Record<number, ChecklistItem[]> = {
+  13: [
+    // 1. Template
+    {
+      id: 'p13_template',
+      category: '1. Template',
+      label: '1. Template',
+      description: '• Font style, type, and size\n• Textures\n• Door and window styles\n• Dimensions (SQM / SQFT / Both)\n• Fixtures and furniture styles',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 2. Tour Walkthrough
+    {
+      id: 'p13_tour_walkthrough',
+      category: '2. Tour Walkthrough',
+      label: '2. Tour Walkthrough',
+      description: '• Ensure no areas, rooms, or elements are missing\n• Verify the overall structure matches the tour\n• Confirm walls, openings, rooms, and other structural elements are correctly represented',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 3. Dimensions
+    {
+      id: 'p13_dimensions',
+      category: '3. Dimensions',
+      label: '3. Dimensions',
+      description: '• Dimensions are present and complete\n• Measurements are accurate\n• Measurements are readable\n• Dimensions are consistent with the visualizer/tour',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 4. Labeling
+    {
+      id: 'p13_labeling',
+      category: '4. Labeling',
+      label: '4. Labeling',
+      description: '• All rooms, areas, and key elements are correctly labeled\n• Labels follow template standards\n• Correct language is used\n• No incorrect, missing, or duplicate labels',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 5. Site Plan
+    {
+      id: 'p13_site_plan',
+      category: '5. Site Plan',
+      label: '5. Site Plan',
+      description: '• Orientation and layout match Google Maps\n• Property boundaries are correctly positioned\n• Property orientation/placement is relative to the site boundary\n• Driveways, fences/gates, pools, decks, sheds, and other external elements are accurately shown',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 6. North Arrow
+    {
+      id: 'p13_north_arrow',
+      category: '6. North Arrow',
+      label: '6. North Arrow',
+      description: '• North arrow is present\n• North arrow is correctly oriented according to the site/location',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 7. Address / Title
+    {
+      id: 'p13_address_title',
+      category: '7. Address / Title',
+      label: '7. Address / Title',
+      description: '• Correct property address/title is included\n• Spelling and formatting are correct\n• Title follows template requirements',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 8. Area
+    {
+      id: 'p13_area',
+      category: '8. Area',
+      label: '8. Area',
+      description: '• Internal area\n• External area\n• Total area\n• Any other required area measurements\n• Areas are correctly calculated and displayed',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 9. 360° Views
+    {
+      id: 'p13_360_views',
+      category: '9. 360° Views',
+      label: '9. 360° Views',
+      description: '• Check all available 360° views\n• Ensure relevant areas/elements visible in the views are reflected in the plan\n• Identify any missing or inconsistent information',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 10. Notes
+    {
+      id: 'p13_notes',
+      category: '10. Notes',
+      label: '10. Notes',
+      description: '• All provided notes are accurately followed\n• Special instructions are incorporated\n• No instruction is missed or incorrectly interpreted',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    // 11. Final Files / Template Requirements
+    {
+      id: 'p13_file_formats',
+      category: '11. Final Files / Template Requirements',
+      label: 'File Formats',
+      description: 'File Formats',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    {
+      id: 'p13_naming',
+      category: '11. Final Files / Template Requirements',
+      label: 'Naming',
+      description: 'Naming',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    {
+      id: 'p13_resolution',
+      category: '11. Final Files / Template Requirements',
+      label: 'Resolution',
+      description: 'Resolution: crisp and clear (no pixelation)',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    {
+      id: 'p13_line_weights',
+      category: '11. Final Files / Template Requirements',
+      label: 'Line Weights Hierarchy',
+      description: 'Line weights hierarchy: internal walls, external walls fixtures, boundary lines are readable and consistent with the template',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+    {
+      id: 'p13_overlaps_clashes',
+      category: '11. Final Files / Template Requirements',
+      label: 'No Overlaps / Clashes',
+      description: 'No overlaps/clashes: dimensions not overlapping labels/fixtures, text not sitting on busy textures.',
+      checked: false,
+      status: null,
+      type: 'yes_no',
+    },
+  ],
   15: [
     // 1. Template
     { id: 'p15_template_verify', category: '1. Template', label: 'Template Adherence', description: 'Verify that the drawing strictly follows the updated template, including:', checked: false },
@@ -220,6 +370,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const [clientPortalStatus, setClientPortalStatus] = useState<ClientPortalUploadStatus | null>(null);
   const isProject16 = order.project_id === 16;
   const isProject15 = Number(order.project_id || order.project?.id || 0) === 15;
+  const isProject13 = Number(order.project_id || order.project?.id || 0) === 13;
   const [cubiBwBugsCount, setCubiBwBugsCount] = useState('');
   const [cubiBwBugsComment, setCubiBwBugsComment] = useState('');
   const [cubiMbOkCount, setCubiMbOkCount] = useState('');
@@ -340,10 +491,22 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
     } catch (e) { console.error(e); }
   };
 
+  const setItemStatus = (id: string, status: 'yes' | 'no') => {
+    setChecklist(prev =>
+      prev.map(c => {
+        if (c.id === id) {
+          const newStatus = c.status === status ? null : status;
+          return { ...c, status: newStatus, checked: newStatus === 'yes' };
+        }
+        return c;
+      })
+    );
+  };
+
   const visibleChecklist = isPh2Layer ? [] : checklist;
   const allChecked = isPh2Layer ? true : checklist.every(c => c.checked);
   const checkedCount = isPh2Layer ? visibleChecklist.length : checklist.filter(c => c.checked).length;
-  const checklistRequirementMet = isPh2Layer || isProject16 || isProject15 || allChecked;
+  const checklistRequirementMet = isPh2Layer || isProject16 || isProject15 || isProject13 || allChecked;
 
   const handleApprove = async () => {
     if (!checklistRequirementMet) return;
@@ -353,9 +516,15 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
     setSubmitting(true);
     try {
       const checklistSummary = !isPh2Layer
-        ? isProject15
-          ? checklist.map(c => `${c.checked ? '✓ [PASS]' : '✗ [UNCHECKED]'} ${c.category ? `(${c.category}) ` : ''}${c.label}`).join('\n')
-          : checklist.map(c => `✓ ${c.label}`).join('\n')
+        ? isProject13
+          ? checklist.map(c => {
+              const remark = c.status === 'yes' ? 'YES' : c.status === 'no' ? 'NO' : 'UNANSWERED';
+              const icon = c.status === 'yes' ? '✓' : c.status === 'no' ? '✗' : '—';
+              return `${icon} [${remark}] ${c.label}`;
+            }).join('\n')
+          : isProject15
+            ? checklist.map(c => `${c.checked ? '✓ [PASS]' : '✗ [UNCHECKED]'} ${c.category ? `(${c.category}) ` : ''}${c.label}`).join('\n')
+            : checklist.map(c => `✓ ${c.label}`).join('\n')
         : '';
       const areaSummary = editableArea.trim() ? `\nArea: ${editableArea.trim()}` : '';
       const imageCountValues = imageCounts;
@@ -553,8 +722,10 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
           {!isPh2Layer && (
             <div className="ml-auto flex items-center gap-1.5">
               <span className="text-xs text-slate-500">Checklist:</span>
-              <span className={`text-xs font-semibold ${allChecked ? 'text-emerald-600' : 'text-amber-600'}`}>
-                {checkedCount}/{checklist.length}
+              <span className={`text-xs font-semibold ${allChecked || isProject15 || isProject13 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                {isProject13
+                  ? `${checklist.filter(c => c.status === 'yes' || c.status === 'no').length}/${checklist.length}`
+                  : `${checkedCount}/${checklist.length}`}
               </span>
             </div>
           )}
@@ -792,25 +963,53 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                       {checklist.length > 6 && (
                         <div className="flex items-center justify-between px-1 pb-1">
                           <span className="text-xs font-semibold text-slate-600">
-                            Checklist Items ({checkedCount}/{checklist.length})
+                            Checklist Items ({isProject13 ? `${checklist.filter(c => c.status === 'yes' || c.status === 'no').length}/${checklist.length}` : `${checkedCount}/${checklist.length}`})
                           </span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setChecklist(prev => prev.map(c => ({ ...c, checked: true })))}
-                              className="text-xs font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
-                            >
-                              Check All
-                            </button>
-                            <span className="text-slate-300">|</span>
-                            <button
-                              type="button"
-                              onClick={() => setChecklist(prev => prev.map(c => ({ ...c, checked: false })))}
-                              className="text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline"
-                            >
-                              Uncheck All
-                            </button>
-                          </div>
+                          {isProject13 ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setChecklist(prev => prev.map(c => ({ ...c, status: 'yes', checked: true })))}
+                                className="text-xs font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
+                              >
+                                All Yes
+                              </button>
+                              <span className="text-slate-300">|</span>
+                              <button
+                                type="button"
+                                onClick={() => setChecklist(prev => prev.map(c => ({ ...c, status: 'no', checked: false })))}
+                                className="text-xs font-medium text-rose-600 hover:text-rose-700 hover:underline"
+                              >
+                                All No
+                              </button>
+                              <span className="text-slate-300">|</span>
+                              <button
+                                type="button"
+                                onClick={() => setChecklist(prev => prev.map(c => ({ ...c, status: null, checked: false })))}
+                                className="text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setChecklist(prev => prev.map(c => ({ ...c, checked: true })))}
+                                className="text-xs font-medium text-emerald-600 hover:text-emerald-700 hover:underline"
+                              >
+                                Check All
+                              </button>
+                              <span className="text-slate-300">|</span>
+                              <button
+                                type="button"
+                                onClick={() => setChecklist(prev => prev.map(c => ({ ...c, checked: false })))}
+                                className="text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline"
+                              >
+                                Uncheck All
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -828,30 +1027,104 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                                 </div>
                               </div>
                             )}
-                            <button
-                              type="button"
-                              onClick={() => toggleCheck(item.id)}
-                              className={`w-full flex items-start gap-3 p-4 rounded-xl border transition-all text-left ${item.checked
-                                ? 'border-emerald-200 bg-emerald-50/50'
-                                : 'border-slate-200 bg-white hover:border-slate-300'
+                            {item.type === 'yes_no' ? (
+                              <div
+                                className={`w-full flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border transition-all ${
+                                  item.status === 'yes'
+                                    ? 'border-emerald-200 bg-emerald-50/50'
+                                    : item.status === 'no'
+                                    ? 'border-rose-200 bg-rose-50/50'
+                                    : 'border-slate-200 bg-white hover:border-slate-300'
                                 }`}
-                            >
-                              {item.checked ? (
-                                <CheckCircle2 className="h-5 w-5 text-emerald-600 mt-0.5 flex-shrink-0" />
-                              ) : (
-                                <Circle className="h-5 w-5 text-slate-300 mt-0.5 flex-shrink-0" />
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <div className={`text-sm font-medium ${item.checked ? 'text-emerald-800' : 'text-slate-900'}`}>
-                                  {item.label}
-                                </div>
-                                {item.description && (
-                                  <div className={`text-xs mt-0.5 ${item.checked ? 'text-emerald-600' : 'text-slate-500'}`}>
-                                    {item.description}
+                              >
+                                <div className="flex-1 min-w-0 pr-2">
+                                  <div
+                                    className={`text-sm font-semibold ${
+                                      item.status === 'yes'
+                                        ? 'text-emerald-900'
+                                        : item.status === 'no'
+                                        ? 'text-rose-900'
+                                        : 'text-slate-900'
+                                    }`}
+                                  >
+                                    {item.label}
                                   </div>
-                                )}
+                                  {item.description && (
+                                    <div
+                                      className={`text-xs mt-1.5 whitespace-pre-line leading-relaxed ${
+                                        item.status === 'yes'
+                                          ? 'text-emerald-700'
+                                          : item.status === 'no'
+                                          ? 'text-rose-700'
+                                          : 'text-slate-600'
+                                      }`}
+                                    >
+                                      {item.description}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => setItemStatus(item.id, 'yes')}
+                                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                                      item.status === 'yes'
+                                        ? 'bg-emerald-600 text-white shadow-md shadow-emerald-200 ring-2 ring-emerald-500/50'
+                                        : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
+                                    }`}
+                                  >
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    Yes
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setItemStatus(item.id, 'no')}
+                                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                                      item.status === 'no'
+                                        ? 'bg-rose-600 text-white shadow-md shadow-rose-200 ring-2 ring-rose-500/50'
+                                        : 'bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-700'
+                                    }`}
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                    No
+                                  </button>
+                                </div>
                               </div>
-                            </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => toggleCheck(item.id)}
+                                className={`w-full flex items-start gap-3 p-4 rounded-xl border transition-all text-left ${
+                                  item.checked
+                                    ? 'border-emerald-200 bg-emerald-50/50'
+                                    : 'border-slate-200 bg-white hover:border-slate-300'
+                                }`}
+                              >
+                                {item.checked ? (
+                                  <CheckCircle2 className="h-5 w-5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                                ) : (
+                                  <Circle className="h-5 w-5 text-slate-300 mt-0.5 flex-shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <div
+                                    className={`text-sm font-medium ${
+                                      item.checked ? 'text-emerald-800' : 'text-slate-900'
+                                    }`}
+                                  >
+                                    {item.label}
+                                  </div>
+                                  {item.description && (
+                                    <div
+                                      className={`text-xs mt-0.5 ${
+                                        item.checked ? 'text-emerald-600' : 'text-slate-500'
+                                      }`}
+                                    >
+                                      {item.description}
+                                    </div>
+                                  )}
+                                </div>
+                              </button>
+                            )}
                           </div>
                         );
                       })}
@@ -1027,7 +1300,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
               icon={<Send className="h-4 w-4" />}
               className="flex-[2] bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500/30"
             >
-              {isPh2Layer || isProject16 || isProject15 ? 'Approve & Deliver' : allChecked ? 'Approve & Deliver' : `Complete Checklist (${checkedCount}/${checklist.length})`}
+              {isPh2Layer || isProject16 || isProject15 || isProject13 ? 'Approve & Deliver' : allChecked ? 'Approve & Deliver' : `Complete Checklist (${checkedCount}/${checklist.length})`}
             </Button>
           </div>
         )}
