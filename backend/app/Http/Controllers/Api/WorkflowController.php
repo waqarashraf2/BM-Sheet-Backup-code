@@ -14,6 +14,7 @@ use App\Services\NotificationService;
 use App\Services\ProjectOrderService;
 use App\Services\FocalClientPortalUploadService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -50,16 +51,9 @@ class WorkflowController extends Controller
     // ═══════════════════════════════════════════
 
     /**
-     * GET /workflow/check-updates
-     *
-     * Lightweight endpoint for Smart Polling.
-     * Returns a hash based on MAX(updated_at) across requested project tables
-     * so the frontend only reloads data when something actually changed.
-     *
-     * Query params:
-     *   - project_ids[]  (optional) specific project tables to check
-     *   - scope           'orders' (default), 'users', 'all'
-     *   - last_hash       previous hash — response includes `changed` boolean
+     * Smart Polling Endpoint — lightweight change detection.
+     * Returns a composite MD5 hash of MAX(updated_at) and MAX(id) across relevant tables.
+     * Cached for 5 seconds to serve concurrent worker polling without hammering MySQL.
      */
     public function checkUpdates(Request $request)
     {
@@ -77,30 +71,43 @@ class WorkflowController extends Controller
             ? $allowedProjectIds
             : array_values(array_intersect($requestedProjectIds, $allowedProjectIds));
 
-        $timestamps = [];
+        // Intelligent 2-tier caching (20s TTL) to eliminate DB load from concurrent polls
+        $cacheKey = "check_updates_{$scope}_" . md5(implode(',', $projectIds));
+        
+        $hash = Cache::remember($cacheKey, 20, function () use ($scope, $projectIds) {
+            $timestamps = [];
 
-        // Check order tables
-        if (in_array($scope, ['orders', 'all'])) {
-            foreach ($projectIds as $pid) {
-                $table = ProjectOrderService::getTableName($pid);
-                if (self::tableExists($table)) {
-                    $tableVersion = DB::table($table)
-                        ->selectRaw('MAX(updated_at) as max_updated_at, COUNT(*) as row_count')
-                        ->first();
-                    $timestamps[] = "{$pid}:{$tableVersion->max_updated_at}:{$tableVersion->row_count}";
+            // Check order tables (cached for 20 seconds per project)
+            if (in_array($scope, ['orders', 'all'])) {
+                foreach ($projectIds as $pid) {
+                    $table = ProjectOrderService::getTableName($pid);
+                    if (self::tableExists($table)) {
+                        $tableVersion = Cache::remember("tbl_ver_{$pid}", 20, function () use ($table) {
+                            return DB::table($table)
+                                ->selectRaw('MAX(id) as max_id, MAX(updated_at) as max_updated_at')
+                                ->first();
+                        });
+                        if ($tableVersion) {
+                            $timestamps[] = "{$pid}:{$tableVersion->max_updated_at}:{$tableVersion->max_id}";
+                        }
+                    }
                 }
             }
-        }
 
-        // Check users table
-        if (in_array($scope, ['users', 'all'])) {
-            $userVersion = DB::table('users')
-                ->selectRaw('MAX(updated_at) as max_updated_at, SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active_count')
-                ->first();
-            $timestamps[] = "users:{$userVersion->max_updated_at}:{$userVersion->active_count}";
-        }
+            // Check users table (cached for 20 seconds)
+            if (in_array($scope, ['users', 'all'])) {
+                $userVersion = Cache::remember('users_tbl_ver', 20, function () {
+                    return DB::table('users')
+                        ->selectRaw('MAX(updated_at) as max_updated_at, MAX(id) as max_id')
+                        ->first();
+                });
+                if ($userVersion) {
+                    $timestamps[] = "users:{$userVersion->max_updated_at}:{$userVersion->max_id}";
+                }
+            }
 
-        $hash = md5(implode('|', $timestamps));
+            return md5(implode('|', $timestamps));
+        });
 
         return response()->json([
             'hash' => $hash,

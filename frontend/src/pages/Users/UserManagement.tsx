@@ -69,7 +69,7 @@ export default function UserManagement() {
 
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
-  const canManage = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa'].includes(currentUser?.role || '');
+  const canManage = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'hr'].includes(currentUser?.role || '');
 
   // Role options filtered by logged-in user's role
   const myRole = currentUser?.role || '';
@@ -86,9 +86,11 @@ export default function UserManagement() {
     { value: 'filler', label: 'File Uploader' },
     { value: 'qa', label: 'QA' },
     { value: 'designer', label: 'Designer' },
+    { value: 'csr', label: 'CSR' },
+    { value: 'it', label: 'IT' },
   ];
   const hiddenRoles: Record<string, string[]> = {
-    ceo: ['ceo', 'project_manager', 'accounts_manager', 'drawer', 'checker', 'filler', 'qa', 'designer'],
+    ceo: ['ceo'],
     operations_manager: ['ceo', 'director', 'operations_manager', 'accounts_manager'],
     project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr'],
     hr: ['ceo', 'hr'],

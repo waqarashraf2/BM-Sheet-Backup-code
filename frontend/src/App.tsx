@@ -9,10 +9,8 @@ import Layout from './components/Layout/Layout';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 
-
 // ─── Lazy-loaded page components (code-split per route) ───
 const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'));
-
 const CEODashboard = lazy(() => import('./pages/Dashboard/CEODashboard').catch(() => { window.location.reload(); return import('./pages/Dashboard/CEODashboard'); }));
 const OperationsManagerDashboard = lazy(() => import('./pages/Dashboard/OperationsManagerDashboard'));
 const ProjectManagerDashboard = lazy(() => import('./pages/Dashboard/ProjectManagerDashboard'));
@@ -22,6 +20,7 @@ const HRDashboard = lazy(() => import('./pages/Dashboard/HRDashboard'));
 const DocumentGenerator = lazy(() => import('./pages/Dashboard/DocumentGenerator'));
 const BatchStatus = lazy(() => import('./pages/Dashboard/BatchStatus'));
 const ColumnAssignment = lazy(() => import('./pages/Dashboard/ColumnAssignment'));
+const EmployeeDashboard = lazy(() => import('./pages/Dashboard/EmployeeDashboard'));
 
 const ProjectManagement = lazy(() => import('./pages/Projects/ProjectManagement'));
 const UserManagement = lazy(() => import('./pages/Users/UserManagement'));
@@ -99,8 +98,6 @@ function App() {
     }
   }, [isAuthenticated]);
 
-
-
   const getDashboardRoute = () => {
     if (!user) return <Navigate to="/login" />;
 
@@ -124,6 +121,9 @@ function App() {
         return <HRDashboard />;
       case 'live_qa':
         return <LiveQADashboard />;
+      case 'csr':
+      case 'it':
+        return <EmployeeDashboard />;
       default:
         return <Dashboard />;
     }

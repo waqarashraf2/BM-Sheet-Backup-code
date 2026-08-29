@@ -40,15 +40,12 @@ class SaVideoService
                 return;
             }
 
-            $response = Http::timeout(60)->get($this->apiUrl);
+            $response = Http::timeout(45)->retry(2, 500)->get($this->apiUrl);
 
             if (!$response->successful()) {
-                Log::error('Project57 Video API failed', [
-                    'status' => $response->status(),
-                ]);
+                Log::warning('Project57 Video Import API error: HTTP ' . $response->status());
                 return;
             }
-
             $data = $response->json();
 
             if (!isset($data['tasks']) || !is_array($data['tasks'])) {

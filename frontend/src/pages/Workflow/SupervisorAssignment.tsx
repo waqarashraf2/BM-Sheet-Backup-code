@@ -3880,7 +3880,7 @@ export default function SupervisorAssignment() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs" style={{ tableLayout: 'fixed' }}>
                     <colgroup>
-                      {bulkMode && <col style={{ width: '44px' }} />}
+                      {bulkMode ? <col style={{ width: '44px' }} /> : null}
                       {dynamicPrimaryColumns.map((column) => {
                         const adjustedStyle = getAdjustedColumnWidths(column);
                         return (
@@ -3890,13 +3890,11 @@ export default function SupervisorAssignment() {
                           />
                         );
                       })}
-
-                      {showTeamNameColumn && <col style={{ width: '10%' }} />}
+                      {showTeamNameColumn ? <col style={{ width: '10%' }} /> : null}
                       {visibleRoleColumns.map((column) => (
                         <col key={column.key} style={column.width ? { width: column.width } : undefined} />
                       ))}
-                      <col style={{ width: '8%' }} />  {/* Status */}
-
+                      <col style={{ width: '8%' }} />
                     </colgroup>
 
 

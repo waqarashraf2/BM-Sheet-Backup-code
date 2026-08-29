@@ -902,6 +902,10 @@ export const hrService = {
     api.post<{ message: string }>(`/hr/users/${userId}/documents/email`, data),
   deactivateLongAbsent: (data?: { days?: number; dry_run?: boolean }) =>
     api.post<{ message: string; affected: number; matched: number; preview: Array<Partial<User> & { inactive_days?: number }> }>('/hr/absent/deactivate', data || {}),
+  myDocuments: () =>
+    api.get<{ data: UserDocument[]; documents_ready: boolean }>('/my-documents'),
+  downloadMyDocument: (documentId: number) =>
+    api.get(`/my-documents/${documentId}/download`, { responseType: 'blob' }),
 };
 
 // ═══════════════════════════════════════════

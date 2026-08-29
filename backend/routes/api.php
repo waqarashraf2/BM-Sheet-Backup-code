@@ -59,6 +59,10 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
     Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
     Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
 
+    // Self-service document access for employees (CSR, IT, workers, etc.)
+    Route::get('/my-documents', [HrController::class, 'myDocuments']);
+    Route::get('/my-documents/{documentId}/download', [HrController::class, 'downloadMyDocument']);
+
     // Dedicated QA client-portal upload routes. Kept outside /workflow so generic
     // workflow order routes cannot interfere with upload method matching.
     Route::prefix('client-portal')->group(function () {
@@ -268,18 +272,16 @@ Route::prefix('assignments')->group(function () {
     Route::middleware('role:ceo,director,operations_manager,project_manager,hr')->group(function () {
         Route::get('/users', [UserController::class, 'index']);
         Route::get('/users/{user}', [UserController::class, 'show'])->whereNumber('user');
+        Route::apiResource('users', UserController::class)->whereNumber('user');
+        Route::post('/users/{id}/deactivate', [UserController::class, 'deactivate']);
+        Route::get('/users-inactive', [UserController::class, 'inactive']);
+        Route::post('/users/reassign-work', [UserController::class, 'reassignWork']);
     });
 
     Route::middleware('role:ceo,director,operations_manager,project_manager')->group(function () {
 
         // Projects (write operations — CEO/Director only)
         // Moved to Director+ group below
-
-        // Users
-        Route::apiResource('users', UserController::class)->whereNumber('user');
-        Route::post('/users/{id}/deactivate', [UserController::class, 'deactivate']);
-        Route::get('/users-inactive', [UserController::class, 'inactive']);
-        Route::post('/users/reassign-work', [UserController::class, 'reassignWork']);
 
         // Force logout
         Route::post('/auth/force-logout/{userId}', [AuthController::class, 'forceLogout']);

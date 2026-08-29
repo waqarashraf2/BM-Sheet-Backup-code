@@ -382,8 +382,8 @@ export default function PMAssignment() {
                   {dynamicPrimaryColumns.map((column) => (
                     <col key={column.key} style={column.width ? { width: column.width } : undefined} />
                   ))}
-                  <col style={{ width: '9%' }} />{/* State */}
-                  <col style={{ width: '15%' }} />{/* QA Supervisor */}
+                  <col style={{ width: '9%' }} />
+                  <col style={{ width: '15%' }} />
                 </colgroup>
                 <thead>
                   <tr className="bg-brand-700 text-white">

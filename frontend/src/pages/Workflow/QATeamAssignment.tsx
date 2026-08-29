@@ -534,11 +534,11 @@ export default function QATeamAssignment() {
                   {dynamicPrimaryColumns.map((column) => (
                     <col key={column.key} style={column.width ? { width: column.width } : undefined} />
                   ))}
-                  <col style={{ width: '7%' }} />{/* State */}
-                  <col style={{ width: '14%' }} />{/* Drawer */}
-                  <col style={{ width: '14%' }} />{/* Checker */}
-                  {showFillerColumn && <col style={{ width: '12%' }} />}{/* Filler */}
-                  <col style={{ width: '8%' }} />{/* Status */}
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '14%' }} />
+                  <col style={{ width: '14%' }} />
+                  {showFillerColumn ? <col style={{ width: '12%' }} /> : null}
+                  <col style={{ width: '8%' }} />
                 </colgroup>
                 <thead>
                   <tr className="bg-brand-700 text-white">

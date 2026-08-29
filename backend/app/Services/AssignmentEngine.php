@@ -782,7 +782,7 @@ class AssignmentEngine
                         $updates[$completionColumns['date_col']] = now()->toDateTimeString();
                     }
                     $updates['current_layer'] = 'qa';
-                } elseif ($role === 'qa' && in_array($state, ['APPROVED_QA', 'DELIVERED'], true)) {
+                } elseif ($role === 'qa') {
                     if ($completionColumns['done_col']) {
                         $updates[$completionColumns['done_col']] = 'yes';
                     }

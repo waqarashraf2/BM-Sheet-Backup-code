@@ -506,7 +506,9 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const visibleChecklist = isPh2Layer ? [] : checklist;
   const allChecked = isPh2Layer ? true : checklist.every(c => c.checked);
   const checkedCount = isPh2Layer ? visibleChecklist.length : checklist.filter(c => c.checked).length;
-  const checklistRequirementMet = isPh2Layer || isProject16 || isProject15 || isProject13 || allChecked;
+  const project13AnsweredCount = checklist.filter(c => c.status === 'yes' || c.status === 'no').length;
+  const project13AllAnswered = isProject13 ? project13AnsweredCount === checklist.length : false;
+  const checklistRequirementMet = isPh2Layer || isProject16 || isProject15 || (isProject13 ? project13AllAnswered : allChecked);
 
   const handleApprove = async () => {
     if (!checklistRequirementMet) return;
@@ -722,9 +724,13 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
           {!isPh2Layer && (
             <div className="ml-auto flex items-center gap-1.5">
               <span className="text-xs text-slate-500">Checklist:</span>
-              <span className={`text-xs font-semibold ${allChecked || isProject15 || isProject13 ? 'text-emerald-600' : 'text-amber-600'}`}>
+              <span className={`text-xs font-semibold ${
+                isProject13
+                  ? project13AllAnswered ? 'text-emerald-600' : 'text-amber-600'
+                  : isProject15 || allChecked ? 'text-emerald-600' : 'text-amber-600'
+              }`}>
                 {isProject13
-                  ? `${checklist.filter(c => c.status === 'yes' || c.status === 'no').length}/${checklist.length}`
+                  ? `${project13AnsweredCount}/${checklist.length}`
                   : `${checkedCount}/${checklist.length}`}
               </span>
             </div>
@@ -1300,7 +1306,11 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
               icon={<Send className="h-4 w-4" />}
               className="flex-[2] bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500/30"
             >
-              {isPh2Layer || isProject16 || isProject15 || isProject13 ? 'Approve & Deliver' : allChecked ? 'Approve & Deliver' : `Complete Checklist (${checkedCount}/${checklist.length})`}
+              {isPh2Layer || isProject16 || isProject15 || (isProject13 ? project13AllAnswered : allChecked)
+                ? 'Approve & Deliver'
+                : isProject13
+                ? `Complete Checklist (${project13AnsweredCount}/${checklist.length})`
+                : `Complete Checklist (${checkedCount}/${checklist.length})`}
             </Button>
           </div>
         )}

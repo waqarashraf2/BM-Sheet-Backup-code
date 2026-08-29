@@ -828,7 +828,6 @@ protected function parseDueIn(string $dueRaw): string
             ->orderBy('id', 'desc')
             ->limit($limit)
             ->get();
-
         if ($rows->isEmpty()) {
             Log::info('Variant backfill: no rows need updating.');
             return;
@@ -836,9 +835,18 @@ protected function parseDueIn(string $dueRaw): string
 
         Log::info("Variant backfill: processing {$rows->count()} rows (limit={$limit}).");
         $updated = 0;
-
         foreach ($rows as $row) {
             try {
+                $cleanNum = ltrim(trim((string) $row->order_number), '#');
+                if ($cleanNum === '' || preg_match('/^0+$/', $cleanNum) || strcasecmp($cleanNum, 'test') === 0) {
+                    DB::table($table)->where('id', $row->id)->update([
+                        $variantColumn => '-',
+                        'updated_at' => now(),
+                    ]);
+                    $updated++;
+                    continue;
+                }
+
                 $variantNo = $this->fetchVariantNo($row->order_number, $auth);
                 if ($variantNo !== null && $variantNo !== '') {
                     DB::table($table)->where('id', $row->id)->update([
@@ -854,7 +862,12 @@ protected function parseDueIn(string $dueRaw): string
                     ]);
                     $updated++;
                 } else {
-                    Log::info("Variant backfill: HTTP request failed for order {$row->order_number}, will retry next run.");
+                    // If HTTP failed (e.g. 401/404), mark with '-' so it doesn't loop infinitely every 5 mins
+                    DB::table($table)->where('id', $row->id)->update([
+                        $variantColumn => '-',
+                        'updated_at' => now(),
+                    ]);
+                    $updated++;
                 }
 
                 // Keep detail endpoint traffic low when many jobs run in parallel.

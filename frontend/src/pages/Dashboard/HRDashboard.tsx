@@ -17,12 +17,15 @@ import {
   Trash2,
   Upload,
   UserCheck,
+  UserPlus,
   UserX,
   Users,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useSelector } from 'react-redux';
 import { AnimatedPage, Button, Modal, PageHeader, StatusBadge } from '../../components/ui';
-import { hrService } from '../../services';
+import { hrService, userService } from '../../services';
 import type { RootState } from '../../store/store';
 import type { User, UserDocument, UserLeaveBalance, UserLeaveEntry, UserSalaryIncrement } from '../../types';
 import CameraCaptureModal from '../../components/CameraCaptureModal';
@@ -221,6 +224,83 @@ export default function HRDashboard() {
   const [copiedEmailText, setCopiedEmailText] = useState(false);
   const [emailSuccessMsg, setEmailSuccessMsg] = useState('');
   const [emailErrorMsg, setEmailErrorMsg] = useState('');
+
+  // Add User Modal state
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [addUserForm, setAddUserForm] = useState({
+    name: '',
+    email: '',
+    machine_id: '',
+    password: '',
+    password_confirmation: '',
+    role: 'csr',
+    project_id: '',
+    department: 'floor_plan',
+    country: '',
+  });
+  const [showAddUserPassword, setShowAddUserPassword] = useState(false);
+  const [addingUser, setAddingUser] = useState(false);
+  const [addUserError, setAddUserError] = useState('');
+
+  const handleCreateUser = async () => {
+    if (!addUserForm.name.trim() || !addUserForm.email.trim()) {
+      setAddUserError('Name and email are required.');
+      return;
+    }
+    if (!addUserForm.machine_id || !addUserForm.machine_id.trim()) {
+      setAddUserError('Machine ID is required.');
+      return;
+    }
+    if (!/^\d+$/.test(addUserForm.machine_id.trim())) {
+      setAddUserError('Machine ID must be a valid integer number.');
+      return;
+    }
+    if (!addUserForm.password) {
+      setAddUserError('Password is required.');
+      return;
+    }
+    if (addUserForm.password.length < 8) {
+      setAddUserError('Password must be at least 8 characters.');
+      return;
+    }
+    if (addUserForm.password !== addUserForm.password_confirmation) {
+      setAddUserError('Passwords do not match.');
+      return;
+    }
+
+    try {
+      setAddingUser(true);
+      setAddUserError('');
+      await userService.create({
+        name: addUserForm.name.trim(),
+        email: addUserForm.email.trim(),
+        machine_id: addUserForm.machine_id.trim(),
+        password: addUserForm.password,
+        password_confirmation: addUserForm.password_confirmation,
+        role: addUserForm.role as any,
+        project_id: addUserForm.project_id ? Number(addUserForm.project_id) : undefined,
+        department: addUserForm.department,
+        country: addUserForm.country || undefined,
+      });
+      setShowAddUserModal(false);
+      setAddUserForm({
+        name: '',
+        email: '',
+        machine_id: '',
+        password: '',
+        password_confirmation: '',
+        role: 'csr',
+        project_id: '',
+        department: 'floor_plan',
+        country: '',
+      });
+      await Promise.all([loadDashboard(), loadUsers()]);
+    } catch (e: any) {
+      setAddUserError(e.response?.data?.message || 'Could not create user.');
+    } finally {
+      setAddingUser(false);
+    }
+  };
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -765,7 +845,22 @@ export default function HRDashboard() {
 
   return (
     <AnimatedPage>
-      <PageHeader title="HR Panel" subtitle="Employee records, documents, and HR movement" />
+      <PageHeader
+        title="HR Panel"
+        subtitle="Employee records, documents, and HR movement"
+        actions={
+          <Button
+            variant="primary"
+            icon={UserPlus}
+            onClick={() => {
+              setAddUserError('');
+              setShowAddUserModal(true);
+            }}
+          >
+            Add User
+          </Button>
+        }
+      />
 
       {error && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -1162,6 +1257,8 @@ export default function HRDashboard() {
               <option value="filler">Filler</option>
               <option value="qa">QA</option>
               <option value="designer">Designer</option>
+              <option value="csr">CSR</option>
+              <option value="it">IT</option>
               <option value="project_manager">Project Manager</option>
               <option value="operations_manager">Ops Manager</option>
               <option value="director">Director</option>
@@ -2130,6 +2227,8 @@ export default function HRDashboard() {
                 <option value="filler">Filler</option>
                 <option value="qa">QA</option>
                 <option value="designer">Designer</option>
+                <option value="csr">CSR</option>
+                <option value="it">IT</option>
                 <option value="project_manager">Project Manager</option>
                 <option value="operations_manager">Ops Manager</option>
                 <option value="accounts_manager">Accounts</option>
@@ -2272,6 +2371,147 @@ export default function HRDashboard() {
           <div className="flex gap-3">
             <Button variant="secondary" className="flex-1" onClick={() => setConfirmDeactivate(null)}>Cancel</Button>
             <Button variant="danger" className="flex-1" onClick={runDeactivate} disabled={!confirmDeactivate?.matched} loading={deactivating}>Mark Inactive</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Add New User Modal */}
+      <Modal open={showAddUserModal} onClose={() => setShowAddUserModal(false)} title="Add New User" size="lg">
+        <div className="space-y-4">
+          {addUserError && (
+            <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              {addUserError}
+            </div>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Full Name *</span>
+              <input
+                type="text"
+                placeholder="e.g. John Smith"
+                value={addUserForm.name}
+                onChange={e => setAddUserForm(prev => ({ ...prev, name: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Email *</span>
+              <input
+                type="email"
+                placeholder="e.g. john@benchmarkstudio.biz"
+                value={addUserForm.email}
+                onChange={e => setAddUserForm(prev => ({ ...prev, email: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Machine ID *</span>
+              <input
+                type="text"
+                placeholder="e.g. 101"
+                value={addUserForm.machine_id}
+                onChange={e => setAddUserForm(prev => ({ ...prev, machine_id: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Country</span>
+              <input
+                type="text"
+                placeholder="e.g. Pakistan, Australia"
+                value={addUserForm.country}
+                onChange={e => setAddUserForm(prev => ({ ...prev, country: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Password *</span>
+              <div className="relative">
+                <input
+                  type={showAddUserPassword ? 'text' : 'password'}
+                  placeholder="Min 8 characters"
+                  value={addUserForm.password}
+                  onChange={e => setAddUserForm(prev => ({ ...prev, password: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 pr-10 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAddUserPassword(!showAddUserPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showAddUserPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Confirm Password *</span>
+              <input
+                type={showAddUserPassword ? 'text' : 'password'}
+                placeholder="Re-enter password"
+                value={addUserForm.password_confirmation}
+                onChange={e => setAddUserForm(prev => ({ ...prev, password_confirmation: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Role *</span>
+              <select
+                value={addUserForm.role}
+                onChange={e => setAddUserForm(prev => ({ ...prev, role: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              >
+                <option value="csr">CSR</option>
+                <option value="it">IT</option>
+                <option value="drawer">Drawer</option>
+                <option value="checker">Checker</option>
+                <option value="filler">Filler</option>
+                <option value="qa">QA</option>
+                <option value="designer">Designer</option>
+                <option value="project_manager">Project Manager</option>
+                <option value="operations_manager">Ops Manager</option>
+                <option value="accounts_manager">Accounts</option>
+                <option value="hr">HR</option>
+              </select>
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase text-slate-500">Project</span>
+              <select
+                value={addUserForm.project_id}
+                onChange={e => setAddUserForm(prev => ({ ...prev, project_id: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
+              >
+                <option value="">No Project</option>
+                {projectOptions.map(project => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}{project.code ? ` (${project.code})` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setShowAddUserModal(false)}>
+              Cancel
+            </Button>
+            <Button className="flex-1" onClick={handleCreateUser} loading={addingUser}>
+              Create User
+            </Button>
           </div>
         </div>
       </Modal>

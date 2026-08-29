@@ -259,6 +259,11 @@ class UserController extends Controller
                 }
             } elseif ($authUser->role === 'director' || $authUser->role === 'ceo') {
                 // Directors and CEOs can edit any user's profile/password
+            } elseif ($authUser->role === 'hr') {
+                // HR can edit employee profiles (except CEO, Director, other HR)
+                if (in_array($user->role, ['ceo', 'director', 'hr'])) {
+                    return response()->json(['message' => 'HR cannot edit CEO, Director, or other HR accounts.'], 403);
+                }
             } else {
                 return response()->json(['message' => 'Unauthorized.'], 403);
             }
@@ -317,7 +322,7 @@ class UserController extends Controller
         }
 
         // Role hierarchy check: prevent deleting users at same or higher level
-        $roleHierarchy = ['ceo' => 6, 'director' => 5, 'operations_manager' => 4, 'project_manager' => 3, 'accounts_manager' => 3, 'hr' => 3, 'qa' => 2, 'live_qa' => 2, 'drawer' => 1, 'checker' => 1, 'filler' => 1, 'designer' => 1];
+        $roleHierarchy = ['ceo' => 6, 'director' => 5, 'operations_manager' => 4, 'project_manager' => 3, 'accounts_manager' => 3, 'hr' => 3, 'qa' => 2, 'live_qa' => 2, 'drawer' => 1, 'checker' => 1, 'filler' => 1, 'designer' => 1, 'csr' => 1, 'it' => 1];
         $authLevel = $roleHierarchy[$authUser->role] ?? 0;
         $targetLevel = $roleHierarchy[$user->role] ?? 0;
 

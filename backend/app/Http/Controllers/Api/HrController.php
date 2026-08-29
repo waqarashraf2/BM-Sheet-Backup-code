@@ -186,9 +186,9 @@ class HrController extends Controller
         $rules = [
             'name' => 'sometimes|string|max:255',
             'email' => ['sometimes', 'email', Rule::unique('users', 'email')->ignore($user->id)],
-            'role' => 'sometimes|in:drawer,checker,filler,qa,designer,project_manager,operations_manager,accounts_manager,hr',
+            'role' => 'sometimes|in:drawer,checker,filler,qa,designer,project_manager,operations_manager,accounts_manager,hr,csr,it',
             'country' => 'sometimes|nullable|string|max:255',
-            'department' => 'sometimes|nullable|in:floor_plan,photos_enhancement',
+            'department' => 'sometimes|nullable|in:floor_plan,photos_enhancement,general,support,it',
             'project_id' => 'sometimes|nullable|exists:projects,id',
             'team_id' => 'sometimes|nullable|exists:teams,id',
             'is_active' => 'sometimes|boolean',
@@ -646,6 +646,56 @@ class HrController extends Controller
         ]);
     }
 
+    /**
+     * Self-service endpoint for employees (CSR, IT, etc.) to view only their own documents.
+     */
+    public function myDocuments(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        if (!Schema::hasTable('user_documents')) {
+            return response()->json(['data' => [], 'documents_ready' => false]);
+        }
+
+        $documents = UserDocument::where('user_id', $user->id)
+            ->with('uploader:id,name,role')
+            ->latest()
+            ->get();
+
+        return response()->json([
+            'data' => $documents,
+            'documents_ready' => true,
+        ]);
+    }
+
+    /**
+     * Self-service endpoint for employees to download their own document.
+     */
+    public function downloadMyDocument(Request $request, string $documentId)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        if (!Schema::hasTable('user_documents')) {
+            return response()->json(['message' => 'User documents table is not ready.'], 503);
+        }
+
+        $document = UserDocument::where('id', $documentId)
+            ->where('user_id', $user->id)
+            ->firstOrFail();
+
+        if (!Storage::disk('local')->exists($document->file_path)) {
+            return response()->json(['message' => 'File not found on server.'], 404);
+        }
+
+        return Storage::disk('local')->download($document->file_path, $document->original_name);
+    }
+
     public function emailDocuments(Request $request, string $userId)
     {
         $this->authorizeHr($request);
@@ -881,6 +931,8 @@ class HrController extends Controller
             'designer' => 20,
             'filler' => 15,
             'drawer' => 10,
+            'csr' => 10,
+            'it' => 10,
         ];
 
         // Group active users by non-empty machine_id or individual user id

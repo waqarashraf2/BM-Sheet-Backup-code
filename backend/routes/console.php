@@ -69,97 +69,87 @@ Schedule::command('app:romio-import')
     ->withoutOverlapping(10)
     ->runInBackground();
     
-    Schedule::command('app:metro-import')
+Schedule::command('app:metro-import')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
     
     // LOW LOAD SYSTEM (IMPORTANT)
 Schedule::command('app:safp-import')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
-
 
 Schedule::command('app:saphoto-import')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
 
 Schedule::command('app:savideo-import')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
     
-    Schedule::command('scrape:focalpb2')
+Schedule::command('scrape:focalpb2')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
-    
     
 Schedule::command('scrape:focalxactimate')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
 
 // FocalCRM - Project 1 (PropertyVision FloorPlan) //1
 Schedule::command('focalcrm:import')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
 
 // FocalCRM - PB Photo Scraper //2
 Schedule::command('scrape:focalpbphoto')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
-    
     
 // FocalCRM - Project 22 (Photo Jobs - PH_2_LAYER) //3
 Schedule::command('focalcrm:photo-import')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
-    
-    
     
 // FocalCRM - Project 25 (Prestige Photography) //4
 Schedule::command('focalcrm:import-prestige')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
-    
 
-    
 // FocalAI - Project 52
 Schedule::command('focalai:import')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
 
-    
 // Focal RTV - Project 26 (Photography) //5
 Schedule::command('focalrtv:import')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
-
-
 
 // Realsee - Project 56
 Schedule::command('app:realsee-import')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
 
 // iGUIDE - Project 55
 Schedule::command('app:iguide-import')
     ->everyTenMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->runInBackground();
 
     // Faro - Project 27
 Schedule::command('app:faro-import')
     ->everyThirtyMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(25)
     ->runInBackground();

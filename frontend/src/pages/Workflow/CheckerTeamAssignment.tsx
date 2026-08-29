@@ -694,9 +694,9 @@ export default function CheckerTeamAssignment() {
                                     {dynamicPrimaryColumns.map((col) => (
                                         <col key={col.key} style={col.width ? { width: col.width } : undefined} />
                                     ))}
-                                    <col style={{ width: '8%' }} />{/* State */}
-                                    <col style={{ width: '16%' }} />{/* Drawer */}
-                                    <col style={{ width: '9%' }} />{/* Status */}
+                                    <col style={{ width: '8%' }} />
+                                    <col style={{ width: '16%' }} />
+                                    <col style={{ width: '9%' }} />
                                 </colgroup>
                                 <thead>
                                     <tr className="bg-brand-700 text-white">

@@ -13,45 +13,20 @@ class NotificationService
 {
     /**
      * Order assigned to a worker via startNext.
+     * Routine notification bypassed to prevent DB connection and table congestion.
      */
     public static function orderAssigned(Order $order, User $worker): void
     {
-        Notification::send(
-            $worker->id,
-            'order_assigned',
-            'New Order Assigned',
-            "Order #{$order->order_number} has been assigned to you.",
-            ['order_id' => $order->id, 'order_number' => $order->order_number, 'project_id' => $order->project_id],
-            "/work"
-        );
+        return;
     }
 
     /**
      * Work submitted — notify managers and next-layer workers.
+     * Routine notification bypassed to prevent massive DB insert loops on every submission/delivery.
      */
     public static function workSubmitted(Order $order, User $submitter): void
     {
-        // Notify project managers
-        Notification::sendToProjectManagers(
-            $order->project_id,
-            'work_submitted',
-            'Work Submitted',
-            "{$submitter->name} submitted work on order #{$order->order_number}. New state: {$order->workflow_state}.",
-            ['order_id' => $order->id, 'state' => $order->workflow_state, 'submitted_by' => $submitter->id],
-            "/work"
-        );
-
-        // If order is DELIVERED, extra notification
-        if ($order->workflow_state === 'DELIVERED') {
-            Notification::sendToProjectManagers(
-                $order->project_id,
-                'order_delivered',
-                'Order Delivered',
-                "Order #{$order->order_number} has been delivered successfully!",
-                ['order_id' => $order->id],
-                "/work"
-            );
-        }
+        return;
     }
 
     /**

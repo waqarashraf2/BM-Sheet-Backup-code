@@ -11,7 +11,7 @@ class StoreUserRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return in_array(auth()->user()->role, ['ceo', 'director', 'operations_manager', 'project_manager']);
+        return in_array(auth()->user()->role, ['ceo', 'director', 'operations_manager', 'project_manager', 'hr']);
     }
 
     /**
@@ -26,9 +26,9 @@ class StoreUserRequest extends FormRequest
             'email' => 'required|email|unique:users,email',
             'machine_id' => 'nullable|string|max:100',
             'password' => 'required|string|min:8|confirmed',
-            'role' => 'required|in:ceo,director,operations_manager,project_manager,qa,live_qa,checker,filler,drawer,designer,accounts_manager,hr',
+            'role' => 'required|in:ceo,director,operations_manager,project_manager,qa,live_qa,checker,filler,drawer,designer,accounts_manager,hr,csr,it',
             'country' => 'nullable|string|max:255',
-            'department' => 'required|in:floor_plan,photos_enhancement',
+            'department' => 'sometimes|nullable|in:floor_plan,photos_enhancement,general,support,it',
             'project_id' => 'nullable|exists:projects,id',
             'team_id' => 'nullable|exists:teams,id',
             'layer' => 'nullable|in:drawer,checker,filler,qa,designer',

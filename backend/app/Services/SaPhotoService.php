@@ -31,10 +31,10 @@ class SaPhotoService
     {
         try {
 
-            $response = Http::timeout(120)->get($this->apiUrl);
+            $response = Http::timeout(45)->retry(2, 500)->get($this->apiUrl);
 
             if (!$response->successful()) {
-                Log::error('Project19 Photo API failed');
+                Log::warning('Project19 Photo API response error: HTTP ' . $response->status());
                 return;
             }
 

@@ -191,7 +191,7 @@ class FocalPbPhotoScraperService
                         continue;
                     }
 
-                    if (count($values) === 1 && strcasecmp($values[0], 'No jobs available') === 0) {
+                    if (count($values) === 1 && (strcasecmp($values[0], 'No jobs available') === 0 || strcasecmp($values[0], 'No jobs') === 0)) {
                         continue;
                     }
 
@@ -200,17 +200,14 @@ class FocalPbPhotoScraperService
                         continue;
                     }
 
+                    $rowId = trim((string) ($row['Id'] ?? $row['ID'] ?? ''));
+                    if ($rowId === '' || strcasecmp($rowId, 'No jobs') === 0 || stripos($rowId, 'no job') !== false) {
+                        continue;
+                    }
                     $row['_portal_status'] = $portalStatus;
                     $detailUrl = $this->extractDetailUrlFromRow($xpath, $tr);
                     if ($detailUrl) {
                         $row['_detail_url'] = $detailUrl;
-                    }
-
-                    $rowId = trim((string) ($row['Id'] ?? $row['ID'] ?? ''));
-                    $key = $rowId !== '' ? $rowId : md5(json_encode($row));
-
-                    if (isset($seen[$key])) {
-                        continue;
                     }
 
                     $seen[$key] = true;
@@ -254,7 +251,7 @@ class FocalPbPhotoScraperService
                 $record['order_number'] = $orderNumber;
             }
 
-            if ($orderNumber === '') {
+            if ($orderNumber === '' || strcasecmp($orderNumber, 'No jobs') === 0 || stripos($orderNumber, 'no job') !== false) {
                 $skipped++;
                 continue;
             }
