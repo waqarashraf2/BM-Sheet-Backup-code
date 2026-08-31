@@ -147,6 +147,12 @@ class UserController extends Controller
     public function store(StoreUserRequest $request)
     {
         $data = $request->validated();
+        $authUser = $request->user();
+
+        if ($authUser->role === 'hr' && in_array($data['role'] ?? '', ['ceo', 'director'])) {
+            return response()->json(['message' => 'HR cannot create CEO or Director accounts.'], 403);
+        }
+
         if (!Schema::hasColumn('users', 'machine_id')) {
             unset($data['machine_id']);
         }

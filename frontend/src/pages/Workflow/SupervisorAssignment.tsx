@@ -271,11 +271,25 @@ export default function SupervisorAssignment() {
 
   /* Load queue list on mount */
   useEffect(() => {
+    let cancelled = false;
     dashboardService.queues().then(res => {
+      if (cancelled) return;
       const list = res.data?.queues ?? [];
       setQueues(list);
-      if (list.length > 0) setSelectedQueue(list[0].queue_name);
-    }).catch(() => { });
+      if (list.length > 0) {
+        setSelectedQueue(list[0].queue_name);
+      } else {
+        setLoading(false);
+      }
+    }).catch((err) => {
+      console.error('Failed to load queues:', err);
+      if (!cancelled) {
+        setLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Reset to the project's current calendar date when its timezone changes.

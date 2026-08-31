@@ -247,7 +247,7 @@ Route::prefix('assignments')->group(function () {
     // SHARED WORKFLOW ROUTES (management + QA supervisor)
     // QA can view projects/orders and reassign drawers
     // ═══════════════════════════════════════════
-    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa')->group(function () {
+    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,hr')->group(function () {
         Route::get('/projects', [ProjectController::class, 'index']);
         Route::get('/projects/{id}', [ProjectController::class, 'show']);
         Route::get('/projects/{id}/statistics', [ProjectController::class, 'statistics']);

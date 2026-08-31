@@ -20,6 +20,9 @@ export function useNotificationPolling() {
     }
 
     const poll = async () => {
+      // Don't poll if document is not visible
+      if (document.hidden) return;
+
       try {
         await dispatch(fetchUnreadCount()).unwrap();
         errorCountRef.current = 0; // Reset on success
@@ -29,7 +32,6 @@ export function useNotificationPolling() {
         if (errorCountRef.current >= MAX_CONSECUTIVE_ERRORS && intervalRef.current) {
           clearInterval(intervalRef.current);
           intervalRef.current = null;
-          console.warn('Notification polling stopped after repeated failures');
         }
       }
     };
@@ -37,11 +39,21 @@ export function useNotificationPolling() {
     // Fetch immediately on mount
     poll();
 
-    // Poll every 30s
+    // Poll every 90s
     intervalRef.current = setInterval(poll, POLL_INTERVAL);
+
+    // Resume immediately when user focuses back on tab
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        poll();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [isAuthenticated, dispatch]);
 }

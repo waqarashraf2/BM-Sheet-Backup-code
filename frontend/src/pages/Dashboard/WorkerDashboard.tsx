@@ -665,11 +665,10 @@ export default function WorkerDashboard() {
     }
   }, []);
 
-  // Full load: critical + stats
+  // Full load: critical on mount
   const loadData = useCallback(async () => {
     await loadCritical();
-    await loadStats();
-  }, [loadCritical, loadStats]);
+  }, [loadCritical]);
 
   const loadHistory = useCallback(async (page: number = 1) => {
     try {
@@ -692,6 +691,13 @@ export default function WorkerDashboard() {
     onDataChanged: loadCritical,
     enabled: !showDrawerForm && !showCheckerForm && !showFillerForm && !showQAForm && !showDesignerForm,
   });
+
+  // Lazy-load stats and completed orders only when worker switches to those views
+  useEffect(() => {
+    if ((viewMode === 'done' || viewMode === 'stats') && doneOrders.length === 0 && !performanceStats) {
+      loadStats();
+    }
+  }, [viewMode, loadStats, doneOrders.length, performanceStats]);
 
   useEffect(() => {
     if (viewMode === 'history' && historyOrders.length === 0) {

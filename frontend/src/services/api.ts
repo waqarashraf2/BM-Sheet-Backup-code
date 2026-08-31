@@ -1,9 +1,15 @@
-import axios from 'axios';
+import axios, { type AxiosRequestConfig } from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://crm.benchmarkstudio.biz/apicrm/api';
 
+// Extended request config for retry tracking
+interface RetryConfig extends AxiosRequestConfig {
+  _retryCount?: number;
+}
+
 const apiClient = axios.create({
   baseURL: API_URL,
+  timeout: 30000, // 30s timeout to prevent infinite hangs
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -31,14 +37,49 @@ apiClient.interceptors.request.use(
 // Guard flag to prevent multiple simultaneous redirects (redirect loop)
 let isRedirecting = false;
 
-// Response interceptor to handle errors and session management
+// Response interceptor to handle auto-retry on transient network errors and session management
 apiClient.interceptors.response.use(
   (response) => {
     // Reset redirect guard on any successful response
     isRedirecting = false;
     return response;
   },
-  (error) => {
+  async (error) => {
+    const config = error.config as RetryConfig | undefined;
+
+    // Transient network error detection: ERR_NETWORK_CHANGED, HTTP2 errors, timeout, 502/503/504
+    const isNetworkOrServerGlitch =
+      !error.response ||
+      error.code === 'ERR_NETWORK_CHANGED' ||
+      error.code === 'ECONNABORTED' ||
+      (error.message && (
+        error.message.includes('Network Error') ||
+        error.message.includes('ERR_HTTP2') ||
+        error.message.includes('timeout')
+      )) ||
+      (error.response && [502, 503, 504].includes(error.response.status));
+
+    // Only retry GET requests or safe polling requests to avoid duplicate POST actions
+    const isSafeMethod = config && (
+      !config.method ||
+      config.method.toLowerCase() === 'get' ||
+      config.url?.includes('check-updates') ||
+      config.url?.includes('unread-count')
+    );
+
+    if (config && isNetworkOrServerGlitch && isSafeMethod) {
+      config._retryCount = config._retryCount || 0;
+      const MAX_RETRIES = 2;
+
+      if (config._retryCount < MAX_RETRIES) {
+        config._retryCount += 1;
+        // Exponential backoff delay (600ms, 1200ms)
+        const backoffDelay = config._retryCount * 600;
+        await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+        return apiClient(config);
+      }
+    }
+
     if (error.response && !isRedirecting) {
       switch (error.response.status) {
         case 401:
