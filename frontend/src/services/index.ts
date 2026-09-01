@@ -663,10 +663,10 @@ export const dashboardService = {
 
 
 
-  batchStatus: (params?: { date?: string; project_id?: number }) =>
+  batchStatus: (params?: { date?: string; start_date?: string; end_date?: string; project_id?: number }) =>
     api.get<BatchStatusResponse>('/dashboard/batch-status', { params }),
 
-  cubiQaReport: (params?: { date?: string }) =>
+  cubiQaReport: (params?: { date?: string; start_date?: string; end_date?: string }) =>
     api.get<CubiQaReportResponse>('/dashboard/cubi-qa-report', { params }),
 
   // Queues list — returns distinct queue names with their projects

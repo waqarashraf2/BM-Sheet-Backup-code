@@ -15,8 +15,24 @@ class CubiQaReportController extends Controller
 
     public function index(Request $request)
     {
-        $date = $this->selectedDate($request);
-        [$shiftStartPkt, $shiftEndPkt] = $this->shiftBounds($date);
+        $startDate = $request->query('start_date');
+        $endDate = $request->query('end_date');
+
+        if ($startDate && $endDate) {
+            $startDateStr = Carbon::parse((string) $startDate, 'Asia/Karachi')->toDateString();
+            $endDateStr = Carbon::parse((string) $endDate, 'Asia/Karachi')->toDateString();
+            $date = $startDateStr;
+            $shiftStartPkt = Carbon::parse($startDateStr, 'Asia/Karachi')->subDay()->setTime(22, 0, 0);
+            $shiftEndPkt = Carbon::parse($endDateStr, 'Asia/Karachi')->setTime(22, 0, 0);
+            $isRange = ($startDateStr !== $endDateStr);
+            $displayDate = $isRange
+                ? Carbon::parse($startDateStr, 'Asia/Karachi')->format('d-M') . ' TO ' . Carbon::parse($endDateStr, 'Asia/Karachi')->format('d-M')
+                : Carbon::parse($startDateStr, 'Asia/Karachi')->format('d-M');
+        } else {
+            $date = $this->selectedDate($request);
+            [$shiftStartPkt, $shiftEndPkt] = $this->shiftBounds($date);
+            $displayDate = Carbon::parse($date, 'Asia/Karachi')->format('d-M');
+        }
 
         $shiftStartUtc = $shiftStartPkt->copy()->utc();
         $shiftEndUtc = $shiftEndPkt->copy()->utc();
@@ -122,7 +138,7 @@ class CubiQaReportController extends Controller
             'success' => true,
             'project_id' => self::PROJECT_ID,
             'selected_date' => $date,
-            'selected_date_display' => Carbon::parse($date, 'Asia/Karachi')->format('d-M'),
+            'selected_date_display' => $displayDate,
             'start_time' => $shiftStartPkt->format('Y-m-d H:i:s'),
             'end_time' => $shiftEndPkt->format('Y-m-d H:i:s'),
             'rows' => $rows,

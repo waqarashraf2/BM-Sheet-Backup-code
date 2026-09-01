@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, Copy, Check, Loader2, RotateCw } from 'lucide-react';
+import { Download, Copy, Check, Loader2, RotateCw, X } from 'lucide-react';
 import { toJpeg, toBlob } from 'html-to-image';
-import html2canvas from 'html2canvas';
 import { dashboardService } from '../../services';
 import CubiQaReport from './CubiQaReport';
 
@@ -94,19 +93,24 @@ export default function BatchStatus() {
     return `${year}-${month}-${day}`;
   };
 
-  const [selectedDate, setSelectedDate] = useState<string>(getTodayInputValue());
+  const [startDate, setStartDate] = useState<string>(getTodayInputValue());
+  const [endDate, setEndDate] = useState<string>(getTodayInputValue());
   const [rawResponse, setRawResponse] = useState<BatchStatusResponse | null>(null);
   const [showCubiQaReport, setShowCubiQaReport] = useState(false);
 
   /* ---------------------- Fetch Data ---------------------- */
 
-  const fetchData = async (date?: string) => {
+  const fetchData = async (start?: string, end?: string) => {
     try {
       setLoading(true);
+      const s = start ?? startDate;
+      const e = end ?? endDate;
 
       const res = await dashboardService.batchStatus({
         project_id: 16,
-        date,
+        start_date: s,
+        end_date: e,
+        date: s,
       });
 
       const resp: BatchStatusResponse = res.data;
@@ -141,7 +145,7 @@ export default function BatchStatus() {
   };
 
   useEffect(() => {
-    fetchData(selectedDate);
+    fetchData(startDate, endDate);
   }, []);
 
   /* ---------------------- FORMAT REPORT ---------------------- */
@@ -167,7 +171,7 @@ export default function BatchStatus() {
     let text = '';
 
     text += `Cubi 2D\n`;
-    text += `${formatDate(selectedDate)}\n\n`;
+    text += startDate === endDate ? `${formatDate(startDate)}\n\n` : `${formatDate(startDate)} to ${formatDate(endDate)}\n\n`;
 
     data.forEach((batch) => {
       text += `Batch ${batch.batch_no}\n`;
@@ -249,34 +253,22 @@ export default function BatchStatus() {
 
   const handleDownloadJpg = async () => {
     if (!batchCardRef.current) return;
+
     try {
       setExportingJpg(true);
       const element = batchCardRef.current;
-
-      let dataUrl: string;
-      try {
-        dataUrl = await toJpeg(element, {
-          quality: 0.98,
-          pixelRatio: 3, // Ultra-HD 3x sharp scale (no pixel drop)
+      const dataUrl = await toJpeg(element, {
+        quality: 0.98,
+        pixelRatio: 3,
+        backgroundColor: '#ffffff',
+        cacheBust: true,
+        style: {
+          margin: '0',
           backgroundColor: '#ffffff',
-          cacheBust: true,
-          style: {
-            margin: '0',
-            backgroundColor: '#ffffff',
-          },
-        });
-      } catch (err) {
-        console.warn('html-to-image fallback to html2canvas:', err);
-        const canvas = await html2canvas(element, {
-          scale: 3,
-          useCORS: true,
-          backgroundColor: '#ffffff',
-          logging: false,
-        });
-        dataUrl = canvas.toDataURL('image/jpeg', 0.98);
-      }
+        },
+      });
 
-      const filename = `Cubi_2D_Batch_Status_${formatDate(selectedDate)}.jpg`.replace(/\s+/g, '_');
+      const filename = `CUBI_2D_BATCH_STATUS_${startDate === endDate ? startDate : `${startDate}_to_${endDate}`}.jpg`;
       const link = document.createElement('a');
       link.download = filename;
       link.href = dataUrl;
@@ -284,8 +276,7 @@ export default function BatchStatus() {
       link.click();
       document.body.removeChild(link);
     } catch (err) {
-      console.error('Failed to export batch status JPG:', err);
-      alert('Failed to generate JPG. Please try again.');
+      console.error('Download JPG failed:', err);
     } finally {
       setExportingJpg(false);
     }
@@ -328,7 +319,9 @@ export default function BatchStatus() {
 
   /* ---------------------- UI ---------------------- */
 
-  const displayDate = formatDate(selectedDate);
+  const displayDate = startDate === endDate
+    ? formatDate(startDate)
+    : `${formatDate(startDate)} to ${formatDate(endDate)}`;
   const totalOrders = rawResponse?.total_orders;
   const qaSummary = rawResponse?.qa_summary;
   const qaWorkers = qaSummary?.workers ?? [];
@@ -347,6 +340,16 @@ export default function BatchStatus() {
 
     const [min, max] = value.split('-').map((part) => part.trim());
     return min === max ? min : value;
+  };
+
+  const todayVal = getTodayInputValue();
+  const isDateFiltered = startDate !== todayVal || endDate !== todayVal;
+
+  const handleClearFilter = () => {
+    const today = getTodayInputValue();
+    setStartDate(today);
+    setEndDate(today);
+    fetchData(today, today);
   };
 
   return (
@@ -391,15 +394,42 @@ export default function BatchStatus() {
 
             <div className="flex shrink-0 flex-col items-end gap-1.5">
               <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="date"
-                  value={selectedDate}
-                  className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 outline-none transition focus:border-[#2AA7A0] focus:ring-2 focus:ring-[#2AA7A0]/15"
-                  onChange={(e) => {
-                    setSelectedDate(e.target.value);
-                    fetchData(e.target.value);
-                  }}
-                />
+                <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50/80 px-2 py-0.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">From</span>
+                  <input
+                    type="date"
+                    value={startDate}
+                    className="h-7 rounded border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none transition focus:border-[#2AA7A0] focus:ring-2 focus:ring-[#2AA7A0]/15"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setStartDate(val);
+                      fetchData(val, endDate);
+                    }}
+                  />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">To</span>
+                  <input
+                    type="date"
+                    value={endDate}
+                    className="h-7 rounded border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none transition focus:border-[#2AA7A0] focus:ring-2 focus:ring-[#2AA7A0]/15"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setEndDate(val);
+                      fetchData(startDate, val);
+                    }}
+                  />
+                </div>
+
+                {isDateFiltered && (
+                  <button
+                    type="button"
+                    onClick={handleClearFilter}
+                    className="h-8 rounded-lg bg-rose-50 border border-rose-200 px-2.5 text-xs font-semibold text-rose-700 shadow-sm transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-400/25 flex items-center gap-1"
+                    title="Reset to today's date"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    <span>Clear Filter</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -448,43 +478,40 @@ export default function BatchStatus() {
                   onClick={handleDownloadJpg}
                   disabled={exportingJpg || loading}
                   className="h-8 rounded-lg bg-slate-900 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900/25 flex items-center gap-1.5 disabled:opacity-50"
+                  title="Download Batch Status report as high-res image"
                 >
-                  {exportingJpg ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#2AA7A0]" />
-                      <span>Generating JPG...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="h-3.5 w-3.5" />
-                      <span>Download JPG</span>
-                    </>
-                  )}
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download JPG</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => fetchData(selectedDate)}
+                  onClick={() => fetchData(startDate, endDate)}
                   disabled={loading}
                   className="h-8 rounded-lg bg-white ring-1 ring-slate-200 px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#2AA7A0]/25 flex items-center gap-1.5 disabled:opacity-50"
+                  title="Refresh batch status"
                 >
                   <RotateCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-                  Refresh
+                  <span>Refresh</span>
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 px-4 py-2.5">
-            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">Plans {summary?.total_plans ?? totalOrders?.plans ?? 0}</span>
-            {qaSummary && (
-              <span className="rounded-md bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">In QA {qaSummary.total_wip ?? 0}</span>
-            )}
-            <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Done {summary?.total_done ?? totalOrders?.done ?? 0}</span>
-            <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Pending {summary?.total_pending ?? totalOrders?.pending ?? 0}</span>
-            <span className="rounded-md bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Drawing Process {summary?.total_drawing ?? totalOrders?.drawing_process ?? 0}</span>
-            <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Fixing {summary?.total_fixing ?? totalOrders?.sent_to_fixing ?? 0}</span>
-            <span className="rounded-md bg-orange-50 px-2 py-0.5 text-[10px] font-semibold text-orange-700">Untouched {summary?.total_untouched ?? totalOrders?.untouched_orders ?? 0}</span>
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/50 px-4 py-2 text-[11px] font-medium text-slate-600">
+            <span>Plans {summary?.total_plans || 0}</span>
+            <span>•</span>
+            <span className="text-[#0f766e]">In QA {rawResponse?.qa_summary?.total_orders || 0}</span>
+            <span>•</span>
+            <span className="text-emerald-600">Done {summary?.total_done || 0}</span>
+            <span>•</span>
+            <span className="text-amber-600">Pending {summary?.total_pending || 0}</span>
+            <span>•</span>
+            <span className="text-sky-600">Drawing Process {rawResponse?.total_orders?.drawing_process || 0}</span>
+            <span>•</span>
+            <span className="text-rose-600">Fixing {summary?.total_fixing || 0}</span>
+            <span>•</span>
+            <span className="text-orange-600">Untouched {rawResponse?.total_orders?.untouched_orders || 0}</span>
             {topPlans.map((item) => (
               <span
                 key={`batch-top-${item.label}`}
@@ -497,7 +524,7 @@ export default function BatchStatus() {
 
           {showCubiQaReport && (
             <div className="border-b border-slate-200 bg-slate-50 p-4">
-              <CubiQaReport date={selectedDate} />
+              <CubiQaReport startDate={startDate} endDate={endDate} date={startDate} />
             </div>
           )}
 

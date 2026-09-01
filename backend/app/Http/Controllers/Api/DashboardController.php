@@ -67,37 +67,34 @@ public function batchStatusReport(Request $request)
 
         $projectId = $request->query('project_id');
 
-/*
-|--------------------------------------------------------------------------
-| Default Pakistan Date
-|--------------------------------------------------------------------------
-*/
-$pkNow = now('Asia/Karachi');
+        $startDate = $request->query('start_date');
+        $endDate = $request->query('end_date');
 
-if ($request->query('date')) {
-    $date = $request->query('date');
-} else {
+        if ($startDate && $endDate) {
+            $startDateStr = \Carbon\Carbon::parse((string) $startDate, 'Asia/Karachi')->toDateString();
+            $endDateStr = \Carbon\Carbon::parse((string) $endDate, 'Asia/Karachi')->toDateString();
+            $date = $startDateStr;
+            $shiftStartPkt = \Carbon\Carbon::parse($startDateStr, 'Asia/Karachi')->subDay()->setTime(22, 0, 0);
+            $shiftEndPkt = \Carbon\Carbon::parse($endDateStr, 'Asia/Karachi')->setTime(22, 0, 0);
+        } else {
+            $pkNow = now('Asia/Karachi');
 
-    if ($pkNow->hour >= 22) {
-        $date = $pkNow->copy()->addDay()->toDateString();
-    } else {
-        $date = $pkNow->toDateString();
-    }
-}
+            if ($request->query('date')) {
+                $date = $request->query('date');
+            } else {
+                if ($pkNow->hour >= 22) {
+                    $date = $pkNow->copy()->addDay()->toDateString();
+                } else {
+                    $date = $pkNow->toDateString();
+                }
+            }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Pakistan Shift Based on Selected Date
-        |--------------------------------------------------------------------------
-        */
-        $selectedDatePkt = \Carbon\Carbon::parse($date, 'Asia/Karachi');
+            $selectedDatePkt = \Carbon\Carbon::parse($date, 'Asia/Karachi');
+            $shiftStartPkt = $selectedDatePkt->copy()->subDay()->setTime(22, 0, 0);
+            $shiftEndPkt = $selectedDatePkt->copy()->setTime(22, 0, 0);
+        }
+
         $batchNowPkt = now('Asia/Karachi')->format('Y-m-d H:i:s');
-
-        // 29 10 PM
-        $shiftStartPkt = $selectedDatePkt->copy()->subDay()->setTime(22, 0, 0);
-
-        // 30 10 PM
-        $shiftEndPkt = $selectedDatePkt->copy()->setTime(22, 0, 0);
 
         /*
         |--------------------------------------------------------------------------
@@ -4985,6 +4982,10 @@ $endDate = $request->input('end_date');
         $roleSortColumnFromSortBy = $roleSortableColumns[$sortByInput] ?? null;
         $effectiveRoleSortColumn = $roleSortColumn ?? $roleSortColumnFromSortBy;
         $exportAll = $request->boolean('all') || $request->boolean('export') || $request->input('all') === '1' || $request->input('export') === '1';
+        if ($exportAll) {
+            @ini_set('memory_limit', '1024M');
+            @set_time_limit(300);
+        }
         $shouldPaginateOrders = !$exportAll;
         $hasSpecialPriorityProjects = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS));
         $isDateRangeSelection = !empty($startDate) && !empty($endDate)
@@ -5415,17 +5416,9 @@ if ($statusFilter === 'pending_by_drawer') {
         }
 
         if ($statusFilter === 'completed') {
-            $completedOrderExpr = "GREATEST(
-                COALESCE(delivered_at, '1000-01-01 00:00:00'),
-                COALESCE(completed_at, '1000-01-01 00:00:00')
-            )";
-
             $orderedQuery->reorder();
-
             $orderedQuery
-                ->orderByRaw("CASE WHEN delivered_at IS NULL AND completed_at IS NULL THEN 1 ELSE 0 END ASC")
-                ->orderByRaw("{$completedOrderExpr} DESC")
-                ->orderBy('received_at', 'desc')
+                ->orderByRaw("COALESCE(delivered_at, completed_at, received_at) DESC")
                 ->orderBy('id', 'desc');
         } elseif ($useDueInFirstOrdering) {
     $orderedQuery->reorder();
@@ -5593,6 +5586,18 @@ if ($statusFilter === 'pending_by_drawer') {
         });
 
         $ordersResponseData = $orders->values();
+
+        if ($exportAll) {
+            return response()->json([
+                'orders' => [
+                    'data' => $ordersResponseData,
+                    'current_page' => 1,
+                    'per_page' => $orders->count(),
+                    'total' => $orders->count(),
+                    'last_page' => 1,
+                ],
+            ]);
+        }
 
         // ─── 3. Counts (single aggregation query instead of 6 separate queries) ───
         $baseQ = DB::table(DB::raw("({$unionQuery}) as queue_orders"));
@@ -6262,40 +6267,43 @@ if ($statusFilter === 'pending_by_drawer') {
             return [];
         }
 
-        $workItems = WorkItem::query()
-            ->whereIn('project_id', $projectIds->all())
-            ->whereIn('order_id', $orderIds->all())
-            ->whereNotNull('comments')
-            ->orderByDesc('id')
-            ->get(['id', 'project_id', 'order_id', 'comments']);
-
         $commentMap = [];
+        $orderIdChunks = $orderIds->chunk(1000);
 
-        foreach ($workItems as $workItem) {
-            $key = ((int) $workItem->project_id) . ':' . ((int) $workItem->order_id);
+        foreach ($orderIdChunks as $chunk) {
+            $workItems = WorkItem::query()
+                ->whereIn('project_id', $projectIds->all())
+                ->whereIn('order_id', $chunk->all())
+                ->whereNotNull('comments')
+                ->orderByDesc('id')
+                ->get(['id', 'project_id', 'order_id', 'comments']);
 
-            if (array_key_exists($key, $commentMap)) {
-                continue;
+            foreach ($workItems as $workItem) {
+                $key = ((int) $workItem->project_id) . ':' . ((int) $workItem->order_id);
+
+                if (array_key_exists($key, $commentMap)) {
+                    continue;
+                }
+
+                $area = $this->extractAreaFromAssignmentComment($workItem->comments);
+                $totalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Total');
+                $editedImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Edited');
+                $finalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Final');
+                $project50Counts = (int) $workItem->project_id === 50
+                    ? $this->extractProject50ReportCountsFromAssignmentComment($workItem->comments)
+                    : [];
+
+                if ($area === null && $totalImages === null && $editedImages === null && $finalImages === null && empty($project50Counts)) {
+                    continue;
+                }
+
+                $commentMap[$key] = array_merge([
+                    'area' => $area,
+                    'total_images' => $totalImages,
+                    'edited_images' => $editedImages,
+                    'final_images' => $finalImages,
+                ], $project50Counts);
             }
-
-            $area = $this->extractAreaFromAssignmentComment($workItem->comments);
-            $totalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Total');
-            $editedImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Edited');
-            $finalImages = $this->extractImageCountFromAssignmentComment($workItem->comments, 'Final');
-            $project50Counts = (int) $workItem->project_id === 50
-                ? $this->extractProject50ReportCountsFromAssignmentComment($workItem->comments)
-                : [];
-
-            if ($area === null && $totalImages === null && $editedImages === null && $finalImages === null && empty($project50Counts)) {
-                continue;
-            }
-
-            $commentMap[$key] = array_merge([
-                'area' => $area,
-                'total_images' => $totalImages,
-                'edited_images' => $editedImages,
-                'final_images' => $finalImages,
-            ], $project50Counts);
         }
 
         return $commentMap;

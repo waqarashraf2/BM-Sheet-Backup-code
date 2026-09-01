@@ -6,7 +6,9 @@ import { dashboardService } from '../../services';
 import type { CubiQaReportResponse } from '../../services';
 
 type CubiQaReportProps = {
-  date: string;
+  date?: string;
+  startDate?: string;
+  endDate?: string;
 };
 
 const emptyReport: CubiQaReportResponse = {
@@ -23,7 +25,7 @@ const emptyReport: CubiQaReportResponse = {
   qa_counts: [],
 };
 
-export default function CubiQaReport({ date }: CubiQaReportProps) {
+export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportProps) {
   const [report, setReport] = useState<CubiQaReportResponse>(emptyReport);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -38,7 +40,14 @@ export default function CubiQaReport({ date }: CubiQaReportProps) {
       try {
         setLoading(true);
         setError('');
-        const response = await dashboardService.cubiQaReport({ date });
+        const params: { date?: string; start_date?: string; end_date?: string } = {};
+        if (startDate && endDate) {
+          params.start_date = startDate;
+          params.end_date = endDate;
+        } else if (date) {
+          params.date = date;
+        }
+        const response = await dashboardService.cubiQaReport(params);
         if (!isMounted) return;
         setReport(response.data);
       } catch (err) {
@@ -57,10 +66,20 @@ export default function CubiQaReport({ date }: CubiQaReportProps) {
     return () => {
       isMounted = false;
     };
-  }, [date]);
+  }, [date, startDate, endDate]);
 
-  const formatCount = (value: number) => (value > 0 ? value : '-');
-  const titleDate = (report.selected_date_display || date).toUpperCase();
+  const renderCellWithPercentage = (count: number, totalPlans: number) => {
+    if (!count || count <= 0) return '-';
+    const pct = totalPlans > 0 ? ((count / totalPlans) * 100).toFixed(1) : '0.0';
+    return (
+      <div className="flex flex-col items-center justify-center leading-tight">
+        <span>{count}</span>
+        <span className="text-[9.5px] font-semibold text-slate-700">({pct}%)</span>
+      </div>
+    );
+  };
+
+  const titleDate = (report.selected_date_display || (startDate && endDate && startDate !== endDate ? `${startDate} TO ${endDate}` : date || '')).toUpperCase();
 
   const handleDownloadJpg = async () => {
     if (!reportRef.current) return;
@@ -248,10 +267,10 @@ export default function CubiQaReport({ date }: CubiQaReportProps) {
                 <tr key={row.checker_name} className="align-top">
                   <td className="border border-slate-400 px-2 py-1 font-medium">{row.checker_name}</td>
                   <td className="border border-slate-400 px-2 py-1 text-center font-semibold">{row.total_plans}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{formatCount(row.bw)}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{formatCount(row.bugs)}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{formatCount(row.mb)}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{formatCount(row.ok)}</td>
+                  <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.bw, row.total_plans)}</td>
+                  <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.bugs, row.total_plans)}</td>
+                  <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.mb, row.total_plans)}</td>
+                  <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.ok, row.total_plans)}</td>
                   <td className="border border-slate-400 px-2 py-1 text-center">{row.mistakes_remarks || '-'}</td>
                 </tr>
               )) : (
@@ -264,19 +283,19 @@ export default function CubiQaReport({ date }: CubiQaReportProps) {
               <tr className="bg-neutral-500 font-bold">
                 <td className="border border-slate-500 px-2 py-1 text-center text-black">Total</td>
                 <td className="border border-slate-500 px-2 py-1 text-center font-bold">{report.totals.total_plans}</td>
-                <td className="border border-slate-500 px-2 py-1 text-center">{report.totals.bw}</td>
-                <td className="border border-slate-500 px-2 py-1 text-center">{report.totals.bugs}</td>
-                <td className="border border-slate-500 px-2 py-1 text-center">{report.totals.mb}</td>
-                <td className="border border-slate-500 px-2 py-1 text-center">{report.totals.ok}</td>
+                <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.bw, report.totals.total_plans)}</td>
+                <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.bugs, report.totals.total_plans)}</td>
+                <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.mb, report.totals.total_plans)}</td>
+                <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.ok, report.totals.total_plans)}</td>
                 <td className="border border-slate-500 px-2 py-1" />
               </tr>
               <tr>
                 <td className="border border-slate-500 bg-neutral-500 px-2 py-1 text-center font-bold text-black">Percentage</td>
-                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.total_plans.toFixed(1)}</td>
-                <td className="border border-slate-400 px-2 py-1 text-center">{report.percentages.bw.toFixed(1)}</td>
-                <td className="border border-slate-400 px-2 py-1 text-center">{report.percentages.bugs.toFixed(1)}</td>
-                <td className="border border-slate-400 px-2 py-1 text-center">{report.percentages.mb.toFixed(1)}</td>
-                <td className="border border-slate-400 px-2 py-1 text-center">{report.percentages.ok.toFixed(1)}</td>
+                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.total_plans.toFixed(1)}%</td>
+                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.bw.toFixed(1)}%</td>
+                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.bugs.toFixed(1)}%</td>
+                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.mb.toFixed(1)}%</td>
+                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.ok.toFixed(1)}%</td>
                 <td className="border border-slate-400 px-2 py-1" />
               </tr>
             </tbody>
