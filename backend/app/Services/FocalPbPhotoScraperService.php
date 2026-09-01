@@ -210,6 +210,11 @@ class FocalPbPhotoScraperService
                         $row['_detail_url'] = $detailUrl;
                     }
 
+                    $key = $rowId !== '' ? $rowId : md5(json_encode($row));
+                    if (isset($seen[$key])) {
+                        continue;
+                    }
+
                     $seen[$key] = true;
                     $rows[] = $row;
                 }

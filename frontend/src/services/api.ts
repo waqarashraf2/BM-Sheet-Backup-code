@@ -9,16 +9,21 @@ interface RetryConfig extends AxiosRequestConfig {
 
 const apiClient = axios.create({
   baseURL: API_URL,
-  timeout: 30000, // 30s timeout to prevent infinite hangs
+  timeout: 120000, // 2m default for regular API calls
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
   },
 });
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token and handle upload timeouts
 apiClient.interceptors.request.use(
   (config) => {
+    // If uploading files (FormData), disable client timeout so large uploads complete
+    if (config.data instanceof FormData && config.timeout === 120000) {
+      config.timeout = 0;
+    }
+
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;

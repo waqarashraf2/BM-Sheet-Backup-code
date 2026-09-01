@@ -4990,11 +4990,11 @@ $endDate = $request->input('end_date');
             && Carbon::parse($startDate)->toDateString() !== Carbon::parse($endDate)->toDateString();
         $useDueInFirstOrdering = $hasSpecialPriorityProjects && $isDateRangeSelection;
         $page = max((int) $request->input('page', 1), 1);
-        $defaultPerPage = $shouldPaginateOrders ? self::ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE : 15;
+        $defaultPerPage = self::ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE;
         $requestedPerPage = max((int) $request->input('per_page', $defaultPerPage), 1);
-        $perPage = $shouldPaginateOrders
-            ? min($requestedPerPage, self::ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE)
-            : $requestedPerPage;
+        // Safely allow up to 2500 per page for CSV export while keeping 100 for normal UI pagination
+        $maxAllowedPerPage = 2500;
+        $perPage = min($requestedPerPage, $maxAllowedPerPage);
 
         // Selected columns
         $selectCols = 'id, order_number, code, plan_type, project_id, client_reference, address, client_name, instruction,'

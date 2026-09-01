@@ -399,6 +399,7 @@ export const workflowService = {
       payload(),
       {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 0,
         onUploadProgress: (event) => {
           if (!event.total) return;
           onUploadProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)));
