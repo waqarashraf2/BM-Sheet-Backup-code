@@ -2147,7 +2147,7 @@ export default function SupervisorAssignment() {
   };
 
   const buildAssignmentExportParams = useCallback((page: number, perPage: number) => {
-    const params: Record<string, string | number> = { page, per_page: perPage };
+    const params: Record<string, string | number> = { page, per_page: perPage, all: 1, export: 1 };
 
     if (statusFilter !== 'all' && statusFilter !== 'cancelled' && statusFilter !== 'unassigned' && statusFilter !== 'pending') {
       params.status = statusFilter;
@@ -2179,7 +2179,7 @@ export default function SupervisorAssignment() {
   }, [buildAssignmentExportParams, selectedQueue]);
 
   const fetchAllOrdersForExport = useCallback(async () => {
-    const perPage = 2000;
+    const perPage = 50000;
     const allOrders: AssignmentOrder[] = [];
     let page = 1;
     let lastAvailablePage = 1;

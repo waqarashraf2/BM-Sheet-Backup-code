@@ -4984,7 +4984,8 @@ $endDate = $request->input('end_date');
         $roleSortColumn = $roleSortableColumns[$roleSortByInput] ?? null;
         $roleSortColumnFromSortBy = $roleSortableColumns[$sortByInput] ?? null;
         $effectiveRoleSortColumn = $roleSortColumn ?? $roleSortColumnFromSortBy;
-        $shouldPaginateOrders = true;
+        $exportAll = $request->boolean('all') || $request->boolean('export') || $request->input('all') === '1' || $request->input('export') === '1';
+        $shouldPaginateOrders = !$exportAll;
         $hasSpecialPriorityProjects = !empty(array_intersect($projectIds, self::ASSIGNMENT_DASHBOARD_SPECIAL_PRIORITY_PROJECT_IDS));
         $isDateRangeSelection = !empty($startDate) && !empty($endDate)
             && Carbon::parse($startDate)->toDateString() !== Carbon::parse($endDate)->toDateString();
@@ -4992,8 +4993,8 @@ $endDate = $request->input('end_date');
         $page = max((int) $request->input('page', 1), 1);
         $defaultPerPage = self::ASSIGNMENT_DASHBOARD_SPECIAL_PROJECTS_PER_PAGE;
         $requestedPerPage = max((int) $request->input('per_page', $defaultPerPage), 1);
-        // Safely allow up to 2500 per page for CSV export while keeping 100 for normal UI pagination
-        $maxAllowedPerPage = 2500;
+        // Safely allow up to 100000 per page for CSV bulk export while keeping normal limit for UI
+        $maxAllowedPerPage = $exportAll ? 100000 : 2500;
         $perPage = min($requestedPerPage, $maxAllowedPerPage);
 
         // Selected columns
