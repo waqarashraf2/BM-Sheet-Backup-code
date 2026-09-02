@@ -23,6 +23,13 @@ class ClientIssue extends Model
         'time_taken_to_finish_minutes'
     ];
 
+    protected $casts = [
+        'comment_entered_at' => 'datetime',
+        'client_replied_at' => 'datetime',
+        'team_started_at' => 'datetime',
+        'team_finished_at' => 'datetime',
+    ];
+
     public function project()
     {
         return $this->belongsTo(Project::class);
