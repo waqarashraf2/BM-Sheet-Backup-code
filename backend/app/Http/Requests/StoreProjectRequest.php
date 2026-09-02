@@ -31,6 +31,7 @@ class StoreProjectRequest extends FormRequest
             'timezone' => 'nullable|string|max:50',
             'workflow_layers' => 'required|array',
             'metadata' => 'sometimes|array',
+            'action' => 'sometimes|boolean',
         ];
     }
 }

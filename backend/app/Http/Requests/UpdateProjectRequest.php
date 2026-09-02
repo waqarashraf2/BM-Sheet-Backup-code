@@ -32,6 +32,7 @@ class UpdateProjectRequest extends FormRequest
             'timezone' => 'nullable|string|max:50',
             'workflow_layers' => 'sometimes|array',
             'metadata' => 'sometimes|array',
+            'action' => 'sometimes|boolean',
         ];
     }
 }

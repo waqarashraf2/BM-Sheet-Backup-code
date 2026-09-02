@@ -19,7 +19,7 @@ class Project extends Model
         'total_teams', 'active_teams', 'total_staff', 'active_staff',
         'workflow_layers', 'metadata', 'timezone',
         'workflow_type', 'sla_config', 'invoice_categories_config',
-        'client_portal_config', 'target_config', 'wip_cap',
+        'client_portal_config', 'target_config', 'wip_cap', 'action',
     ];
 
     protected $casts = [
@@ -37,6 +37,7 @@ class Project extends Model
         'total_staff' => 'integer',
         'active_staff' => 'integer',
         'wip_cap' => 'integer',
+        'action' => 'boolean',
     ];
 
     /**

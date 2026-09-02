@@ -8,7 +8,7 @@ import { FolderKanban, Plus, Edit, Trash2, Users, BarChart3, MapPin } from 'luci
 
 const emptyForm = {
   name: '', code: '', client_name: '', country: 'all', department: 'floor_plan',
-  status: 'active', description: '', workflow_layers: ['drawer', 'checker', 'qa'], timezone: '',
+  status: 'active', description: '', workflow_layers: ['drawer', 'checker', 'qa'], timezone: '', action: false,
 };
 
 const COUNTRY_TIMEZONES: Record<string, { value: string; label: string }[]> = {
@@ -87,7 +87,7 @@ export default function ProjectManagement() {
   const openCreate = () => { setEditingProject(null); setFormData(emptyForm); setFormError(''); setShowModal(true); };
   const openEdit = (p: Project) => {
     setEditingProject(p);
-    setFormData({ name: p.name, code: p.code, client_name: p.client_name, country: p.country, department: p.department, status: p.status, description: p.description || '', workflow_layers: p.workflow_layers || ['drawer', 'checker', 'qa'], timezone: (p as any).timezone || '' });
+    setFormData({ name: p.name, code: p.code, client_name: p.client_name, country: p.country, department: p.department, status: p.status, description: p.description || '', workflow_layers: p.workflow_layers || ['drawer', 'checker', 'qa'], timezone: (p as any).timezone || '', action: !!(p as any).action });
     setFormError(''); setShowModal(true);
   };
 
@@ -342,6 +342,19 @@ export default function ProjectManagement() {
             showCharCount
             currentLength={formData.description.length}
           />
+
+          <div className="flex items-center gap-2 mt-4">
+            <input
+              type="checkbox"
+              id="action-checkbox"
+              checked={formData.action}
+              onChange={e => setFormData({ ...formData, action: e.target.checked })}
+              className="w-4 h-4 text-[#2AA7A0] rounded border-slate-300 focus:ring-[#2AA7A0]"
+            />
+            <label htmlFor="action-checkbox" className="text-sm font-medium text-slate-700 cursor-pointer">
+              Enable Action
+            </label>
+          </div>
         </div>
       </Modal>
 
