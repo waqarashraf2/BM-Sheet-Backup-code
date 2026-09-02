@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProjectController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\ClientIssueController;
 use App\Http\Controllers\Api\ClosingReportController;
 use App\Http\Controllers\Api\TimeWiseCountController;
 use App\Http\Controllers\Api\ManagerOrderAssetLinkController;
@@ -259,6 +260,8 @@ Route::prefix('assignments')->group(function () {
         Route::post('/workflow/orders/{id}/assign-role', [WorkflowController::class, 'assignRole']);
         Route::get('/workflow/{projectId}/orders', [WorkflowController::class, 'projectOrders']);
         Route::get('/workflow/{projectId}/staffing', [WorkflowController::class, 'staffing']);
+        Route::post('/client-issues', [ClientIssueController::class, 'store']);
+        Route::get('/client-issues/{projectId}', [ClientIssueController::class, 'show']);
     });
 
     // Assign-to-drawer: management + QA supervisor + checker (controller enforces per-role guards)

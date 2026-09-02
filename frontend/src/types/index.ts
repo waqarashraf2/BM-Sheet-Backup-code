@@ -207,6 +207,7 @@ export interface Project {
   description?: string;
   timezone?: string;
   queue_name?: string;
+  action?: boolean;
 }
 
 export interface ProjectInput {
@@ -1143,6 +1144,7 @@ export interface QueueProject {
   country: string;
   department: string;
   workflow_type: string;
+  action?: boolean;
 }
 
 export interface QueueInfo {

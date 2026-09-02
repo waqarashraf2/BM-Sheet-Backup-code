@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { columnService, dashboardService, projectService, workflowService } from '../../services';
 import { useRef } from 'react';
 import { useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { RootState } from '../../store/store';
 import { useSmartPolling } from '../../hooks/useSmartPolling';
 import { useNewOrderHighlight } from '../../hooks/useNewOrderHighlight';
@@ -747,6 +747,7 @@ export default function SupervisorAssignment() {
     [project51PortalAccounts.qc_accounts]
   );
   const statusButtons = useMemo(() => {
+    const hasAction = queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action;
     const buttons = [
       { key: 'all', label: 'All', count: counts.today_total },
       { key: 'pending', label: 'Pending', count: pendingOrderCount },
@@ -761,8 +762,12 @@ export default function SupervisorAssignment() {
       buttons.push({ key: 'cancelled', label: 'Cancelled', count: cancelledCount });
     }
 
+    if (hasAction) {
+      buttons.push({ key: 'action', label: 'Action', count: 0 });
+    }
+
     return buttons;
-  }, [cancelledCount, counts.completed, counts.pending_by_drawer, counts.rejected, counts.today_total, isProject16, pendingOrderCount, unassignedOrderCount]);
+  }, [cancelledCount, counts.completed, counts.pending_by_drawer, counts.rejected, counts.today_total, isProject16, pendingOrderCount, unassignedOrderCount, effectiveProjectId, queues]);
   const parseStoredDateTime = useCallback((t: string | null) => {
     if (!t) return null;
 
@@ -3958,6 +3963,13 @@ export default function SupervisorAssignment() {
                           );
                         })}
                         <th className="px-2 py-2 text-center font-semibold">Status</th>
+                        
+                        {/* Action Column Header */}
+                        {queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action && (
+                          <th className="px-3 py-2 text-center font-semibold text-brand-100">
+                            Action
+                          </th>
+                        )}
 
                       </tr>
                     </thead>
@@ -4230,6 +4242,18 @@ export default function SupervisorAssignment() {
                                 </button>
                               )}
                             </td>
+
+                            {/* Action Column Cell */}
+                            {queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action && (
+                              <td className="px-3 py-2 text-center">
+                                <Link
+                                  to={`/project-action/${o.project_id}`}
+                                  className="inline-flex items-center justify-center px-2 py-1 bg-brand-50 hover:bg-brand-100 text-brand-600 hover:text-brand-700 text-xs font-semibold rounded transition-colors border border-brand-200"
+                                >
+                                  Action
+                                </Link>
+                              </td>
+                            )}
 
                           </motion.tr>
                         ))}

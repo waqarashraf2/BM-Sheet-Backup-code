@@ -757,6 +757,8 @@ export const projectService = {
   createTeam: (projectId: number, name: string) => api.post<{ data: Team; message: string }>(`/projects/${projectId}/teams`, { name }),
   updateTeam: (projectId: number, teamId: number, data: { name: string }) => api.put<{ data: Team; message: string }>(`/projects/${projectId}/teams/${teamId}`, data),
   deleteTeam: (projectId: number, teamId: number) => api.delete(`/projects/${projectId}/teams/${teamId}`),
+  saveProjectActionLog: (data: any) => api.post<{ message: string; data: any }>('/client-issues', data),
+  getProjectActionLog: (projectId: number) => api.get<{ data: any }>(`/client-issues/${projectId}`),
 };
 
 // ═══════════════════════════════════════════

@@ -23,6 +23,7 @@ const ColumnAssignment = lazy(() => import('./pages/Dashboard/ColumnAssignment')
 const EmployeeDashboard = lazy(() => import('./pages/Dashboard/EmployeeDashboard'));
 
 const ProjectManagement = lazy(() => import('./pages/Projects/ProjectManagement'));
+const ProjectAction = lazy(() => import('./pages/Projects/ProjectAction'));
 const UserManagement = lazy(() => import('./pages/Users/UserManagement'));
 const InvoiceManagement = lazy(() => import('./pages/Invoices/InvoiceManagement'));
 const OMMonthlyQuantity = lazy(() => import('./pages/Invoices/OMMonthlyQuantity'));
@@ -151,6 +152,14 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager']}>
                   <ProjectManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="project-action/:projectId"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager']}>
+                  <ProjectAction />
                 </ProtectedRoute>
               }
             />

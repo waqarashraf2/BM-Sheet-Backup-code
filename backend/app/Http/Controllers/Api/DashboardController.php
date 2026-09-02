@@ -4756,7 +4756,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
             $query->where('id', $user->project_id);
         }
 
-        $projects = $query->orderBy('queue_name')->orderBy('name')->get(['id', 'code', 'name', 'queue_name', 'country', 'department', 'workflow_type']);
+        $projects = $query->orderBy('queue_name')->orderBy('name')->get(['id', 'code', 'name', 'queue_name', 'country', 'department', 'workflow_type', 'action']);
 
         // Group by queue_name
         $queues = [];
@@ -4778,6 +4778,7 @@ $userCounts = User::whereIn('project_id', $projectIds)
                 'country' => $p->country,
                 'department' => $p->department,
                 'workflow_type' => $p->workflow_type,
+                'action' => (bool) $p->action,
             ];
         }
 
