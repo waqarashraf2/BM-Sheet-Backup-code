@@ -137,7 +137,7 @@ export default function SupervisorAssignment() {
   const [totalOrders, setTotalOrders] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
-  const [counts, setCounts] = useState({ today_total: 0, pending: 0, pending_by_drawer: 0, completed: 0, amends: 0, assigned: 0, unassigned: 0, rejected: 0 });
+  const [counts, setCounts] = useState({ today_total: 0, pending: 0, pending_by_drawer: 0, completed: 0, amends: 0, assigned: 0, unassigned: 0, rejected: 0, client_issues: 0, action: 0 });
   const [dateStats, setDateStats] = useState<AssignmentDateStat[]>([]);
   const [roleCompletions, setRoleCompletions] = useState<Record<string, AssignmentRoleCompletion>>({});
   const [project51PortalAccounts, setProject51PortalAccounts] = useState<{ editors: Project51PortalAccount[]; qc_accounts: Project51PortalAccount[] }>({ editors: [], qc_accounts: [] });
@@ -388,16 +388,21 @@ export default function SupervisorAssignment() {
         assigned: 0,
         unassigned: 0,
         rejected: 0,
+        client_issues: 0,
+        action: 0,
       };
 
       setProjectLabel(d.project ? `${d.project.name} (${d.project.country})` : '');
       setProjectId(nextProject.id ?? null);
       setProjectTz(nextProjectTimezone);
 
+      const countsData = (d.counts as any) || {};
       setCounts({
         ...defaultCounts,
-        ...(d.counts || {}),
-        pending_by_drawer: d.counts?.pending_by_drawer ?? 0, // safe fallback
+        ...countsData,
+        pending_by_drawer: countsData.pending_by_drawer ?? 0, // safe fallback
+        client_issues: countsData.client_issues ?? countsData.action ?? 0,
+        action: countsData.action ?? countsData.client_issues ?? 0,
       });
       setDateStats(d.date_stats || []);
       setRoleCompletions(d.role_completions || {});
@@ -763,11 +768,11 @@ export default function SupervisorAssignment() {
     }
 
     if (hasAction) {
-      buttons.push({ key: 'action', label: 'Action', count: 0 });
+      buttons.push({ key: 'client_issue', label: 'Action (Pause)', count: (counts as any).client_issues ?? (counts as any).action ?? 0 });
     }
 
     return buttons;
-  }, [cancelledCount, counts.completed, counts.pending_by_drawer, counts.rejected, counts.today_total, isProject16, pendingOrderCount, unassignedOrderCount, effectiveProjectId, queues]);
+  }, [cancelledCount, counts, isProject16, pendingOrderCount, unassignedOrderCount, effectiveProjectId, queues]);
   const parseStoredDateTime = useCallback((t: string | null) => {
     if (!t) return null;
 
@@ -4202,6 +4207,7 @@ export default function SupervisorAssignment() {
                             <td className="px-2 py-2 text-center">
                               <div className="inline-flex items-center justify-center gap-1">
                                 <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
+                                  : o.workflow_state?.includes('CLIENT_ISSUE') ? 'bg-amber-100 text-amber-800 border border-amber-200'
                                   : o.workflow_state?.includes('HOLD') ? 'bg-red-100 text-red-700'
                                     : o.workflow_state?.includes('REJECTED') ? 'bg-rose-100 text-rose-700'
                                       : o.workflow_state?.includes('CHECK') ? 'bg-blue-100 text-blue-700'
@@ -4226,7 +4232,7 @@ export default function SupervisorAssignment() {
                                   </button>
                                 )}
                               </div>
-                              {o.workflow_state === 'ON_HOLD' && (
+                              {(o.workflow_state === 'ON_HOLD' || o.workflow_state === 'CLIENT_ISSUE') && (
                                 <button
                                   onClick={() => handleResume(o.id, o.project_id)}
                                   disabled={resumingOrderId === o.id}
@@ -4247,7 +4253,7 @@ export default function SupervisorAssignment() {
                             {queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action && (
                               <td className="px-3 py-2 text-center">
                                 <Link
-                                  to={`/project-action/${o.project_id}`}
+                                  to={`/project-action/${o.project_id}/${o.id}`}
                                   className="inline-flex items-center justify-center px-2 py-1 bg-brand-50 hover:bg-brand-100 text-brand-600 hover:text-brand-700 text-xs font-semibold rounded transition-colors border border-brand-200"
                                 >
                                   Action

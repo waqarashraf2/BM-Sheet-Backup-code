@@ -1339,8 +1339,8 @@ public function cancelOrder(Request $request, int $id)
             $order = self::findOrderForUser($id, $user);
         }
 
-        if ($order->workflow_state !== 'ON_HOLD') {
-            return response()->json(['message' => 'Order is not on hold.'], 422);
+        if ($order->workflow_state !== 'ON_HOLD' && $order->workflow_state !== 'CLIENT_ISSUE') {
+            return response()->json(['message' => 'Order is not on hold or client issue.'], 422);
         }
 
         // Allow managers, QA supervisors, and the assigned worker to resume

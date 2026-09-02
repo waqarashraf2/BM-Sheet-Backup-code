@@ -1,0 +1,488 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import { 
+  AlertCircle, 
+  Clock, 
+  Search, 
+  RefreshCw, 
+  ExternalLink, 
+  CheckCircle2, 
+  MessageSquare,
+  Layers,
+  Building2,
+  Calendar,
+  Send,
+  X,
+  Loader2
+} from 'lucide-react';
+import { projectService } from '../../services';
+
+export default function ClientIssueDashboard() {
+  const [issues, setIssues] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [projects, setProjects] = useState<any[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+
+  // Reply modal state
+  const [replyModalIssue, setReplyModalIssue] = useState<any | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [submittingReply, setSubmittingReply] = useState(false);
+  const [replySuccessMsg, setReplySuccessMsg] = useState('');
+
+  // Fetch projects list (scoped to user's permissions)
+  useEffect(() => {
+    projectService.list().then(res => {
+      const d = res.data?.data || res.data;
+      setProjects(Array.isArray(d) ? d : []);
+    }).catch(err => {
+      console.error('Failed to load projects for filter', err);
+    });
+  }, []);
+
+  const fetchIssues = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    try {
+      const res = await projectService.getClientIssuesDashboard({
+        project_id: selectedProjectId ? Number(selectedProjectId) : undefined,
+        search: search.trim() || undefined,
+        page,
+      });
+      setIssues(res.data.data || []);
+      setTotalPages(res.data.last_page || 1);
+      setTotalCount(res.data.total || 0);
+    } catch (err) {
+      console.error('Failed to fetch client issues dashboard', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [search, selectedProjectId, page]);
+
+  useEffect(() => {
+    fetchIssues();
+  }, [fetchIssues]);
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPage(1);
+    fetchIssues();
+  };
+
+  const handleOpenReply = (item: any) => {
+    setReplyModalIssue(item);
+    setReplyText(item.client_reply_text || '');
+    setReplySuccessMsg('');
+  };
+
+  const handleSubmitReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!replyModalIssue || !replyText.trim()) return;
+
+    try {
+      setSubmittingReply(true);
+      await projectService.submitClientReply(
+        replyModalIssue.project_id,
+        replyModalIssue.order_id,
+        replyText.trim()
+      );
+      setReplySuccessMsg('Your reply has been saved and forwarded to the team!');
+      setTimeout(() => {
+        setReplyModalIssue(null);
+        setReplySuccessMsg('');
+        fetchIssues(true);
+      }, 1200);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to submit reply. Please try again.');
+    } finally {
+      setSubmittingReply(false);
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    if (!dateString) return '-';
+    return new Date(dateString).toLocaleString([], { 
+      month: 'short', 
+      day: 'numeric', 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
+
+  const formatDiff = (minutes: number | undefined | null) => {
+    if (minutes === undefined || minutes === null) return '';
+    if (minutes < 60) return `${minutes}m`;
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return `${h}h ${m}m`;
+  };
+
+  // Quick stats
+  const waitingReplyCount = issues.filter(i => !i.client_replied_at).length;
+  const inProgressCount = issues.filter(i => i.team_started_at && !i.team_finished_at).length;
+  const finishedCount = issues.filter(i => i.team_finished_at).length;
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Header */}
+      <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-amber-500/10 text-amber-600 rounded-xl border border-amber-500/20">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Client Issues Dashboard</h1>
+              <p className="text-slate-500 text-sm mt-0.5">
+                Orders on hold awaiting client clarification or missing details
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => fetchIssues(true)}
+            disabled={loading || refreshing}
+            className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-sm font-medium transition-colors shadow-sm disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* KPI Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Paused Issues</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{totalCount}</p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600">
+            <Layers className="w-6 h-6" />
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider">Waiting For Client</p>
+            <p className="text-2xl font-bold text-amber-700 mt-1">{waitingReplyCount}</p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600">
+            <Clock className="w-6 h-6" />
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider">Team Working</p>
+            <p className="text-2xl font-bold text-blue-700 mt-1">{inProgressCount}</p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
+            <MessageSquare className="w-6 h-6" />
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">Resolved / Finished</p>
+            <p className="text-2xl font-bold text-emerald-700 mt-1">{finishedCount}</p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+            <CheckCircle2 className="w-6 h-6" />
+          </div>
+        </div>
+      </div>
+
+      {/* Filter and Search Bar */}
+      <div className="mb-6 flex flex-col sm:flex-row gap-3 items-center justify-between">
+        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto items-center">
+          <form onSubmit={handleSearchSubmit} className="relative w-full sm:w-72">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search order, ref, or reason..."
+              className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all shadow-sm"
+            />
+          </form>
+
+          {projects.length > 1 && (
+            <select
+              value={selectedProjectId}
+              onChange={(e) => {
+                setSelectedProjectId(e.target.value);
+                setPage(1);
+              }}
+              className="w-full sm:w-56 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all shadow-sm"
+            >
+              <option value="">All Assigned Projects</option>
+              {projects.map((p: any) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      </div>
+
+      {/* Main Table */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50/80 border-b border-slate-200/80 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                <th className="py-3.5 px-4">Order / Ref</th>
+                <th className="py-3.5 px-4">Project</th>
+                <th className="py-3.5 px-4">Issue Reason & Notes</th>
+                <th className="py-3.5 px-4">Client Reply</th>
+                <th className="py-3.5 px-4 text-center">Status</th>
+                <th className="py-3.5 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-sm">
+              {loading && !refreshing ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-slate-400">
+                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-brand-600" />
+                    Loading client issues...
+                  </td>
+                </tr>
+              ) : issues.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-slate-400">
+                    <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-500 opacity-60" />
+                    No client issues found. Everything is moving smoothly!
+                  </td>
+                </tr>
+              ) : (
+                issues.map((item) => {
+                  const hasReply = !!item.client_reply_text;
+                  const hasStarted = !!item.team_started_at;
+                  const hasFinished = !!item.team_finished_at;
+
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
+                      {/* Order Info */}
+                      <td className="py-4 px-4 align-top">
+                        <div className="font-semibold text-slate-900">
+                          {item.order_number}
+                        </div>
+                        {item.client_reference && item.client_reference !== '-' && (
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            Ref: {item.client_reference}
+                          </div>
+                        )}
+                        {item.address && item.address !== '-' && (
+                          <div className="text-[11px] text-slate-400 max-w-xs truncate mt-0.5" title={item.address}>
+                            {item.address}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Project */}
+                      <td className="py-4 px-4 align-top">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-700">
+                          <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                          {item.project_name}
+                        </div>
+                      </td>
+
+                      {/* Reason & Comment */}
+                      <td className="py-4 px-4 align-top max-w-sm">
+                        <div className="font-medium text-amber-700 text-xs inline-block bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60 mb-1">
+                          {item.reason}
+                        </div>
+                        {item.comment_text && (
+                          <div className="text-xs text-slate-600 line-clamp-3 bg-slate-50/80 p-2 rounded-lg border border-slate-100">
+                            {item.comment_text}
+                          </div>
+                        )}
+                        {item.comment_entered_at && (
+                          <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                            <Calendar className="w-3 h-3" />
+                            {formatDate(item.comment_entered_at)}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Client Reply */}
+                      <td className="py-4 px-4 align-top max-w-xs">
+                        {hasReply ? (
+                          <div>
+                            <div className="text-xs text-slate-700 bg-blue-50/70 p-2 rounded-lg border border-blue-100">
+                              {item.client_reply_text}
+                            </div>
+                            <div className="text-[10px] text-blue-600 mt-1 flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              Replied: {formatDate(item.client_replied_at)}{item.comment_to_reply_diff_minutes ? ` (waited ${formatDiff(item.comment_to_reply_diff_minutes)})` : ''}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200/60 font-medium">
+                            <Clock className="w-3 h-3" />
+                            Waiting for your reply
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Status */}
+                      <td className="py-4 px-4 align-top text-center">
+                        {hasFinished ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Finished
+                          </span>
+                        ) : hasStarted ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                            In Progress
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                            Paused
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Action Buttons */}
+                      <td className="py-4 px-4 align-top text-right">
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenReply(item)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-semibold rounded-lg transition-colors border border-teal-200"
+                            title="Reply directly to this issue"
+                          >
+                            <Send className="w-3 h-3" />
+                            {hasReply ? 'Update Reply' : 'Reply'}
+                          </button>
+
+                          <Link
+                            to={`/project-action/${item.project_id}/${item.order_id}`}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-brand-50 hover:bg-brand-100 text-brand-700 text-xs font-semibold rounded-lg transition-colors border border-brand-200"
+                            title="View full action timeline"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-xs text-slate-500">
+              Page {page} of {totalPages} ({totalCount} total issues)
+            </span>
+            <div className="flex gap-2">
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="px-3 py-1 border border-slate-200 rounded-lg text-xs font-medium hover:bg-slate-50 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <button
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="px-3 py-1 border border-slate-200 rounded-lg text-xs font-medium hover:bg-slate-50 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Client Reply Modal */}
+      {replyModalIssue && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 relative">
+            <button
+              onClick={() => setReplyModalIssue(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2 text-teal-700 font-semibold mb-1">
+              <MessageSquare className="w-5 h-5" />
+              <span>Reply to Order Clarification</span>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              {replyModalIssue.order_number} &bull; {replyModalIssue.project_name}
+            </p>
+
+            {/* Reason & Team Comment Box */}
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 mb-4">
+              <div className="text-[11px] font-bold text-amber-800 uppercase tracking-wider mb-1">
+                Reason: {replyModalIssue.reason}
+              </div>
+              <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+                {replyModalIssue.comment_text || 'No detailed note provided.'}
+              </p>
+            </div>
+
+            {replySuccessMsg ? (
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-center text-emerald-800 font-medium text-sm flex items-center justify-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                {replySuccessMsg}
+              </div>
+            ) : (
+              <form onSubmit={handleSubmitReply} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Your Instructions / Reply <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder="Provide your clarification, instructions, or answers here..."
+                    required
+                    className="w-full p-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setReplyModalIssue(null)}
+                    className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingReply || !replyText.trim()}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold rounded-xl shadow-sm transition-colors disabled:opacity-50"
+                  >
+                    {submittingReply ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4" />
+                    )}
+                    Submit Reply
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

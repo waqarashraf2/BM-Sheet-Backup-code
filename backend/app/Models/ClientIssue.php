@@ -10,7 +10,8 @@ class ClientIssue extends Model
     use HasFactory;
 
     protected $fillable = [
-        'project_id', 
+        'project_id',
+        'order_id',
         'reason', 
         'comment_text',
         'comment_entered_at',
@@ -26,5 +27,13 @@ class ClientIssue extends Model
     public function project()
     {
         return $this->belongsTo(Project::class);
+    }
+
+    public function getOrderAttribute()
+    {
+        if (!$this->project_id || !$this->order_id) {
+            return null;
+        }
+        return Order::findInProject((int) $this->project_id, (int) $this->order_id);
     }
 }

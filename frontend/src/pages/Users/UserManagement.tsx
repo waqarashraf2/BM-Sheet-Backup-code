@@ -6,7 +6,7 @@ import type { User } from '../../types';
 import { AnimatedPage, PageHeader, StatusBadge, Modal, Button, DataTable, FilterBar } from '../../components/ui';
 import { Users as UsersIcon, Plus, Edit, Trash2, UserCheck, UserX, Shield, Activity, User as UserIcon, Mail, Lock, ChevronDown, ChevronLeft, ChevronRight, Globe, Building, Layers, UsersRound, Eye, EyeOff } from 'lucide-react';
 
-const emptyForm = { name: '', email: '', machine_id: '', password: '', password_confirmation: '', role: 'drawer', project_id: '', team_id: '', department: 'floor_plan', layer: '' };
+const emptyForm = { name: '', email: '', machine_id: '', password: '', password_confirmation: '', role: 'drawer', project_id: '', project_ids: [] as number[], team_id: '', department: 'floor_plan', layer: '' };
 // FLAGS kept for future use: country flag emoji map
 // const FLAGS: Record<string, string> = { UK: '\u{1F1EC}\u{1F1E7}', Australia: '\u{1F1E6}\u{1F1FA}', Canada: '\u{1F1E8}\u{1F1E6}', USA: '\u{1F1FA}\u{1F1F8}', Vietnam: '\u{1F1FB}\u{1F1F3}' };
 
@@ -88,6 +88,7 @@ export default function UserManagement() {
     { value: 'designer', label: 'Designer' },
     { value: 'csr', label: 'CSR' },
     { value: 'it', label: 'IT' },
+    { value: 'client', label: 'Client' },
   ];
   const hiddenRoles: Record<string, string[]> = {
     ceo: ['ceo'],
@@ -96,7 +97,10 @@ export default function UserManagement() {
     hr: ['ceo', 'hr'],
   };
   const rolesToHide = hiddenRoles[myRole] || (myRole === 'director' ? [] : [myRole]);
-  const visibleRoleOptions = allRoleOptions.filter(r => !rolesToHide.includes(r.value));
+  const visibleRoleOptions = allRoleOptions.filter(r => {
+    if (r.value === 'client') return myRole === 'director';
+    return !rolesToHide.includes(r.value);
+  });
 
   // Fetch teams when project_id changes in the form
   const loadTeamsForProject = useCallback(async (pid: string) => {
@@ -134,7 +138,20 @@ export default function UserManagement() {
     setEditingUser(userToEdit);
     const storedPassword = userToEdit.plain_password || '';
     setOriginalStoredPassword(storedPassword);
-    setFormData({ name: userToEdit.name, email: userToEdit.email, machine_id: userToEdit.machine_id || '', password: storedPassword, password_confirmation: storedPassword, role: userToEdit.role, project_id: userToEdit.project_id ? String(userToEdit.project_id) : '', team_id: userToEdit.team_id ? String(userToEdit.team_id) : '', department: userToEdit.department || 'floor_plan', layer: userToEdit.layer || '' });
+    const clientProjIds = (userToEdit.client_projects || (userToEdit as any).clientProjects || []).map((p: any) => p.id);
+    setFormData({
+      name: userToEdit.name,
+      email: userToEdit.email,
+      machine_id: userToEdit.machine_id || '',
+      password: storedPassword,
+      password_confirmation: storedPassword,
+      role: userToEdit.role,
+      project_id: userToEdit.project_id ? String(userToEdit.project_id) : '',
+      project_ids: clientProjIds,
+      team_id: userToEdit.team_id ? String(userToEdit.team_id) : '',
+      department: userToEdit.department || 'floor_plan',
+      layer: userToEdit.layer || '',
+    });
     setShowPassword(Boolean(storedPassword));
     setShowConfirmPassword(false);
     if (userToEdit.project_id) loadTeamsForProject(String(userToEdit.project_id));
@@ -261,7 +278,21 @@ export default function UserManagement() {
             },
             { key: 'machine_id', label: 'Machine ID', render: (u) => <span className="text-slate-500">{u.machine_id || '---'}</span> },
             { key: 'role', label: 'Role', render: (u) => <StatusBadge status={u.role} /> },
-            { key: 'project', label: 'Project', render: (u) => <span className="text-slate-600">{u.project?.name || '—'}</span> },
+            {
+              key: 'project', label: 'Project', render: (u) => {
+                if (u.role === 'client') {
+                  const projs = u.client_projects || (u as any).clientProjects || [];
+                  if (projs.length > 0) {
+                    return (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200" title={projs.map((p: any) => p.name).join(', ')}>
+                        {projs.length === 1 ? projs[0].name : `${projs.length} Projects`}
+                      </span>
+                    );
+                  }
+                }
+                return <span className="text-slate-600">{u.project?.name || '—'}</span>;
+              }
+            },
             { key: 'team', label: 'Team', render: (u) => <span className="text-slate-500">{u.team?.name || '—'}</span> },
             { key: 'department', label: 'Department', render: (u) => <span className="text-slate-500 capitalize">{u.department?.replace('_', ' ') || '—'}</span> },
             {
@@ -449,30 +480,70 @@ export default function UserManagement() {
                 </div>
               </div>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Project</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                  <Globe className="h-4 w-4 text-slate-400" />
+            {formData.role === 'client' ? (
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                  Assign Projects to Client (Multi-Select)
+                </label>
+                <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 max-h-48 overflow-y-auto space-y-2">
+                  {filterProjects.map(p => {
+                    const isChecked = (formData.project_ids || []).includes(p.id);
+                    return (
+                      <label key={p.id} className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-white rounded-lg transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            const currentIds = formData.project_ids || [];
+                            const updated = e.target.checked
+                              ? [...currentIds, p.id]
+                              : currentIds.filter(id => id !== p.id);
+                            setFormData({
+                              ...formData,
+                              project_ids: updated,
+                              project_id: updated[0] ? String(updated[0]) : '',
+                            });
+                          }}
+                          className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-300"
+                        />
+                        <span className="text-sm font-medium text-slate-800">{p.name}</span>
+                      </label>
+                    );
+                  })}
+                  {filterProjects.length === 0 && (
+                    <p className="text-xs text-slate-400">No projects available.</p>
+                  )}
                 </div>
-                <select
-                  value={formData.project_id}
-                  onChange={e => { const v = e.target.value; setFormData({ ...formData, project_id: v, team_id: '' }); loadTeamsForProject(v); }}
-                  aria-label="User project"
-                  className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
-                >
-                  <option value="">Select Project</option>
-                  {filterProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                  <ChevronDown className="h-4 w-4 text-slate-400" />
+                <p className="text-[11px] text-teal-700 font-medium mt-1">
+                  {(formData.project_ids || []).length} project(s) assigned to this client.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Project</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                    <Globe className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <select
+                    value={formData.project_id}
+                    onChange={e => { const v = e.target.value; setFormData({ ...formData, project_id: v, team_id: '' }); loadTeamsForProject(v); }}
+                    aria-label="User project"
+                    className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
+                  >
+                    <option value="">Select Project</option>
+                    {filterProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <ChevronDown className="h-4 w-4 text-slate-400" />
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Team */}
-          {formData.project_id && (
+          {formData.role !== 'client' && formData.project_id && (
             <div>
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Team</label>
               <div className="relative">

@@ -5269,14 +5269,15 @@ $endDate = $request->input('end_date');
         $query = DB::table(DB::raw("({$unionQuery}) as queue_orders"));
 
 // ✅ ADD HERE (global filter)
-if ($statusFilter !== 'completed' && $statusFilter !== 'pending_by_drawer') {
+if (!in_array($statusFilter, ['completed', 'pending_by_drawer', 'client_issue', 'action'])) {
     $query->where('workflow_state', '!=', 'DELIVERED');
     $query->where('workflow_state', '!=', 'PENDING_BY_DRAWER');
+    $query->where('workflow_state', '!=', 'CLIENT_ISSUE');
 }
 
 // Global hide
-// Global hide (applies to "all" / "pending" etc, but skips drawer-pending & rejected)
-if (!in_array($statusFilter, ['completed', 'rejected', 'pending_by_drawer'])) {
+// Global hide (applies to "all" / "pending" etc, but skips drawer-pending & rejected & client_issue)
+if (!in_array($statusFilter, ['completed', 'rejected', 'pending_by_drawer', 'client_issue', 'action'])) {
     $query->where('workflow_state', '!=', 'DELIVERED')
           ->where('workflow_state', 'NOT LIKE', '%REJECT%');
 }
@@ -5292,6 +5293,10 @@ if ($statusFilter === 'rejected') {
 
 if ($statusFilter === 'pending_by_drawer') {
     $query->where('workflow_state', 'PENDING_BY_DRAWER');
+}
+
+if ($statusFilter === 'client_issue' || $statusFilter === 'action') {
+    $query->where('workflow_state', 'CLIENT_ISSUE');
 }
 
         // Apply filters to the union result
@@ -5629,7 +5634,8 @@ if ($statusFilter === 'pending_by_drawer') {
             SUM(CASE WHEN assigned_to IS NOT NULL AND workflow_state NOT IN ('DELIVERED','CANCELLED') THEN 1 ELSE 0 END) as assigned,
             SUM(CASE WHEN drawer_id IS NULL AND workflow_state NOT IN ('DELIVERED','CANCELLED') THEN 1 ELSE 0 END) as unassigned,
             SUM(CASE WHEN workflow_state LIKE '%REJECT%' THEN 1 ELSE 0 END) as rejected,
-            SUM(CASE WHEN workflow_state = 'PENDING_BY_DRAWER' THEN 1 ELSE 0 END) as pending_by_drawer
+            SUM(CASE WHEN workflow_state = 'PENDING_BY_DRAWER' THEN 1 ELSE 0 END) as pending_by_drawer,
+            SUM(CASE WHEN workflow_state = 'CLIENT_ISSUE' THEN 1 ELSE 0 END) as client_issues
         ")->first();
 
         $todayTotal = (int) ($countsRow->total ?? 0);
@@ -5640,6 +5646,7 @@ if ($statusFilter === 'pending_by_drawer') {
         $unassignedCount = (int) ($countsRow->unassigned ?? 0);
         $rejectedCount = (int) ($countsRow->rejected ?? 0);
         $pendingByDrawerCount = (int) ($countsRow->pending_by_drawer ?? 0);
+        $clientIssuesCount = (int) ($countsRow->client_issues ?? 0);
 
         // ─── 4. Date-wise summary (last 7 days) — 2 bulk queries instead of 42+ ───
         $sevenDaysAgo = today()->subDays(6)->toDateString();
@@ -5739,6 +5746,8 @@ if ($statusFilter === 'pending_by_drawer') {
             'amends' => $amendsCount,
             'assigned' => $assignedCount,
             'pending_by_drawer' => $pendingByDrawerCount,
+            'client_issues' => $clientIssuesCount,
+            'action' => $clientIssuesCount,
             'unassigned' => $unassignedCount,
             'normal_priority' => $normalPriorityCount,
             'high_priority' => $highPriorityCount,

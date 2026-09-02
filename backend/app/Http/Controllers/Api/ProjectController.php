@@ -32,6 +32,9 @@ class ProjectController extends Controller
         } elseif ($user->role === 'project_manager') {
             $pmProjectIds = $user->getManagedProjectIds();
             $query->whereIn('id', $pmProjectIds);
+        } elseif ($user->role === 'client') {
+            $clientProjectIds = $user->getManagedProjectIds();
+            $query->whereIn('id', $clientProjectIds);
         }
 
         // Filter by country

@@ -4,7 +4,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProjectController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\DashboardController;
-use App\Http\Controllers\ClientIssueController;
+use App\Http\Controllers\Api\ClientIssueController;
 use App\Http\Controllers\Api\ClosingReportController;
 use App\Http\Controllers\Api\TimeWiseCountController;
 use App\Http\Controllers\Api\ManagerOrderAssetLinkController;
@@ -248,7 +248,7 @@ Route::prefix('assignments')->group(function () {
     // SHARED WORKFLOW ROUTES (management + QA supervisor)
     // QA can view projects/orders and reassign drawers
     // ═══════════════════════════════════════════
-    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,hr')->group(function () {
+    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,hr,client')->group(function () {
         Route::get('/projects', [ProjectController::class, 'index']);
         Route::get('/projects/{id}', [ProjectController::class, 'show']);
         Route::get('/projects/{id}/statistics', [ProjectController::class, 'statistics']);
@@ -261,7 +261,11 @@ Route::prefix('assignments')->group(function () {
         Route::get('/workflow/{projectId}/orders', [WorkflowController::class, 'projectOrders']);
         Route::get('/workflow/{projectId}/staffing', [WorkflowController::class, 'staffing']);
         Route::post('/client-issues', [ClientIssueController::class, 'store']);
+        Route::get('/client-issues/dashboard', [ClientIssueController::class, 'dashboard']);
         Route::get('/client-issues/{projectId}', [ClientIssueController::class, 'show']);
+        Route::get('/client-issues/{projectId}/{orderId}', [ClientIssueController::class, 'show']);
+        Route::post('/client-issues/{projectId}/{orderId}/resume', [ClientIssueController::class, 'resume']);
+        Route::post('/client-issues/{projectId}/{orderId}/reply', [ClientIssueController::class, 'reply']);
     });
 
     // Assign-to-drawer: management + QA supervisor + checker (controller enforces per-role guards)

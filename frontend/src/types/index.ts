@@ -26,7 +26,7 @@ export type InvoiceStatus = typeof INVOICE_STATUSES[number];
 export const REJECTION_CODES = ['quality', 'incomplete', 'wrong_specs', 'rework', 'formatting', 'missing_info'] as const;
 export type RejectionCode = typeof REJECTION_CODES[number];
 
-export const ROLES = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'checker', 'filler', 'drawer', 'designer', 'admin', 'accounts_manager', 'live_qa', 'hr', 'csr', 'it'] as const;
+export const ROLES = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'checker', 'filler', 'drawer', 'designer', 'admin', 'accounts_manager', 'live_qa', 'hr', 'csr', 'it', 'client'] as const;
 export type UserRole = typeof ROLES[number];
 
 export const PRODUCTION_ROLES: UserRole[] = ['drawer', 'checker', 'filler', 'qa', 'designer'];
@@ -114,6 +114,8 @@ export interface User {
     created_at?: string | null;
     project?: Project;
     team?: Team;
+    client_projects?: Array<{ id: number; name: string; code?: string }>;
+    clientProjects?: Array<{ id: number; name: string; code?: string }>;
 }
 
 export interface UserSalaryIncrement {

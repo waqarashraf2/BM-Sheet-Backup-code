@@ -124,7 +124,7 @@ class UserController extends Controller
 
         $users = $query
             ->select($selectColumns)
-            ->with(['project:id,name', 'team:id,name,project_id'])
+            ->with(['project:id,name', 'team:id,name,project_id', 'clientProjects:id,name,code'])
             ->latest()
             ->paginate($perPage);
 
@@ -153,6 +153,10 @@ class UserController extends Controller
             return response()->json(['message' => 'HR cannot create CEO or Director accounts.'], 403);
         }
 
+        if (($data['role'] ?? '') === 'client' && $authUser->role !== 'director') {
+            return response()->json(['message' => 'Only a Director can create or assign a Client account.'], 403);
+        }
+
         if (!Schema::hasColumn('users', 'machine_id')) {
             unset($data['machine_id']);
         }
@@ -173,13 +177,17 @@ class UserController extends Controller
 
         $user = User::create($data);
 
+        if ($user->role === 'client' && $request->has('project_ids')) {
+            $user->clientProjects()->sync($request->input('project_ids', []));
+        }
+
         ActivityLog::log('created_user', User::class, $user->id, null, $user->toArray());
         \App\Services\AuditService::logUserCreated($user->id, $user->toArray());
 
         return response()->json([
             'message' => 'User created successfully',
             'data' => $this->exposeStoredPassword(
-                $this->enrichUserWithTeamStatus($user->load(['project', 'team']))
+                $this->enrichUserWithTeamStatus($user->load(['project', 'team', 'clientProjects:id,name,code']))
             ),
         ], 201);
     }
@@ -189,7 +197,7 @@ class UserController extends Controller
      */
     public function show(Request $request, string $id)
     {
-        $user = User::with(['project', 'team', 'workAssignments.order'])->findOrFail($id);
+        $user = User::with(['project', 'team', 'workAssignments.order', 'clientProjects:id,name,code'])->findOrFail($id);
         abort_if($request->user()?->role === 'hr' && $user->role === 'ceo', 403);
         $user = $this->exposeStoredPassword(
             $this->enrichUserWithTeamStatus($user)
@@ -275,6 +283,10 @@ class UserController extends Controller
             }
 
             $data = $request->validated();
+
+            if (isset($data['role']) && $data['role'] === 'client' && $authUser->role !== 'director') {
+                return response()->json(['message' => 'Only a Director can assign the Client role.'], 403);
+            }
         }
         if (!Schema::hasColumn('users', 'machine_id')) {
             unset($data['machine_id']);
@@ -287,6 +299,10 @@ class UserController extends Controller
         }
 
         $user->update($data);
+
+        if ($user->role === 'client' && $request->has('project_ids')) {
+            $user->clientProjects()->sync($request->input('project_ids', []));
+        }
 
         ActivityLog::log('updated_user', User::class, $user->id, $oldValues, $user->toArray());
         \App\Services\AuditService::logUserUpdated($user->id, $oldValues, $user->fresh()->toArray());
@@ -304,7 +320,7 @@ class UserController extends Controller
         return response()->json([
             'message' => 'User updated successfully',
             'data' => $this->exposeStoredPassword(
-                $this->enrichUserWithTeamStatus($user->load(['project', 'team']))
+                $this->enrichUserWithTeamStatus($user->load(['project', 'team', 'clientProjects:id,name,code']))
             ),
         ]);
     }

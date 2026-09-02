@@ -24,6 +24,7 @@ const EmployeeDashboard = lazy(() => import('./pages/Dashboard/EmployeeDashboard
 
 const ProjectManagement = lazy(() => import('./pages/Projects/ProjectManagement'));
 const ProjectAction = lazy(() => import('./pages/Projects/ProjectAction'));
+const ClientIssueDashboard = lazy(() => import('./pages/Dashboard/ClientIssueDashboard'));
 const UserManagement = lazy(() => import('./pages/Users/UserManagement'));
 const InvoiceManagement = lazy(() => import('./pages/Invoices/InvoiceManagement'));
 const OMMonthlyQuantity = lazy(() => import('./pages/Invoices/OMMonthlyQuantity'));
@@ -125,6 +126,12 @@ function App() {
       case 'csr':
       case 'it':
         return <EmployeeDashboard />;
+      case 'client':
+        return (
+          <Suspense fallback={<PageLoader />}>
+            <ClientIssueDashboard />
+          </Suspense>
+        );
       default:
         return <Dashboard />;
     }
@@ -156,10 +163,28 @@ function App() {
               }
             />
             <Route
+              path="project-action/:projectId/:orderId"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'client']}>
+                  <ProjectAction />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="project-action/:projectId"
               element={
-                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager']}>
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'client']}>
                   <ProjectAction />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="client-dashboard"
+              element={
+                <ProtectedRoute allowedRoles={['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'client']}>
+                  <Suspense fallback={<PageLoader />}>
+                    <ClientIssueDashboard />
+                  </Suspense>
                 </ProtectedRoute>
               }
             />

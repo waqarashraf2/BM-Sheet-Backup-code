@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, CheckCircle, Clock, PlayCircle, MessageSquare } from 'lucide-react';
+import { ArrowLeft, Loader2, CheckCircle, Clock, PlayCircle, MessageSquare, Play } from 'lucide-react';
 import { projectService } from '../../services';
 
 export default function ProjectAction() {
-  const { projectId } = useParams();
+  const { projectId, orderId } = useParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [orderInfo, setOrderInfo] = useState<any>(null);
 
   // Form State
   const [selectedOption, setSelectedOption] = useState('');
@@ -20,14 +22,16 @@ export default function ProjectAction() {
   useEffect(() => {
     if (!projectId) return;
     
-    projectService.getProjectActionLog(Number(projectId))
+    projectService.getProjectActionLog(Number(projectId), orderId ? Number(orderId) : undefined)
       .then((res) => {
         if (res.data.data) {
           setSelectedOption(res.data.data.reason || '');
-          // Now the tracking fields are flat on the record
           setTrackingData(res.data.data);
           setCommentText(res.data.data.comment_text || '');
           setClientReplyText(res.data.data.client_reply_text || '');
+        }
+        if (res.data.order) {
+          setOrderInfo(res.data.order);
         }
       })
       .catch((err) => {
@@ -36,24 +40,46 @@ export default function ProjectAction() {
       .finally(() => {
         setLoading(false);
       });
-  }, [projectId]);
+  }, [projectId, orderId]);
 
   const saveTrackingData = async (newTrackingData: any, newReason: string = selectedOption) => {
     if (!projectId) return;
     setSaving(true);
     try {
-      await projectService.saveProjectActionLog({
+      const payload: any = {
         project_id: Number(projectId),
+        order_id: Number(orderId || 0),
         reason: newReason,
-        ...newTrackingData // Spread flat properties instead of tracking_data: {}
-      });
+        ...newTrackingData
+      };
+      const res = await projectService.saveProjectActionLog(payload);
       setTrackingData(newTrackingData);
-      alert('Action logged successfully');
+      if (res.data.order) {
+        setOrderInfo(res.data.order);
+      }
+      alert('Action logged successfully. Order paused for client issue.');
     } catch (error) {
       console.error('Failed to save action log', error);
       alert('Failed to save action log');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleResumeOrder = async () => {
+    if (!projectId || !orderId) return;
+    setResuming(true);
+    try {
+      const res = await projectService.resumeClientIssue(Number(projectId), Number(orderId));
+      if (res.data.order) {
+        setOrderInfo(res.data.order);
+      }
+      alert('Order successfully resumed back to workflow.');
+    } catch (err) {
+      console.error('Failed to resume order', err);
+      alert('Failed to resume order');
+    } finally {
+      setResuming(false);
     }
   };
 
@@ -145,7 +171,7 @@ export default function ProjectAction() {
 
   return (
     <div className="max-w-4xl mx-auto p-6">
-      <div className="mb-8 flex items-center justify-between">
+      <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate(-1)}
@@ -154,10 +180,39 @@ export default function ProjectAction() {
             <ArrowLeft className="w-5 h-5 text-slate-600" />
           </button>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Project Timeline</h1>
-            <p className="text-slate-500 text-sm mt-1">Track actions and responses for Project #{projectId}</p>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-slate-900">
+                {orderInfo?.order_number ? `Order ${orderInfo.order_number}` : `Project #${projectId}`}
+              </h1>
+              {orderInfo?.workflow_state === 'CLIENT_ISSUE' && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                  Paused (Client Issue)
+                </span>
+              )}
+            </div>
+            <p className="text-slate-500 text-sm mt-1">
+              Project #{projectId} {orderId ? `• Order ID: #${orderId}` : ''}
+              {orderInfo?.client_reference && ` • Ref: ${orderInfo.client_reference}`}
+              {orderInfo?.address && ` • ${orderInfo.address}`}
+            </p>
           </div>
         </div>
+
+        {orderInfo?.workflow_state === 'CLIENT_ISSUE' && (
+          <button
+            onClick={handleResumeOrder}
+            disabled={resuming}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold shadow-sm transition-all disabled:opacity-50"
+          >
+            {resuming ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Play className="w-4 h-4 fill-white" />
+            )}
+            Resume Order to Workflow
+          </button>
+        )}
       </div>
 
       <div className="space-y-8 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">

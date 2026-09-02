@@ -151,9 +151,18 @@ class User extends Authenticatable
     }
 
     /**
+     * Projects assigned to this client (M2M — can have multiple).
+     */
+    public function clientProjects()
+    {
+        return $this->belongsToMany(Project::class, 'client_projects');
+    }
+
+    /**
      * Get project IDs this user manages based on role.
      * - OM: from operation_manager_projects pivot (multiple)
      * - PM: from project_manager_projects pivot (multiple allowed)
+     * - Client: from client_projects pivot (multiple allowed)
      * - Others: fallback to project_id column
      */
     public function getManagedProjectIds(): array
@@ -169,6 +178,9 @@ class User extends Authenticatable
             $result = !empty($ids) ? $ids : ($this->project_id ? [(int) $this->project_id] : []);
         } elseif ($this->role === 'project_manager') {
             $result = $this->managedProjects()->pluck('projects.id')->toArray();
+        } elseif ($this->role === 'client') {
+            $ids = $this->clientProjects()->pluck('projects.id')->toArray();
+            $result = !empty($ids) ? $ids : ($this->project_id ? [(int) $this->project_id] : []);
         } else {
             $result = $this->project_id ? [(int) $this->project_id] : [];
         }

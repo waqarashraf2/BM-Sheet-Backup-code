@@ -757,8 +757,11 @@ export const projectService = {
   createTeam: (projectId: number, name: string) => api.post<{ data: Team; message: string }>(`/projects/${projectId}/teams`, { name }),
   updateTeam: (projectId: number, teamId: number, data: { name: string }) => api.put<{ data: Team; message: string }>(`/projects/${projectId}/teams/${teamId}`, data),
   deleteTeam: (projectId: number, teamId: number) => api.delete(`/projects/${projectId}/teams/${teamId}`),
-  saveProjectActionLog: (data: any) => api.post<{ message: string; data: any }>('/client-issues', data),
-  getProjectActionLog: (projectId: number) => api.get<{ data: any }>(`/client-issues/${projectId}`),
+  saveProjectActionLog: (data: { project_id: number; order_id: number; reason: string; [key: string]: any }) => api.post<{ message: string; data: any; order?: any }>('/client-issues', data),
+  getProjectActionLog: (projectId: number, orderId?: number) => api.get<{ data: any; order?: any }>(orderId ? `/client-issues/${projectId}/${orderId}` : `/client-issues/${projectId}`),
+  resumeClientIssue: (projectId: number, orderId: number) => api.post<{ message: string; order: any }>(`/client-issues/${projectId}/${orderId}/resume`),
+  getClientIssuesDashboard: (params?: { project_id?: number; search?: string; page?: number }) => api.get<{ data: any[]; current_page: number; last_page: number; total: number }>('/client-issues/dashboard', { params }),
+  submitClientReply: (projectId: number, orderId: number, replyText: string) => api.post<{ message: string; data: any }>(`/client-issues/${projectId}/${orderId}/reply`, { reply_text: replyText }),
 };
 
 // ═══════════════════════════════════════════

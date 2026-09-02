@@ -13,7 +13,8 @@ return new class extends Migration
     {
         Schema::create('client_issues', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('project_id');
+            $table->foreignId('project_id')->index();
+            $table->unsignedBigInteger('order_id')->index();
             $table->string('reason');
             $table->text('comment_text')->nullable();
             $table->timestamp('comment_entered_at')->nullable();
@@ -25,6 +26,8 @@ return new class extends Migration
             $table->timestamp('team_finished_at')->nullable();
             $table->integer('time_taken_to_finish_minutes')->nullable();
             $table->timestamps();
+
+            $table->index(['project_id', 'order_id']);
         });
     }
     /**
