@@ -760,7 +760,7 @@ export const projectService = {
   saveProjectActionLog: (data: { project_id: number; order_id: number; reason: string; [key: string]: any }) => api.post<{ message: string; data: any; order?: any; timeline?: any }>('/client-issues', data),
   getProjectActionLog: (projectId: number, orderId?: number) => api.get<{ data: any; order?: any; timeline?: any }>(orderId ? `/client-issues/${projectId}/${orderId}` : `/client-issues/${projectId}`),
   resumeClientIssue: (projectId: number, orderId: number) => api.post<{ message: string; order: any; timeline?: any }>(`/client-issues/${projectId}/${orderId}/resume`),
-  getClientIssuesDashboard: (params?: { project_id?: number; search?: string; page?: number }) => api.get<{ data: any[]; current_page: number; last_page: number; total: number }>('/client-issues/dashboard', { params }),
+  getClientIssuesDashboard: (params?: { project_id?: number; search?: string; status?: string; page?: number }) => api.get<{ data: any[]; current_page: number; last_page: number; total: number; stats?: { total: number; waiting: number; in_progress: number; finished: number } }>('/client-issues/dashboard', { params }),
   submitClientReply: (projectId: number, orderId: number, replyText: string) => api.post<{ message: string; data: any }>(`/client-issues/${projectId}/${orderId}/reply`, { reply_text: replyText }),
 };
 

@@ -15,7 +15,8 @@ import {
   Loader2, 
   Inbox, 
   Play, 
-  Zap 
+  Zap,
+  Filter
 } from 'lucide-react';
 import { projectService } from '../../services';
 
@@ -25,10 +26,19 @@ export default function ClientIssueDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<'waiting' | 'in_progress' | 'finished' | 'all'>('waiting'); // DEFAULT: only waiting for client
   const [projects, setProjects] = useState<any[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+
+  // Global KPI statistics
+  const [stats, setStats] = useState({
+    total: 0,
+    waiting: 0,
+    in_progress: 0,
+    finished: 0,
+  });
 
   // Reply modal state
   const [replyModalIssue, setReplyModalIssue] = useState<any | null>(null);
@@ -56,18 +66,22 @@ export default function ClientIssueDashboard() {
       const res = await projectService.getClientIssuesDashboard({
         project_id: selectedProjectId ? Number(selectedProjectId) : undefined,
         search: search.trim() || undefined,
+        status: statusFilter,
         page,
       });
       setIssues(res.data.data || []);
       setTotalPages(res.data.last_page || 1);
       setTotalCount(res.data.total || 0);
+      if (res.data.stats) {
+        setStats(res.data.stats);
+      }
     } catch (err) {
       console.error('Failed to fetch client issues dashboard', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [search, selectedProjectId, page]);
+  }, [search, selectedProjectId, statusFilter, page]);
 
   useEffect(() => {
     fetchIssues();
@@ -121,21 +135,18 @@ export default function ClientIssueDashboard() {
 
   const formatDiff = (minutes: number | undefined | null) => {
     if (minutes === undefined || minutes === null) return '-';
-    if (minutes < 60) return `${minutes}m`;
-    const days = Math.floor(minutes / (24 * 60));
-    const hours = Math.floor((minutes % (24 * 60)) / 60);
-    const mins = minutes % 60;
+    const totalM = Math.round(Number(minutes));
+    if (isNaN(totalM)) return '-';
+    if (totalM < 60) return `${totalM}m`;
+    const days = Math.floor(totalM / (24 * 60));
+    const hours = Math.floor((totalM % (24 * 60)) / 60);
+    const mins = Math.round(totalM % 60);
     const parts = [];
     if (days > 0) parts.push(`${days}d`);
     if (hours > 0) parts.push(`${hours}h`);
     if (mins > 0 && days === 0) parts.push(`${mins}m`);
-    return parts.join(' ') || `${minutes}m`;
+    return parts.join(' ') || `${totalM}m`;
   };
-
-  // Quick stats
-  const waitingReplyCount = issues.filter(i => !i.client_replied_at).length;
-  const inProgressCount = issues.filter(i => (i.team_started_at || i.resumed_at) && !i.team_finished_at).length;
-  const finishedCount = issues.filter(i => i.team_finished_at || i.timeline?.is_completed).length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -167,47 +178,131 @@ export default function ClientIssueDashboard() {
         </div>
       </div>
 
-      {/* KPI Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Paused Issues</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{totalCount}</p>
+      {/* 📊 Interactive KPI Stats Cards (Click to Filter Table) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        {/* 1. Total Paused Issues */}
+        <button
+          type="button"
+          onClick={() => {
+            setStatusFilter('all');
+            setPage(1);
+          }}
+          className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden shadow-sm hover:shadow-md ${
+            statusFilter === 'all'
+              ? 'bg-slate-900 text-white border-slate-900 ring-2 ring-slate-900/20 shadow-md'
+              : 'bg-white text-slate-900 border-slate-200/80 hover:border-slate-300'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`text-xs font-semibold uppercase tracking-wider ${statusFilter === 'all' ? 'text-slate-300' : 'text-slate-500'}`}>
+                Total Issues
+              </p>
+              <p className="text-2xl font-bold mt-1">{stats.total}</p>
+            </div>
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${statusFilter === 'all' ? 'bg-slate-800 text-slate-200' : 'bg-slate-100 text-slate-600'}`}>
+              <Layers className="w-6 h-6" />
+            </div>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600">
-            <Layers className="w-6 h-6" />
-          </div>
-        </div>
+          {statusFilter === 'all' && (
+            <div className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-slate-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span> Active Filter: Showing All
+            </div>
+          )}
+        </button>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider">Waiting For Client</p>
-            <p className="text-2xl font-bold text-amber-700 mt-1">{waitingReplyCount}</p>
+        {/* 2. Waiting For Client (DEFAULT) */}
+        <button
+          type="button"
+          onClick={() => {
+            setStatusFilter('waiting');
+            setPage(1);
+          }}
+          className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden shadow-sm hover:shadow-md ${
+            statusFilter === 'waiting'
+              ? 'bg-amber-500 text-white border-amber-500 ring-2 ring-amber-500/30 shadow-md'
+              : 'bg-white text-slate-900 border-slate-200/80 hover:border-amber-300'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`text-xs font-semibold uppercase tracking-wider ${statusFilter === 'waiting' ? 'text-amber-100' : 'text-amber-600'}`}>
+                Waiting For Client
+              </p>
+              <p className="text-2xl font-bold mt-1">{stats.waiting}</p>
+            </div>
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${statusFilter === 'waiting' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-600'}`}>
+              <Clock className="w-6 h-6" />
+            </div>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600">
-            <Clock className="w-6 h-6" />
-          </div>
-        </div>
+          {statusFilter === 'waiting' && (
+            <div className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-amber-100">
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span> Active Filter: Pending Client Reply
+            </div>
+          )}
+        </button>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider">Active / Resumed</p>
-            <p className="text-2xl font-bold text-blue-700 mt-1">{inProgressCount}</p>
+        {/* 3. Active / Resumed */}
+        <button
+          type="button"
+          onClick={() => {
+            setStatusFilter('in_progress');
+            setPage(1);
+          }}
+          className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden shadow-sm hover:shadow-md ${
+            statusFilter === 'in_progress'
+              ? 'bg-blue-600 text-white border-blue-600 ring-2 ring-blue-600/30 shadow-md'
+              : 'bg-white text-slate-900 border-slate-200/80 hover:border-blue-300'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`text-xs font-semibold uppercase tracking-wider ${statusFilter === 'in_progress' ? 'text-blue-100' : 'text-blue-600'}`}>
+                Active / Resumed
+              </p>
+              <p className="text-2xl font-bold mt-1">{stats.in_progress}</p>
+            </div>
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${statusFilter === 'in_progress' ? 'bg-blue-700 text-white' : 'bg-blue-50 text-blue-600'}`}>
+              <Zap className="w-6 h-6" />
+            </div>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
-            <Zap className="w-6 h-6" />
-          </div>
-        </div>
+          {statusFilter === 'in_progress' && (
+            <div className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-blue-100">
+              <span className="w-1.5 h-1.5 rounded-full bg-white"></span> Active Filter: In Progress
+            </div>
+          )}
+        </button>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">Resolved / Finished</p>
-            <p className="text-2xl font-bold text-emerald-700 mt-1">{finishedCount}</p>
+        {/* 4. Resolved / Finished */}
+        <button
+          type="button"
+          onClick={() => {
+            setStatusFilter('finished');
+            setPage(1);
+          }}
+          className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden shadow-sm hover:shadow-md ${
+            statusFilter === 'finished'
+              ? 'bg-emerald-600 text-white border-emerald-600 ring-2 ring-emerald-600/30 shadow-md'
+              : 'bg-white text-slate-900 border-slate-200/80 hover:border-emerald-300'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`text-xs font-semibold uppercase tracking-wider ${statusFilter === 'finished' ? 'text-emerald-100' : 'text-emerald-600'}`}>
+                Resolved / Finished
+              </p>
+              <p className="text-2xl font-bold mt-1">{stats.finished}</p>
+            </div>
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${statusFilter === 'finished' ? 'bg-emerald-700 text-white' : 'bg-emerald-50 text-emerald-600'}`}>
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
-            <CheckCircle2 className="w-6 h-6" />
-          </div>
-        </div>
+          {statusFilter === 'finished' && (
+            <div className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-emerald-100">
+              <span className="w-1.5 h-1.5 rounded-full bg-white"></span> Active Filter: Resolved
+            </div>
+          )}
+        </button>
       </div>
 
       {/* Filter and Search Bar */}
@@ -240,6 +335,26 @@ export default function ClientIssueDashboard() {
             </select>
           )}
         </div>
+
+        {/* Filter Indicator Badge */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-500 font-medium">Filter view:</span>
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold ${
+            statusFilter === 'waiting'
+              ? 'bg-amber-100 text-amber-800 border border-amber-200'
+              : statusFilter === 'in_progress'
+              ? 'bg-blue-100 text-blue-800 border border-blue-200'
+              : statusFilter === 'finished'
+              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+              : 'bg-slate-100 text-slate-800 border border-slate-200'
+          }`}>
+            <Filter className="w-3 h-3" />
+            {statusFilter === 'waiting' && 'Waiting for Client Reply'}
+            {statusFilter === 'in_progress' && 'Active / In Progress'}
+            {statusFilter === 'finished' && 'Resolved / Finished'}
+            {statusFilter === 'all' && 'All Issues'}
+          </span>
+        </div>
       </div>
 
       {/* Main Table */}
@@ -269,7 +384,7 @@ export default function ClientIssueDashboard() {
                 <tr>
                   <td colSpan={7} className="py-12 text-center text-slate-400">
                     <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-500 opacity-60" />
-                    No client issues found. Everything is moving smoothly!
+                    {statusFilter === 'waiting' ? 'No issues currently waiting for client reply!' : 'No client issues found matching this filter.'}
                   </td>
                 </tr>
               ) : (
@@ -294,7 +409,7 @@ export default function ClientIssueDashboard() {
                         )}
                         {tl.due_in && (
                           <div className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60 inline-block mt-1">
-                            Due in: {tl.due_in}
+                            Due In: {tl.due_in}
                           </div>
                         )}
                         {item.address && item.address !== '-' && (

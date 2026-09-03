@@ -34,29 +34,29 @@ class ClientIssueController extends Controller
         $now = now();
 
         $timeToPauseMinutes = ($receivedAt && $issueTime) 
-            ? max(0, Carbon::parse($receivedAt)->diffInMinutes(Carbon::parse($issueTime), false)) 
+            ? (int) round(max(0, Carbon::parse($receivedAt)->diffInMinutes(Carbon::parse($issueTime), false))) 
             : null;
 
         $clientHoldMinutes = null;
         if ($issueTime) {
-            $endHold = $fixedTime ?? $clientRepliedAt ?? ($order && in_array($order->workflow_state, ['CLIENT_ISSUE']) ? $now : null);
+            $endHold = $fixedTime ?? $clientRepliedAt ?? ($order && in_array($order->workflow_state ?? '', ['CLIENT_ISSUE']) ? $now : null);
             if ($endHold) {
-                $clientHoldMinutes = max(0, Carbon::parse($issueTime)->diffInMinutes(Carbon::parse($endHold), false));
+                $clientHoldMinutes = (int) round(max(0, Carbon::parse($issueTime)->diffInMinutes(Carbon::parse($endHold), false)));
             }
         }
 
         $postResumeWorkMinutes = null;
         if ($fixedTime) {
             $endWork = $completedAt ?? $now;
-            $postResumeWorkMinutes = max(0, Carbon::parse($fixedTime)->diffInMinutes(Carbon::parse($endWork), false));
+            $postResumeWorkMinutes = (int) round(max(0, Carbon::parse($fixedTime)->diffInMinutes(Carbon::parse($endWork), false)));
         }
 
         $totalElapsedMinutes = $receivedAt 
-            ? max(0, Carbon::parse($receivedAt)->diffInMinutes(Carbon::parse($completedAt ?? $now), false)) 
+            ? (int) round(max(0, Carbon::parse($receivedAt)->diffInMinutes(Carbon::parse($completedAt ?? $now), false))) 
             : null;
 
         $netProductionMinutes = $totalElapsedMinutes !== null 
-            ? max(0, $totalElapsedMinutes - ($clientHoldMinutes ?? 0)) 
+            ? (int) round(max(0, $totalElapsedMinutes - ($clientHoldMinutes ?? 0))) 
             : null;
 
         return [
@@ -86,7 +86,7 @@ class ClientIssueController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'project_id' => 'required|integer|exists:projects,id',
+            'project_id' => 'required|integer',
             'order_id' => 'required|integer',
             'reason' => 'required|string|max:255',
             'comment_text' => 'nullable|string',
@@ -100,37 +100,24 @@ class ClientIssueController extends Controller
             'time_taken_to_finish_minutes' => 'nullable|integer',
         ]);
 
-        $projectId = (int) $validated['project_id'];
-        $orderId = (int) $validated['order_id'];
+        $projectId = $validated['project_id'];
+        $orderId = $validated['order_id'];
+
+        $log = ClientIssue::updateOrCreate(
+            [
+                'project_id' => $projectId,
+                'order_id' => $orderId,
+            ],
+            $validated
+        );
 
         $order = Order::findInProject($projectId, $orderId);
 
-        try {
-            $log = ClientIssue::updateOrCreate(
-                [
-                    'project_id' => $projectId,
-                    'order_id' => $orderId,
-                ],
-                $validated
-            );
-        } catch (\Throwable $e) {
-            Log::error("[ClientIssue] updateOrCreate failed: " . $e->getMessage(), [
-                'project_id' => $projectId,
-                'order_id' => $orderId,
-                'error' => $e->getMessage(),
-            ]);
-            return response()->json([
-                'message' => 'Database error saving client issue: ' . $e->getMessage(),
-            ], 500);
-        }
-
-        // Safely update the order's state to CLIENT_ISSUE (paused order)
         if ($order) {
             try {
                 $tableName = ProjectOrderService::getTableName($projectId);
                 $updates = [
                     'workflow_state' => 'CLIENT_ISSUE',
-                    'status' => 'pending',
                     'updated_at' => now(),
                 ];
 
@@ -163,15 +150,15 @@ class ClientIssueController extends Controller
                     }
                 }
             } catch (\Throwable $e) {
-                Log::warning("[ClientIssue] Order status update warning: " . $e->getMessage());
+                Log::warning("[ClientIssue] Sync order state warning: " . $e->getMessage());
             }
         }
 
-        $freshOrder = $order ? Order::findInProject($projectId, $orderId) : null;
+        $freshOrder = Order::findInProject($projectId, $orderId);
         $timeline = $this->buildTimelineMetrics($log, $freshOrder);
 
         return response()->json([
-            'message' => 'Action logged successfully',
+            'message' => 'Action log saved successfully.',
             'data' => $log,
             'order' => $freshOrder,
             'timeline' => $timeline,
@@ -220,21 +207,21 @@ class ClientIssueController extends Controller
     }
 
     /**
-     * Resume an order from CLIENT_ISSUE back into active workflow.
+     * Resume order from client issue back to normal workflow.
      */
-    public function resume(Request $request, $projectId, $orderId)
+    public function resume($projectId, $orderId)
     {
         $projectId = (int) $projectId;
         $orderId = (int) $orderId;
-
         $order = Order::findInProject($projectId, $orderId);
+
         if (!$order) {
             return response()->json(['message' => 'Order not found.'], 404);
         }
 
         $now = now();
 
-        // 1. Record resumed_at in client_issues table
+        // 1. Record resumed_at timestamp on the issue log
         try {
             $issue = ClientIssue::where('project_id', $projectId)
                 ->where('order_id', $orderId)
@@ -243,7 +230,7 @@ class ClientIssueController extends Controller
 
             if ($issue) {
                 $pauseStart = $issue->comment_entered_at ?? $issue->created_at;
-                $diff = $pauseStart ? Carbon::parse($pauseStart)->diffInMinutes($now) : null;
+                $diff = $pauseStart ? (int) round(Carbon::parse($pauseStart)->diffInMinutes($now)) : null;
                 $updateData = ['resumed_at' => $now];
                 if (Schema::hasColumn('client_issues', 'resumed_by')) {
                     $updateData['resumed_by'] = Auth::id();
@@ -301,27 +288,49 @@ class ClientIssueController extends Controller
         $user = $request->user();
         $projectId = $request->query('project_id');
         $search = $request->query('search');
+        $status = $request->query('status', 'waiting'); // Default to 'waiting'
 
-        $query = ClientIssue::query()->with('project:id,name,code');
+        $baseQuery = ClientIssue::query();
 
         if ($user && $user->role === 'client') {
             $clientProjectIds = $user->getManagedProjectIds();
             if (!empty($clientProjectIds)) {
-                $query->whereIn('project_id', $clientProjectIds);
+                $baseQuery->whereIn('project_id', $clientProjectIds);
             } else {
-                $query->whereRaw('1 = 0'); // No projects assigned
+                $baseQuery->whereRaw('1 = 0'); // No projects assigned
             }
         } elseif ($projectId) {
-            $query->where('project_id', (int) $projectId);
+            $baseQuery->where('project_id', (int) $projectId);
         }
 
         if ($search) {
-            $query->where(function ($q) use ($search) {
+            $baseQuery->where(function ($q) use ($search) {
                 $q->where('reason', 'LIKE', "%{$search}%")
                   ->orWhere('comment_text', 'LIKE', "%{$search}%")
                   ->orWhere('client_reply_text', 'LIKE', "%{$search}%");
             });
         }
+
+        // Calculate KPI Counts across the filtered set
+        $totalCount = (clone $baseQuery)->count();
+        $waitingCount = (clone $baseQuery)->whereNull('client_replied_at')->whereNull('resumed_at')->whereNull('team_finished_at')->count();
+        $inProgressCount = (clone $baseQuery)->where(function($q) {
+            $q->whereNotNull('team_started_at')->orWhereNotNull('resumed_at');
+        })->whereNull('team_finished_at')->count();
+        $finishedCount = (clone $baseQuery)->whereNotNull('team_finished_at')->count();
+
+        // Apply Status Filter to the main listing
+        $query = (clone $baseQuery)->with('project:id,name,code');
+
+        if ($status === 'waiting') {
+            $query->whereNull('client_replied_at')->whereNull('resumed_at')->whereNull('team_finished_at');
+        } elseif ($status === 'in_progress') {
+            $query->where(function($q) {
+                $q->whereNotNull('team_started_at')->orWhereNotNull('resumed_at');
+            })->whereNull('team_finished_at');
+        } elseif ($status === 'finished') {
+            $query->whereNotNull('team_finished_at');
+        } // 'all' displays everything
 
         $issues = $query->orderBy('updated_at', 'desc')->paginate(25);
 
@@ -362,6 +371,12 @@ class ClientIssueController extends Controller
             'last_page' => $issues->lastPage(),
             'total' => $issues->total(),
             'per_page' => $issues->perPage(),
+            'stats' => [
+                'total' => $totalCount,
+                'waiting' => $waitingCount,
+                'in_progress' => $inProgressCount,
+                'finished' => $finishedCount,
+            ],
         ]);
     }
 
