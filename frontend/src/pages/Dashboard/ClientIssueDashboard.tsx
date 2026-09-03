@@ -7,13 +7,15 @@ import {
   RefreshCw, 
   ExternalLink, 
   CheckCircle2, 
-  MessageSquare,
-  Layers,
-  Building2,
-  Calendar,
-  Send,
-  X,
-  Loader2
+  MessageSquare, 
+  Layers, 
+  Building2, 
+  Send, 
+  X, 
+  Loader2, 
+  Inbox, 
+  Play, 
+  Zap 
 } from 'lucide-react';
 import { projectService } from '../../services';
 
@@ -107,7 +109,7 @@ export default function ClientIssueDashboard() {
     }
   };
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string | undefined | null) => {
     if (!dateString) return '-';
     return new Date(dateString).toLocaleString([], { 
       month: 'short', 
@@ -118,17 +120,22 @@ export default function ClientIssueDashboard() {
   };
 
   const formatDiff = (minutes: number | undefined | null) => {
-    if (minutes === undefined || minutes === null) return '';
+    if (minutes === undefined || minutes === null) return '-';
     if (minutes < 60) return `${minutes}m`;
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return `${h}h ${m}m`;
+    const days = Math.floor(minutes / (24 * 60));
+    const hours = Math.floor((minutes % (24 * 60)) / 60);
+    const mins = minutes % 60;
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (mins > 0 && days === 0) parts.push(`${mins}m`);
+    return parts.join(' ') || `${minutes}m`;
   };
 
   // Quick stats
   const waitingReplyCount = issues.filter(i => !i.client_replied_at).length;
-  const inProgressCount = issues.filter(i => i.team_started_at && !i.team_finished_at).length;
-  const finishedCount = issues.filter(i => i.team_finished_at).length;
+  const inProgressCount = issues.filter(i => (i.team_started_at || i.resumed_at) && !i.team_finished_at).length;
+  const finishedCount = issues.filter(i => i.team_finished_at || i.timeline?.is_completed).length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -142,7 +149,7 @@ export default function ClientIssueDashboard() {
             <div>
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Client Issues Dashboard</h1>
               <p className="text-slate-500 text-sm mt-0.5">
-                Orders on hold awaiting client clarification or missing details
+                Orders on hold awaiting client clarification, received times, paused times, and resume tracking
               </p>
             </div>
           </div>
@@ -184,11 +191,11 @@ export default function ClientIssueDashboard() {
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider">Team Working</p>
+            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider">Active / Resumed</p>
             <p className="text-2xl font-bold text-blue-700 mt-1">{inProgressCount}</p>
           </div>
           <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
-            <MessageSquare className="w-6 h-6" />
+            <Zap className="w-6 h-6" />
           </div>
         </div>
 
@@ -243,8 +250,9 @@ export default function ClientIssueDashboard() {
               <tr className="bg-slate-50/80 border-b border-slate-200/80 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
                 <th className="py-3.5 px-4">Order / Ref</th>
                 <th className="py-3.5 px-4">Project</th>
-                <th className="py-3.5 px-4">Issue Reason & Notes</th>
-                <th className="py-3.5 px-4">Client Reply</th>
+                <th className="py-3.5 px-4">Issue & Reply</th>
+                <th className="py-3.5 px-4">Milestone Dates (From Orders & Issues)</th>
+                <th className="py-3.5 px-4">Duration Breakdown</th>
                 <th className="py-3.5 px-4 text-center">Status</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
               </tr>
@@ -252,14 +260,14 @@ export default function ClientIssueDashboard() {
             <tbody className="divide-y divide-slate-100 text-sm">
               {loading && !refreshing ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-slate-400">
+                  <td colSpan={7} className="py-12 text-center text-slate-400">
                     <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-brand-600" />
                     Loading client issues...
                   </td>
                 </tr>
               ) : issues.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-slate-400">
+                  <td colSpan={7} className="py-12 text-center text-slate-400">
                     <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-500 opacity-60" />
                     No client issues found. Everything is moving smoothly!
                   </td>
@@ -267,8 +275,10 @@ export default function ClientIssueDashboard() {
               ) : (
                 issues.map((item) => {
                   const hasReply = !!item.client_reply_text;
-                  const hasStarted = !!item.team_started_at;
-                  const hasFinished = !!item.team_finished_at;
+                  const hasResumed = !!item.resumed_at || !!item.timeline?.resumed_at;
+                  const hasFinished = !!item.team_finished_at || !!item.timeline?.is_completed;
+                  const tl = item.timeline || {};
+                  const m = tl.metrics || {};
 
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
@@ -280,6 +290,11 @@ export default function ClientIssueDashboard() {
                         {item.client_reference && item.client_reference !== '-' && (
                           <div className="text-xs text-slate-500 mt-0.5">
                             Ref: {item.client_reference}
+                          </div>
+                        )}
+                        {tl.due_in && (
+                          <div className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60 inline-block mt-1">
+                            Due in: {tl.due_in}
                           </div>
                         )}
                         {item.address && item.address !== '-' && (
@@ -297,42 +312,88 @@ export default function ClientIssueDashboard() {
                         </div>
                       </td>
 
-                      {/* Reason & Comment */}
-                      <td className="py-4 px-4 align-top max-w-sm">
+                      {/* Reason & Client Reply */}
+                      <td className="py-4 px-4 align-top max-w-xs">
                         <div className="font-medium text-amber-700 text-xs inline-block bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60 mb-1">
                           {item.reason}
                         </div>
                         {item.comment_text && (
-                          <div className="text-xs text-slate-600 line-clamp-3 bg-slate-50/80 p-2 rounded-lg border border-slate-100">
+                          <div className="text-xs text-slate-600 line-clamp-2 bg-slate-50/80 p-1.5 rounded border border-slate-100 mb-1.5">
                             {item.comment_text}
                           </div>
                         )}
-                        {item.comment_entered_at && (
-                          <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
-                            <Calendar className="w-3 h-3" />
-                            {formatDate(item.comment_entered_at)}
+                        {hasReply ? (
+                          <div className="text-xs text-blue-700 bg-blue-50/70 p-1.5 rounded border border-blue-100">
+                            <span className="font-semibold block text-[10px] text-blue-800">Reply:</span>
+                            <span className="line-clamp-2">{item.client_reply_text}</span>
                           </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60 font-medium">
+                            <Clock className="w-3 h-3" />
+                            Awaiting client reply
+                          </span>
                         )}
                       </td>
 
-                      {/* Client Reply */}
-                      <td className="py-4 px-4 align-top max-w-xs">
-                        {hasReply ? (
-                          <div>
-                            <div className="text-xs text-slate-700 bg-blue-50/70 p-2 rounded-lg border border-blue-100">
-                              {item.client_reply_text}
-                            </div>
-                            <div className="text-[10px] text-blue-600 mt-1 flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              Replied: {formatDate(item.client_replied_at)}{item.comment_to_reply_diff_minutes ? ` (waited ${formatDiff(item.comment_to_reply_diff_minutes)})` : ''}
-                            </div>
+                      {/* ⏱️ Milestone Dates */}
+                      <td className="py-4 px-4 align-top min-w-[200px]">
+                        <div className="space-y-1.5 text-xs">
+                          {/* 1. Received Time */}
+                          <div className="flex items-center gap-1.5 text-slate-600">
+                            <Inbox className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <span className="text-[11px] text-slate-400">Recv:</span>
+                            <span className="font-medium text-slate-800">{formatDate(tl.received_at)}</span>
                           </div>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200/60 font-medium">
-                            <Clock className="w-3 h-3" />
-                            Waiting for your reply
-                          </span>
-                        )}
+
+                          {/* 2. Issue Sent Time */}
+                          <div className="flex items-center gap-1.5 text-amber-700">
+                            <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                            <span className="text-[11px] text-amber-600/80">Issue:</span>
+                            <span className="font-medium">{formatDate(tl.issue_time || tl.paused_at || item.comment_entered_at)}</span>
+                          </div>
+
+                          {/* 3. Fixed / Resumed Time */}
+                          <div className="flex items-center gap-1.5 text-emerald-700">
+                            <Play className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            <span className="text-[11px] text-emerald-600/80">Fixed:</span>
+                            <span className="font-medium">
+                              {tl.fixed_time || tl.resumed_at ? formatDate(tl.fixed_time || tl.resumed_at) : (hasResumed ? formatDate(item.resumed_at) : 'Not Resumed Yet')}
+                            </span>
+                          </div>
+
+                          {/* 4. Delivered Time (if completed) */}
+                          {tl.delivered_at && (
+                            <div className="flex items-center gap-1.5 text-teal-700">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-teal-500 shrink-0" />
+                              <span className="text-[11px] text-teal-600/80">Deliv:</span>
+                              <span className="font-medium">{formatDate(tl.delivered_at)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* 📊 Duration Breakdown (Time Count) */}
+                      <td className="py-4 px-4 align-top min-w-[180px]">
+                        <div className="space-y-1 text-xs">
+                          <div className="flex items-center justify-between text-slate-500">
+                            <span className="text-[11px]">Issue to Fixed:</span>
+                            <span className="font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/50">
+                              {formatDiff(m.client_hold_minutes ?? item.comment_to_reply_diff_minutes)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-slate-500">
+                            <span className="text-[11px]">Net Work Time:</span>
+                            <span className="font-semibold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200/50">
+                              {formatDiff(m.net_production_minutes)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-slate-400 pt-0.5 border-t border-slate-100">
+                            <span className="text-[10px]">Total Elapsed:</span>
+                            <span className="text-[11px] font-medium text-slate-700">{formatDiff(m.total_elapsed_minutes)}</span>
+                          </div>
+                        </div>
                       </td>
 
                       {/* Status */}
@@ -341,7 +402,7 @@ export default function ClientIssueDashboard() {
                           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                             Finished
                           </span>
-                        ) : hasStarted ? (
+                        ) : hasResumed ? (
                           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
                             In Progress
                           </span>
@@ -367,7 +428,7 @@ export default function ClientIssueDashboard() {
                           <Link
                             to={`/project-action/${item.project_id}/${item.order_id}`}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-brand-50 hover:bg-brand-100 text-brand-700 text-xs font-semibold rounded-lg transition-colors border border-brand-200"
-                            title="View full action timeline"
+                            title="View full timeline and turnaround breakdown"
                           >
                             <ExternalLink className="w-3 h-3" />
                           </Link>

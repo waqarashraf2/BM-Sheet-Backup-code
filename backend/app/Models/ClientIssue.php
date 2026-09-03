@@ -21,7 +21,25 @@ class ClientIssue extends Model
         'team_started_at',
         'reply_to_start_diff_minutes',
         'team_finished_at',
-        'time_taken_to_finish_minutes'
+        'time_taken_to_finish_minutes',
+        'resumed_at',
+        'resumed_by',
+        'pause_to_resume_diff_minutes',
+        'completed_at'
+    ];
+
+    protected $casts = [
+        'comment_entered_at' => 'datetime',
+        'client_replied_at' => 'datetime',
+        'team_started_at' => 'datetime',
+        'team_finished_at' => 'datetime',
+        'resumed_at' => 'datetime',
+        'completed_at' => 'datetime',
+        'comment_to_reply_diff_minutes' => 'integer',
+        'reply_to_start_diff_minutes' => 'integer',
+        'time_taken_to_finish_minutes' => 'integer',
+        'pause_to_resume_diff_minutes' => 'integer',
+        'resumed_by' => 'integer',
     ];
 
     public function project()

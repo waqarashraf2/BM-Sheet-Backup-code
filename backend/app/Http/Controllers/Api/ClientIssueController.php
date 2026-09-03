@@ -10,9 +10,76 @@ use App\Models\Project;
 use App\Services\ProjectOrderService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 
 class ClientIssueController extends Controller
 {
+    /**
+     * Helper to compute timeline timestamps & breakdown durations.
+     */
+    private function buildTimelineMetrics($issue, $order)
+    {
+        // 1. From Orders table
+        $receivedAt = $order ? ($order->received_at ?? $order->date ?? $order->ausDatein ?? $order->created_at ?? null) : null;
+        $dueIn = $order ? ($order->due_in ?? $order->due_date ?? null) : null;
+        $completedAt = $order ? ($order->completed_at ?? $order->delivered_at ?? $order->ausFinaldate ?? null) : null;
+
+        // 2. From Client Issues table
+        $issueTime = $issue ? ($issue->comment_entered_at ?? $issue->created_at ?? null) : null;
+        $fixedTime = $issue ? ($issue->resumed_at ?? null) : null;
+        $clientRepliedAt = $issue ? ($issue->client_replied_at ?? null) : null;
+
+        $now = now();
+
+        $timeToPauseMinutes = ($receivedAt && $issueTime) 
+            ? max(0, Carbon::parse($receivedAt)->diffInMinutes(Carbon::parse($issueTime), false)) 
+            : null;
+
+        $clientHoldMinutes = null;
+        if ($issueTime) {
+            $endHold = $fixedTime ?? $clientRepliedAt ?? ($order && in_array($order->workflow_state, ['CLIENT_ISSUE']) ? $now : null);
+            if ($endHold) {
+                $clientHoldMinutes = max(0, Carbon::parse($issueTime)->diffInMinutes(Carbon::parse($endHold), false));
+            }
+        }
+
+        $postResumeWorkMinutes = null;
+        if ($fixedTime) {
+            $endWork = $completedAt ?? $now;
+            $postResumeWorkMinutes = max(0, Carbon::parse($fixedTime)->diffInMinutes(Carbon::parse($endWork), false));
+        }
+
+        $totalElapsedMinutes = $receivedAt 
+            ? max(0, Carbon::parse($receivedAt)->diffInMinutes(Carbon::parse($completedAt ?? $now), false)) 
+            : null;
+
+        $netProductionMinutes = $totalElapsedMinutes !== null 
+            ? max(0, $totalElapsedMinutes - ($clientHoldMinutes ?? 0)) 
+            : null;
+
+        return [
+            'received_at' => $receivedAt ? Carbon::parse($receivedAt)->toIso8601String() : null,
+            'due_in' => $dueIn,
+            'issue_time' => $issueTime ? Carbon::parse($issueTime)->toIso8601String() : null,
+            'paused_at' => $issueTime ? Carbon::parse($issueTime)->toIso8601String() : null,
+            'client_replied_at' => $clientRepliedAt ? Carbon::parse($clientRepliedAt)->toIso8601String() : null,
+            'fixed_time' => $fixedTime ? Carbon::parse($fixedTime)->toIso8601String() : null,
+            'resumed_at' => $fixedTime ? Carbon::parse($fixedTime)->toIso8601String() : null,
+            'completed_at' => $completedAt ? Carbon::parse($completedAt)->toIso8601String() : null,
+            'delivered_at' => $completedAt ? Carbon::parse($completedAt)->toIso8601String() : null,
+            'is_completed' => !empty($completedAt) || ($order && in_array(strtolower($order->status ?? ''), ['completed', 'delivered', 'done'])),
+            'metrics' => [
+                'time_to_pause_minutes' => $timeToPauseMinutes,
+                'client_hold_minutes' => $clientHoldMinutes,
+                'post_resume_work_minutes' => $postResumeWorkMinutes,
+                'total_elapsed_minutes' => $totalElapsedMinutes,
+                'net_production_minutes' => $netProductionMinutes,
+            ]
+        ];
+    }
+
     /**
      * Store or update client issue for a specific project order.
      */
@@ -38,49 +105,76 @@ class ClientIssueController extends Controller
 
         $order = Order::findInProject($projectId, $orderId);
 
-        $log = ClientIssue::updateOrCreate(
-            [
+        try {
+            $log = ClientIssue::updateOrCreate(
+                [
+                    'project_id' => $projectId,
+                    'order_id' => $orderId,
+                ],
+                $validated
+            );
+        } catch (\Throwable $e) {
+            Log::error("[ClientIssue] updateOrCreate failed: " . $e->getMessage(), [
                 'project_id' => $projectId,
                 'order_id' => $orderId,
-            ],
-            $validated
-        );
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'message' => 'Database error saving client issue: ' . $e->getMessage(),
+            ], 500);
+        }
 
         // Safely update the order's state to CLIENT_ISSUE (paused order)
         if ($order) {
-            $tableName = ProjectOrderService::getTableName($projectId);
-            $updates = [
-                'workflow_state' => 'CLIENT_ISSUE',
-                'status' => 'pending',
-                'rejection_reason' => $validated['reason'],
-                'updated_at' => now(),
-            ];
+            try {
+                $tableName = ProjectOrderService::getTableName($projectId);
+                $updates = [
+                    'workflow_state' => 'CLIENT_ISSUE',
+                    'status' => 'pending',
+                    'updated_at' => now(),
+                ];
 
-            // If finished has been marked, optionally transition back or keep state
-            if (!empty($validated['team_finished_at'])) {
-                // Team completed the fix after client reply
-                $updates['workflow_state'] = 'QUEUED_DRAW';
-            }
+                if (Schema::hasColumn($tableName, 'rejection_reason')) {
+                    $updates['rejection_reason'] = $validated['reason'];
+                }
 
-            DB::table($tableName)
-                ->where('id', $orderId)
-                ->update($updates);
+                // If finished has been marked, optionally transition back
+                if (!empty($validated['team_finished_at'])) {
+                    $updates['workflow_state'] = 'QUEUED_DRAW';
+                }
 
-            // Also update crm_order_assignments if present
-            if (isset($order->order_number)) {
-                DB::table('crm_order_assignments')
-                    ->where('order_number', $order->order_number)
-                    ->update([
-                        'workflow_state' => $updates['workflow_state'],
-                        'updated_at' => now(),
-                    ]);
+                DB::table($tableName)
+                    ->where('id', $orderId)
+                    ->update($updates);
+
+                // Safely update crm_order_assignments only if table & column exist
+                if (isset($order->order_number) && Schema::hasTable('crm_order_assignments')) {
+                    $crmUpdates = [];
+                    if (Schema::hasColumn('crm_order_assignments', 'workflow_state')) {
+                        $crmUpdates['workflow_state'] = $updates['workflow_state'];
+                    }
+                    if (Schema::hasColumn('crm_order_assignments', 'updated_at')) {
+                        $crmUpdates['updated_at'] = now();
+                    }
+                    if (!empty($crmUpdates)) {
+                        DB::table('crm_order_assignments')
+                            ->where('order_number', $order->order_number)
+                            ->update($crmUpdates);
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning("[ClientIssue] Order status update warning: " . $e->getMessage());
             }
         }
+
+        $freshOrder = $order ? Order::findInProject($projectId, $orderId) : null;
+        $timeline = $this->buildTimelineMetrics($log, $freshOrder);
 
         return response()->json([
             'message' => 'Action logged successfully',
             'data' => $log,
-            'order' => $order ? Order::findInProject($projectId, $orderId) : null,
+            'order' => $freshOrder,
+            'timeline' => $timeline,
         ], 200);
     }
 
@@ -104,6 +198,8 @@ class ClientIssueController extends Controller
             $order = Order::findInProject((int) $projectId, (int) $log->order_id);
         }
 
+        $timeline = $this->buildTimelineMetrics($log, $order);
+
         return response()->json([
             'data' => $log,
             'order' => $order ? [
@@ -113,8 +209,13 @@ class ClientIssueController extends Controller
                 'address' => $order->address ?? null,
                 'workflow_state' => $order->workflow_state ?? null,
                 'status' => $order->status ?? null,
+                'received_at' => $order->received_at ?? $order->date ?? $order->ausDatein ?? $order->created_at ?? null,
+                'due_in' => $order->due_in ?? $order->due_date ?? null,
+                'completed_at' => $order->completed_at ?? $order->delivered_at ?? $order->ausFinaldate ?? null,
+                'delivered_at' => $order->delivered_at ?? $order->completed_at ?? $order->ausFinaldate ?? null,
                 'project_id' => (int) $projectId,
             ] : null,
+            'timeline' => $timeline,
         ]);
     }
 
@@ -131,27 +232,64 @@ class ClientIssueController extends Controller
             return response()->json(['message' => 'Order not found.'], 404);
         }
 
+        $now = now();
+
+        // 1. Record resumed_at in client_issues table
+        try {
+            $issue = ClientIssue::where('project_id', $projectId)
+                ->where('order_id', $orderId)
+                ->latest('updated_at')
+                ->first();
+
+            if ($issue) {
+                $pauseStart = $issue->comment_entered_at ?? $issue->created_at;
+                $diff = $pauseStart ? Carbon::parse($pauseStart)->diffInMinutes($now) : null;
+                $updateData = ['resumed_at' => $now];
+                if (Schema::hasColumn('client_issues', 'resumed_by')) {
+                    $updateData['resumed_by'] = Auth::id();
+                }
+                if (Schema::hasColumn('client_issues', 'pause_to_resume_diff_minutes')) {
+                    $updateData['pause_to_resume_diff_minutes'] = $diff;
+                }
+                $issue->update($updateData);
+            }
+        } catch (\Throwable $e) {
+            Log::warning("[ClientIssue] Resume issue log update warning: " . $e->getMessage());
+        }
+
+        // 2. Update order workflow state to QUEUED_DRAW
         $tableName = ProjectOrderService::getTableName($projectId);
         DB::table($tableName)
             ->where('id', $orderId)
             ->update([
                 'workflow_state' => 'QUEUED_DRAW',
                 'status' => 'pending',
-                'updated_at' => now(),
+                'updated_at' => $now,
             ]);
 
-        if (isset($order->order_number)) {
-            DB::table('crm_order_assignments')
-                ->where('order_number', $order->order_number)
-                ->update([
-                    'workflow_state' => 'QUEUED_DRAW',
-                    'updated_at' => now(),
-                ]);
+        if (isset($order->order_number) && Schema::hasTable('crm_order_assignments')) {
+            $crmUpdates = [];
+            if (Schema::hasColumn('crm_order_assignments', 'workflow_state')) {
+                $crmUpdates['workflow_state'] = 'QUEUED_DRAW';
+            }
+            if (Schema::hasColumn('crm_order_assignments', 'updated_at')) {
+                $crmUpdates['updated_at'] = $now;
+            }
+            if (!empty($crmUpdates)) {
+                DB::table('crm_order_assignments')
+                    ->where('order_number', $order->order_number)
+                    ->update($crmUpdates);
+            }
         }
+
+        $freshOrder = Order::findInProject($projectId, $orderId);
+        $latestIssue = ClientIssue::where('project_id', $projectId)->where('order_id', $orderId)->latest('updated_at')->first();
+        $timeline = $this->buildTimelineMetrics($latestIssue, $freshOrder);
 
         return response()->json([
             'message' => 'Order resumed successfully.',
-            'order' => Order::findInProject($projectId, $orderId),
+            'order' => $freshOrder,
+            'timeline' => $timeline,
         ]);
     }
 
@@ -189,6 +327,8 @@ class ClientIssueController extends Controller
 
         $items = collect($issues->items())->map(function ($issue) {
             $order = Order::findInProject((int) $issue->project_id, (int) $issue->order_id);
+            $timeline = $this->buildTimelineMetrics($issue, $order);
+
             return [
                 'id' => $issue->id,
                 'project_id' => $issue->project_id,
@@ -199,6 +339,8 @@ class ClientIssueController extends Controller
                 'client_reply_text' => $issue->client_reply_text,
                 'client_replied_at' => $issue->client_replied_at,
                 'comment_to_reply_diff_minutes' => $issue->comment_to_reply_diff_minutes,
+                'resumed_at' => $issue->resumed_at,
+                'pause_to_resume_diff_minutes' => $issue->pause_to_resume_diff_minutes,
                 'team_started_at' => $issue->team_started_at,
                 'reply_to_start_diff_minutes' => $issue->reply_to_start_diff_minutes,
                 'team_finished_at' => $issue->team_finished_at,
@@ -210,6 +352,7 @@ class ClientIssueController extends Controller
                 'address' => $order->address ?? '-',
                 'workflow_state' => $order->workflow_state ?? 'CLIENT_ISSUE',
                 'updated_at' => $issue->updated_at,
+                'timeline' => $timeline,
             ];
         });
 
