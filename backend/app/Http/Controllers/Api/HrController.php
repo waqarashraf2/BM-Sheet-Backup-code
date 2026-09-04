@@ -1079,6 +1079,11 @@ class HrController extends Controller
         $today = now()->toDateString();
         $todayTotalDocs = 0;
         $todayHrBreakdown = [];
+        $totalAllDocs = 0;
+        $totalEmployeesWithDocs = 0;
+        $inactiveDocsCount = 0;
+        $inactiveEmployeesWithDocs = 0;
+
         if (Schema::hasTable('user_documents')) {
             $todayTotalDocs = DB::table('user_documents as ud')
                 ->whereRaw('DATE(COALESCE(ud.uploaded_at, ud.created_at)) = ?', [$today])
@@ -1115,6 +1120,53 @@ class HrController extends Controller
                     'documents_count' => (int) $row->documents_count,
                 ])
                 ->toArray();
+
+            $totalAllDocs = DB::table('user_documents as ud')
+                ->when($projectId, function ($query) use ($projectId) {
+                    $query->whereExists(function ($sub) use ($projectId) {
+                        $sub->select(DB::raw(1))
+                            ->from('users as u')
+                            ->whereColumn('u.id', 'ud.user_id')
+                            ->where('u.project_id', $projectId);
+                    });
+                })
+                ->count();
+
+            $totalEmployeesWithDocs = DB::table('user_documents as ud')
+                ->when($projectId, function ($query) use ($projectId) {
+                    $query->whereExists(function ($sub) use ($projectId) {
+                        $sub->select(DB::raw(1))
+                            ->from('users as u')
+                            ->whereColumn('u.id', 'ud.user_id')
+                            ->where('u.project_id', $projectId);
+                    });
+                })
+                ->whereNotNull('ud.user_id')
+                ->distinct('ud.user_id')
+                ->count('ud.user_id');
+
+            $inactiveDocsCount = DB::table('user_documents as ud')
+                ->join('users as u', 'u.id', '=', 'ud.user_id')
+                ->where(function ($q) {
+                    $q->where('u.is_active', false)
+                      ->orWhere(function ($sub) {
+                          $sub->where('u.is_absent', true)->where('u.inactive_days', '>=', 15);
+                      });
+                })
+                ->when($projectId, fn ($query) => $query->where('u.project_id', $projectId))
+                ->count();
+
+            $inactiveEmployeesWithDocs = DB::table('user_documents as ud')
+                ->join('users as u', 'u.id', '=', 'ud.user_id')
+                ->where(function ($q) {
+                    $q->where('u.is_active', false)
+                      ->orWhere(function ($sub) {
+                          $sub->where('u.is_absent', true)->where('u.inactive_days', '>=', 15);
+                      });
+                })
+                ->when($projectId, fn ($query) => $query->where('u.project_id', $projectId))
+                ->distinct('ud.user_id')
+                ->count('ud.user_id');
         }
 
         return [
@@ -1125,6 +1177,10 @@ class HrController extends Controller
             'uploaded_today' => $uploadedToday,
             'uploaded_today_docs' => (int) $todayTotalDocs,
             'today_hr_breakdown' => $todayHrBreakdown,
+            'total_all_docs' => (int) $totalAllDocs,
+            'total_employees_with_docs' => (int) $totalEmployeesWithDocs,
+            'inactive_docs_count' => (int) $inactiveDocsCount,
+            'inactive_employees_with_docs' => (int) $inactiveEmployeesWithDocs,
             'missing' => [
                 'copy_of_cnic' => $missingCnic,
                 'two_pics' => $missingPics,
@@ -1256,7 +1312,7 @@ class HrController extends Controller
             $query->where('project_id', (int) $request->input('project_id'));
         }
 
-        if ($request->filled('status') && $request->input('status') !== 'all') {
+        if ($request->filled('status') && $request->input('status') !== 'all' && $request->input('doc_status') !== 'inactive_docs') {
             if ($request->input('status') === 'active') {
                 $query->where('is_active', true);
             } elseif ($request->input('status') === 'inactive') {
@@ -1285,37 +1341,53 @@ class HrController extends Controller
         if ($request->filled('doc_status') && $request->input('doc_status') !== 'all' && Schema::hasTable('user_documents')) {
             $docFilter = (string) $request->input('doc_status');
             $projectId = $request->filled('project_id') && $request->input('project_id') !== 'all' ? (int) $request->input('project_id') : null;
-            $entities = $this->resolveActiveEntities($projectId);
 
-            $matchedUserIds = [];
-            foreach ($entities as $ent) {
-                $matches = false;
-                if ($docFilter === 'complete') {
-                    $matches = ($ent['status'] === 'complete');
-                } elseif ($docFilter === 'incomplete' || $docFilter === 'partial') {
-                    $matches = ($ent['status'] === 'incomplete');
-                } elseif ($docFilter === 'no_docs') {
-                    $matches = ($ent['status'] === 'no_docs');
-                } elseif ($docFilter === 'missing_copy_of_cnic' || $docFilter === 'missing_cnic') {
-                    $matches = ($ent['status'] === 'incomplete' && !$ent['has_copy_of_cnic']);
-                } elseif ($docFilter === 'missing_two_pics' || $docFilter === 'missing_pics') {
-                    $matches = ($ent['status'] === 'incomplete' && !$ent['has_two_pics']);
-                } elseif ($docFilter === 'missing_nda') {
-                    $matches = ($ent['status'] === 'incomplete' && !$ent['has_nda']);
-                } elseif ($docFilter === 'missing_contract_letter' || $docFilter === 'missing_contract') {
-                    $matches = ($ent['status'] === 'incomplete' && !$ent['has_contract_letter']);
-                } elseif ($docFilter === 'uploaded_today') {
-                    $matches = $ent['has_uploaded_today'];
-                }
+            if ($docFilter === 'total_docs' || $docFilter === 'all_docs') {
+                $query->whereIn('users.id', function ($sub) {
+                    $sub->select('user_id')->from('user_documents')->whereNotNull('user_id');
+                });
+            } elseif ($docFilter === 'inactive_docs') {
+                $query->where(function ($q) {
+                    $q->where('users.is_active', false)
+                      ->orWhere(function ($sub) {
+                          $sub->where('users.is_absent', true)->where('users.inactive_days', '>=', 15);
+                      });
+                })->whereIn('users.id', function ($sub) {
+                    $sub->select('user_id')->from('user_documents')->whereNotNull('user_id');
+                });
+            } else {
+                $entities = $this->resolveActiveEntities($projectId);
 
-                if ($matches) {
-                    foreach ($ent['all_user_ids'] as $uid) {
-                        $matchedUserIds[] = $uid;
+                $matchedUserIds = [];
+                foreach ($entities as $ent) {
+                    $matches = false;
+                    if ($docFilter === 'complete') {
+                        $matches = ($ent['status'] === 'complete');
+                    } elseif ($docFilter === 'incomplete' || $docFilter === 'partial') {
+                        $matches = ($ent['status'] === 'incomplete');
+                    } elseif ($docFilter === 'no_docs') {
+                        $matches = ($ent['status'] === 'no_docs');
+                    } elseif ($docFilter === 'missing_copy_of_cnic' || $docFilter === 'missing_cnic') {
+                        $matches = ($ent['status'] === 'incomplete' && !$ent['has_copy_of_cnic']);
+                    } elseif ($docFilter === 'missing_two_pics' || $docFilter === 'missing_pics') {
+                        $matches = ($ent['status'] === 'incomplete' && !$ent['has_two_pics']);
+                    } elseif ($docFilter === 'missing_nda') {
+                        $matches = ($ent['status'] === 'incomplete' && !$ent['has_nda']);
+                    } elseif ($docFilter === 'missing_contract_letter' || $docFilter === 'missing_contract') {
+                        $matches = ($ent['status'] === 'incomplete' && !$ent['has_contract_letter']);
+                    } elseif ($docFilter === 'uploaded_today') {
+                        $matches = $ent['has_uploaded_today'];
+                    }
+
+                    if ($matches) {
+                        foreach ($ent['all_user_ids'] as $uid) {
+                            $matchedUserIds[] = $uid;
+                        }
                     }
                 }
-            }
 
-            $query->whereIn('users.id', array_unique($matchedUserIds));
+                $query->whereIn('users.id', array_unique($matchedUserIds));
+            }
         }
 
         return $query;

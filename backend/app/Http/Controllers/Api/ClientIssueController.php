@@ -288,55 +288,49 @@ class ClientIssueController extends Controller
         $user = $request->user();
         $projectId = $request->query('project_id');
         $search = $request->query('search');
-        $status = $request->query('status', 'waiting'); // Default to 'waiting'
+        $status = $request->query('status', 'all'); // 'all', 'waiting', 'in_progress', 'finished'
 
-        $baseQuery = ClientIssue::query();
+        $query = ClientIssue::query()->with('project:id,name,code');
 
         if ($user && $user->role === 'client') {
             $clientProjectIds = $user->getManagedProjectIds();
             if (!empty($clientProjectIds)) {
-                $baseQuery->whereIn('project_id', $clientProjectIds);
+                $query->whereIn('project_id', $clientProjectIds);
             } else {
-                $baseQuery->whereRaw('1 = 0'); // No projects assigned
+                $query->whereRaw('1 = 0'); // No projects assigned
             }
         } elseif ($projectId) {
-            $baseQuery->where('project_id', (int) $projectId);
+            $query->where('project_id', (int) $projectId);
         }
 
         if ($search) {
-            $baseQuery->where(function ($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 $q->where('reason', 'LIKE', "%{$search}%")
                   ->orWhere('comment_text', 'LIKE', "%{$search}%")
                   ->orWhere('client_reply_text', 'LIKE', "%{$search}%");
             });
         }
 
-        // Calculate KPI Counts across the filtered set
-        $totalCount = (clone $baseQuery)->count();
-        $waitingCount = (clone $baseQuery)->whereNull('client_replied_at')->whereNull('resumed_at')->whereNull('team_finished_at')->count();
-        $inProgressCount = (clone $baseQuery)->where(function($q) {
-            $q->whereNotNull('team_started_at')->orWhereNotNull('resumed_at');
-        })->whereNull('team_finished_at')->count();
-        $finishedCount = (clone $baseQuery)->whereNotNull('team_finished_at')->count();
+        $allIssues = $query->orderBy('updated_at', 'desc')->get();
 
-        // Apply Status Filter to the main listing
-        $query = (clone $baseQuery)->with('project:id,name,code');
-
-        if ($status === 'waiting') {
-            $query->whereNull('client_replied_at')->whereNull('resumed_at')->whereNull('team_finished_at');
-        } elseif ($status === 'in_progress') {
-            $query->where(function($q) {
-                $q->whereNotNull('team_started_at')->orWhereNotNull('resumed_at');
-            })->whereNull('team_finished_at');
-        } elseif ($status === 'finished') {
-            $query->whereNotNull('team_finished_at');
-        } // 'all' displays everything
-
-        $issues = $query->orderBy('updated_at', 'desc')->paginate(25);
-
-        $items = collect($issues->items())->map(function ($issue) {
+        $allItems = $allIssues->map(function ($issue) {
             $order = Order::findInProject((int) $issue->project_id, (int) $issue->order_id);
             $timeline = $this->buildTimelineMetrics($issue, $order);
+
+            $isFinished = !empty($issue->team_finished_at) 
+                || !empty($issue->completed_at) 
+                || !empty($timeline['is_completed'])
+                || ($order && in_array(strtolower($order->status ?? ''), ['completed', 'delivered', 'done']));
+
+            $isInProgress = !$isFinished && (
+                !empty($issue->team_started_at) 
+                || !empty($issue->resumed_at) 
+                || !empty($issue->client_replied_at)
+            );
+
+            $isWaiting = !$isFinished && !$isInProgress;
+
+            $computedStatus = $isFinished ? 'finished' : ($isInProgress ? 'in_progress' : 'waiting');
 
             return [
                 'id' => $issue->id,
@@ -362,15 +356,36 @@ class ClientIssueController extends Controller
                 'workflow_state' => $order->workflow_state ?? 'CLIENT_ISSUE',
                 'updated_at' => $issue->updated_at,
                 'timeline' => $timeline,
+                'computed_status' => $computedStatus,
             ];
         });
 
+        // Global counts
+        $totalCount = $allItems->count();
+        $waitingCount = $allItems->where('computed_status', 'waiting')->count();
+        $inProgressCount = $allItems->where('computed_status', 'in_progress')->count();
+        $finishedCount = $allItems->where('computed_status', 'finished')->count();
+
+        // Filter items according to selected tab/filter
+        $filteredItems = $allItems;
+        if ($status === 'waiting') {
+            $filteredItems = $allItems->where('computed_status', 'waiting')->values();
+        } elseif ($status === 'in_progress') {
+            $filteredItems = $allItems->where('computed_status', 'in_progress')->values();
+        } elseif ($status === 'finished') {
+            $filteredItems = $allItems->where('computed_status', 'finished')->values();
+        }
+
+        $page = (int) $request->query('page', 1);
+        $perPage = 25;
+        $paginatedItems = $filteredItems->forPage($page, $perPage)->values();
+
         return response()->json([
-            'data' => $items,
-            'current_page' => $issues->currentPage(),
-            'last_page' => $issues->lastPage(),
-            'total' => $issues->total(),
-            'per_page' => $issues->perPage(),
+            'data' => $paginatedItems,
+            'current_page' => $page,
+            'last_page' => max(1, (int) ceil($filteredItems->count() / $perPage)),
+            'total' => $filteredItems->count(),
+            'per_page' => $perPage,
             'stats' => [
                 'total' => $totalCount,
                 'waiting' => $waitingCount,

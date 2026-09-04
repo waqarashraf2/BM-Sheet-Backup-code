@@ -26,7 +26,7 @@ export default function ClientIssueDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<'waiting' | 'in_progress' | 'finished' | 'all'>('waiting'); // DEFAULT: only waiting for client
+  const [statusFilter, setStatusFilter] = useState<'waiting' | 'in_progress' | 'finished' | 'all'>('all');
   const [projects, setProjects] = useState<any[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);

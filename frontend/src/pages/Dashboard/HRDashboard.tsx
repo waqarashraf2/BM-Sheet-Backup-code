@@ -53,6 +53,10 @@ type DocumentStats = {
   no_documents: number;
   uploaded_today: number;
   uploaded_today_docs?: number;
+  total_all_docs?: number;
+  total_employees_with_docs?: number;
+  inactive_docs_count?: number;
+  inactive_employees_with_docs?: number;
   today_hr_breakdown?: Array<{
     hr_id: number;
     hr_name: string;
@@ -790,6 +794,7 @@ export default function HRDashboard() {
   const endResult = Math.min(pagination.current_page * pagination.per_page, pagination.total);
   const documentLabel = useMemo(() => Object.fromEntries(documentTypes.map(type => [type.value, type.label])), []);
   const requiredDocumentCards = [
+    { key: 'total_docs', label: 'Total Docs', badge: `${documentStats.total_all_docs || 0} Files`, value: documentStats.total_employees_with_docs || 0, sublabel: `${documentStats.total_employees_with_docs || 0} Users • ${documentStats.total_all_docs || 0} Files`, tone: 'bg-blue-50 text-blue-800 border-blue-200 hover:border-blue-300', activeTone: 'bg-blue-100 text-blue-900 border-blue-500 ring-2 ring-blue-500' },
     { key: 'complete', label: 'Complete Docs', badge: '4/4 Ready', value: documentStats.complete_required, sublabel: '4/4 complete', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-300', activeTone: 'bg-emerald-100 text-emerald-900 border-emerald-500 ring-2 ring-emerald-500' },
     { key: 'incomplete', label: 'Partial / Incomplete', badge: '1-3 Uploaded', value: documentStats.incomplete_docs, sublabel: '1-3 uploaded', tone: 'bg-amber-50 text-amber-800 border-amber-200 hover:border-amber-300', activeTone: 'bg-amber-100 text-amber-900 border-amber-500 ring-2 ring-amber-500' },
     { key: 'uploaded_today', label: 'Uploaded Today', badge: `${documentStats.uploaded_today_docs || 0} Files`, value: documentStats.uploaded_today, sublabel: `${documentStats.uploaded_today_docs || 0} Files`, tone: 'bg-teal-50 text-teal-800 border-teal-200 hover:border-teal-300', activeTone: 'bg-teal-100 text-teal-900 border-teal-500 ring-2 ring-teal-500' },
@@ -798,6 +803,7 @@ export default function HRDashboard() {
     { key: 'missing_pics', label: 'Pics Missing', badge: '2 Photos', value: documentStats.missing.two_pics, sublabel: 'Photos needed', tone: 'bg-sky-50 text-sky-700 border-sky-200 hover:border-sky-300', activeTone: 'bg-sky-100 text-sky-900 border-sky-500 ring-2 ring-sky-500' },
     { key: 'missing_nda', label: 'NDA Missing', badge: 'NDA', value: documentStats.missing.nda, sublabel: 'NDA needed', tone: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-indigo-300', activeTone: 'bg-indigo-100 text-indigo-900 border-indigo-500 ring-2 ring-indigo-500' },
     { key: 'missing_contract', label: 'Contract Missing', badge: 'Appointment', value: documentStats.missing.contract_letter, sublabel: 'Offer needed', tone: 'bg-purple-50 text-purple-700 border-purple-200 hover:border-purple-300', activeTone: 'bg-purple-100 text-purple-900 border-purple-500 ring-2 ring-purple-500' },
+    { key: 'inactive_docs', label: 'Inactive Docs', badge: `${documentStats.inactive_docs_count || 0} Files`, value: documentStats.inactive_employees_with_docs || 0, sublabel: `${documentStats.inactive_employees_with_docs || 0} Inactive • ${documentStats.inactive_docs_count || 0} Files`, tone: 'bg-slate-100 text-slate-800 border-slate-300 hover:border-slate-400', activeTone: 'bg-slate-200 text-slate-900 border-slate-600 ring-2 ring-slate-600' },
   ];
   const rankedProjectMovement = useMemo(() => (
     employeeAnalytics.project_breakdown
@@ -1124,9 +1130,9 @@ export default function HRDashboard() {
           <div className="rounded-lg border border-slate-200 bg-white">
             <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-slate-900">Active User Documents</h2>
+                <h2 className="text-sm font-semibold text-slate-900">Employee Documents Overview</h2>
                 <p className="text-xs text-slate-500">
-                  Required documents checked for {documentStats.active_total} active users &bull; Click any card for 1-click filter
+                  Required documents tracked for active &amp; inactive employees &bull; Click any card for 1-click filter
                 </p>
               </div>
               {docStatus !== 'all' && (
@@ -1137,7 +1143,7 @@ export default function HRDashboard() {
                   </span>
                   <button
                     type="button"
-                    onClick={() => { setDocStatus('all'); setPage(1); }}
+                    onClick={() => { setDocStatus('all'); setStatus('all'); setPage(1); }}
                     className="text-xs font-medium text-slate-500 hover:text-rose-600 hover:underline cursor-pointer"
                   >
                     Clear Filter
@@ -1145,7 +1151,7 @@ export default function HRDashboard() {
                 </div>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-2.5 p-4 sm:grid-cols-4 xl:grid-cols-8 overflow-visible">
+            <div className="grid grid-cols-2 gap-2.5 p-4 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-10 overflow-visible">
               {requiredDocumentCards.map(item => {
                 const isSelected = docStatus === item.key;
                 const isTodayCard = item.key === 'uploaded_today';
@@ -1154,6 +1160,11 @@ export default function HRDashboard() {
                     <button
                       type="button"
                       onClick={() => {
+                        if (item.key === 'inactive_docs') {
+                          setStatus(docStatus === 'inactive_docs' ? 'all' : 'inactive');
+                        } else if (docStatus === 'inactive_docs') {
+                          setStatus('all');
+                        }
                         setDocStatus(curr => (curr === item.key ? 'all' : item.key));
                         setPage(1);
                       }}
@@ -1175,7 +1186,16 @@ export default function HRDashboard() {
                       <div className="mt-2">
                         <div className="text-xs font-bold leading-tight">{item.label}</div>
                         <div className="mt-0.5 text-[10px] opacity-75 truncate">
-                          {isSelected ? 'Active filter' : (isTodayCard ? `${item.value} Users • ${documentStats.uploaded_today_docs || 0} Docs` : 'Click to filter')}
+                          {isSelected
+                            ? 'Active filter'
+                            : (isTodayCard
+                              ? `${item.value} Users • ${documentStats.uploaded_today_docs || 0} Docs`
+                              : item.key === 'total_docs'
+                                ? `${documentStats.total_employees_with_docs || 0} Users • ${documentStats.total_all_docs || 0} Docs`
+                                : item.key === 'inactive_docs'
+                                  ? `${documentStats.inactive_employees_with_docs || 0} Inactive • ${documentStats.inactive_docs_count || 0} Docs`
+                                  : 'Click to filter'
+                            )}
                         </div>
                       </div>
                     </button>
