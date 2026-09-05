@@ -1633,10 +1633,13 @@ public function myQueue(Request $request)
             ->get();
 
         if ($crmAssignments->isNotEmpty()) {
-
+            // Optimize: Bulk update using CASE statements to avoid N+1 update queries
             foreach ($projectIds as $pid) {
 
                 $table = ProjectOrderService::getTableName($pid);
+                $cases = [];
+                $params = [];
+                $orderNumbers = [];
 
                 foreach ($crmAssignments as $crmAssign) {
 
@@ -1654,10 +1657,35 @@ public function myQueue(Request $request)
                     }
 
                     if (!empty($overlay)) {
-                        DB::table($table)
-                            ->where('order_number', $crmAssign->order_number)
-                            ->update(array_merge($overlay, ['updated_at' => now()]));
+                        $orderNumbers[] = $crmAssign->order_number;
+                        foreach ($overlay as $key => $value) {
+                            $cases[$key][] = [
+                                'order_number' => $crmAssign->order_number,
+                                'value' => $value
+                            ];
+                        }
                     }
+                }
+
+                $orderNumbers = array_unique($orderNumbers);
+
+                if (!empty($orderNumbers)) {
+                    $query = "UPDATE `{$table}` SET updated_at = NOW()";
+                    foreach ($cases as $column => $updates) {
+                        $query .= ", `{$column}` = CASE order_number ";
+                        foreach ($updates as $update) {
+                            $query .= "WHEN ? THEN ? ";
+                            $params[] = $update['order_number'];
+                            $params[] = $update['value'];
+                        }
+                        $query .= "ELSE `{$column}` END ";
+                    }
+
+                    $placeholders = implode(',', array_fill(0, count($orderNumbers), '?'));
+                    $query .= "WHERE order_number IN ({$placeholders})";
+                    $params = array_merge($params, $orderNumbers);
+
+                    DB::statement($query, $params);
                 }
             }
 

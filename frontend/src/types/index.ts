@@ -1276,6 +1276,7 @@ export interface AssignmentDashboardData {
     editors: Project51PortalAccount[];
     qc_accounts: Project51PortalAccount[];
   };
+  client_order_summary?: { name: string; total: number; completed: number; }[];
 }
 
 // ═══════════════════════════════════════════

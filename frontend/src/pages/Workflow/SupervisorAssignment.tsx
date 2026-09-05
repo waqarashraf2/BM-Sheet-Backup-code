@@ -135,6 +135,7 @@ export default function SupervisorAssignment() {
   const [workers, setWorkers] = useState<Record<string, AssignmentWorker[]>>({});
   const [orders, setOrders] = useState<AssignmentOrder[]>([]);
   const [totalOrders, setTotalOrders] = useState(0);
+  const [clientOrderSummary, setClientOrderSummary] = useState<{name: string; total: number; completed: number;}[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [counts, setCounts] = useState({ today_total: 0, pending: 0, pending_by_drawer: 0, completed: 0, amends: 0, assigned: 0, unassigned: 0, rejected: 0, client_issues: 0, action: 0 });
@@ -334,7 +335,7 @@ export default function SupervisorAssignment() {
       if (requestId !== latestDashboardRequestIdRef.current) return;
 
       const d = res.data;
-      const dashboardOrders = (d.orders?.data ?? []) as AssignmentOrder[];
+      console.log("API RESPONSE DATA:", d); const dashboardOrders = (d.orders?.data ?? []) as AssignmentOrder[];
       const nextProject = (d.project || {}) as {
         id?: number | null;
         name?: string;
@@ -378,6 +379,7 @@ export default function SupervisorAssignment() {
         });
       });
       setTotalOrders(d.orders?.total ?? 0);
+      setClientOrderSummary(d.client_order_summary || []);
       setCurrentPage(d.orders?.current_page ?? page);
       setLastPage(d.orders?.last_page ?? 1);
       const defaultCounts = {
@@ -570,31 +572,31 @@ export default function SupervisorAssignment() {
     return hasValue((order as any).qa_id) || hasValue(order.qa_name);
   }, []);
 
-  const clientOrderSummary = useMemo(() => {
-    const counts = new Map<string, { total: number; completed: number }>();
+  // const clientOrderSummary = useMemo(() => {
+  //   const counts = new Map<string, { total: number; completed: number }>();
 
-    displayedOrders.forEach((order) => {
-      const clientName = (order.client_name || '').trim();
-      if (!clientName) return;
-      const isCompleted = (order.workflow_state || '').toUpperCase().includes('COMPLETE')
-        || (order.workflow_state || '').toUpperCase().includes('DELIVER');
+  //   displayedOrders.forEach((order) => {
+  //     const clientName = (order.client_name || '').trim();
+  //     if (!clientName) return;
+  //     const isCompleted = (order.workflow_state || '').toUpperCase().includes('COMPLETE')
+  //       || (order.workflow_state || '').toUpperCase().includes('DELIVER');
 
-      const current = counts.get(clientName) || { total: 0, completed: 0 };
+  //     const current = counts.get(clientName) || { total: 0, completed: 0 };
 
-      counts.set(clientName, {
-        total: current.total + 1,
-        completed: current.completed + (isCompleted ? 1 : 0),
-      });
-    });
+  //     counts.set(clientName, {
+  //       total: current.total + 1,
+  //       completed: current.completed + (isCompleted ? 1 : 0),
+  //     });
+  //   });
 
-    return Array.from(counts.entries())
-      .map(([name, summary]) => ({
-        name,
-        total: summary.total,
-        completed: summary.completed,
-      }))
-      .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
-  }, [displayedOrders]);
+  //   return Array.from(counts.entries())
+  //     .map(([name, summary]) => ({
+  //       name,
+  //       total: summary.total,
+  //       completed: summary.completed,
+  //     }))
+  //     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+  // }, [displayedOrders]);
   const searchedWorkers = useMemo(() => {
     if (!workerSearch) return filteredWorkers;
     const q = workerSearch.toLowerCase();
@@ -3492,7 +3494,7 @@ export default function SupervisorAssignment() {
                           No client orders found
                         </div>
                       ) : (
-                        <div className="space-y-1.5">
+                        <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
                           {clientOrderSummary.map((client) => (
                             <div
                               key={client.name}
