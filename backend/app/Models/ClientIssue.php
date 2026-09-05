@@ -42,6 +42,7 @@ class ClientIssue extends Model
         'resumed_by' => 'integer',
     ];
 
+
     public function project()
     {
         return $this->belongsTo(Project::class);
