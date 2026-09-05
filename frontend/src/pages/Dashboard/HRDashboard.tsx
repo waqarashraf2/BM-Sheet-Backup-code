@@ -22,7 +22,10 @@ import {
   Users,
   Eye,
   EyeOff,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useSelector } from 'react-redux';
 import { AnimatedPage, Button, Modal, PageHeader, StatusBadge } from '../../components/ui';
 import { hrService, userService } from '../../services';
@@ -158,6 +161,8 @@ export default function HRDashboard() {
   const [status, setStatus] = useState('all');
   const [role, setRole] = useState('all');
   const [docStatus, setDocStatus] = useState('all');
+  const [docViewMode, setDocViewMode] = useState<'active' | 'all'>('active');
+  const [isPartialExpanded, setIsPartialExpanded] = useState(false);
   const [projectId, setProjectId] = useState<string>('all');
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [userMonth, setUserMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -793,18 +798,30 @@ export default function HRDashboard() {
   const startResult = pagination.total === 0 ? 0 : ((pagination.current_page - 1) * pagination.per_page) + 1;
   const endResult = Math.min(pagination.current_page * pagination.per_page, pagination.total);
   const documentLabel = useMemo(() => Object.fromEntries(documentTypes.map(type => [type.value, type.label])), []);
+  const missingCardKeys = useMemo(() => new Set(['missing_cnic', 'missing_pics', 'missing_nda', 'missing_contract']), []);
   const requiredDocumentCards = [
     { key: 'total_docs', label: 'Total Docs', badge: `${documentStats.total_all_docs || 0} Files`, value: documentStats.total_employees_with_docs || 0, sublabel: `${documentStats.total_employees_with_docs || 0} Users • ${documentStats.total_all_docs || 0} Files`, tone: 'bg-blue-50 text-blue-800 border-blue-200 hover:border-blue-300', activeTone: 'bg-blue-100 text-blue-900 border-blue-500 ring-2 ring-blue-500' },
     { key: 'complete', label: 'Complete Docs', badge: '4/4 Ready', value: documentStats.complete_required, sublabel: '4/4 complete', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-300', activeTone: 'bg-emerald-100 text-emerald-900 border-emerald-500 ring-2 ring-emerald-500' },
     { key: 'incomplete', label: 'Partial / Incomplete', badge: '1-3 Uploaded', value: documentStats.incomplete_docs, sublabel: '1-3 uploaded', tone: 'bg-amber-50 text-amber-800 border-amber-200 hover:border-amber-300', activeTone: 'bg-amber-100 text-amber-900 border-amber-500 ring-2 ring-amber-500' },
-    { key: 'uploaded_today', label: 'Uploaded Today', badge: `${documentStats.uploaded_today_docs || 0} Files`, value: documentStats.uploaded_today, sublabel: `${documentStats.uploaded_today_docs || 0} Files`, tone: 'bg-teal-50 text-teal-800 border-teal-200 hover:border-teal-300', activeTone: 'bg-teal-100 text-teal-900 border-teal-500 ring-2 ring-teal-500' },
-    { key: 'no_docs', label: 'No Docs', badge: '0 Docs', value: documentStats.no_documents, sublabel: '0 uploaded', tone: 'bg-rose-50 text-rose-700 border-rose-200 hover:border-rose-300', activeTone: 'bg-rose-100 text-rose-900 border-rose-500 ring-2 ring-rose-500' },
     { key: 'missing_cnic', label: 'CNIC Missing', badge: 'CNIC', value: documentStats.missing.copy_of_cnic, sublabel: 'CNIC needed', tone: 'bg-orange-50 text-orange-700 border-orange-200 hover:border-orange-300', activeTone: 'bg-orange-100 text-orange-900 border-orange-500 ring-2 ring-orange-500' },
     { key: 'missing_pics', label: 'Pics Missing', badge: '2 Photos', value: documentStats.missing.two_pics, sublabel: 'Photos needed', tone: 'bg-sky-50 text-sky-700 border-sky-200 hover:border-sky-300', activeTone: 'bg-sky-100 text-sky-900 border-sky-500 ring-2 ring-sky-500' },
     { key: 'missing_nda', label: 'NDA Missing', badge: 'NDA', value: documentStats.missing.nda, sublabel: 'NDA needed', tone: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-indigo-300', activeTone: 'bg-indigo-100 text-indigo-900 border-indigo-500 ring-2 ring-indigo-500' },
     { key: 'missing_contract', label: 'Contract Missing', badge: 'Appointment', value: documentStats.missing.contract_letter, sublabel: 'Offer needed', tone: 'bg-purple-50 text-purple-700 border-purple-200 hover:border-purple-300', activeTone: 'bg-purple-100 text-purple-900 border-purple-500 ring-2 ring-purple-500' },
+    { key: 'uploaded_today', label: 'Uploaded Today', badge: `${documentStats.uploaded_today_docs || 0} Files`, value: documentStats.uploaded_today, sublabel: `${documentStats.uploaded_today_docs || 0} Files`, tone: 'bg-teal-50 text-teal-800 border-teal-200 hover:border-teal-300', activeTone: 'bg-teal-100 text-teal-900 border-teal-500 ring-2 ring-teal-500' },
+    { key: 'no_docs', label: 'No Docs', badge: '0 Docs', value: documentStats.no_documents, sublabel: '0 uploaded', tone: 'bg-rose-50 text-rose-700 border-rose-200 hover:border-rose-300', activeTone: 'bg-rose-100 text-rose-900 border-rose-500 ring-2 ring-rose-500' },
     { key: 'inactive_docs', label: 'Inactive Docs', badge: `${documentStats.inactive_docs_count || 0} Files`, value: documentStats.inactive_employees_with_docs || 0, sublabel: `${documentStats.inactive_employees_with_docs || 0} Inactive • ${documentStats.inactive_docs_count || 0} Files`, tone: 'bg-slate-100 text-slate-800 border-slate-300 hover:border-slate-400', activeTone: 'bg-slate-200 text-slate-900 border-slate-600 ring-2 ring-slate-600' },
   ];
+  const visibleDocumentCards = useMemo(() => {
+    let cards = requiredDocumentCards;
+    if (docViewMode !== 'all') {
+      cards = cards.filter(card => card.key !== 'total_docs' && card.key !== 'inactive_docs');
+    }
+    const isMissingSelected = missingCardKeys.has(docStatus);
+    if (!isPartialExpanded && !isMissingSelected) {
+      cards = cards.filter(card => !missingCardKeys.has(card.key));
+    }
+    return cards;
+  }, [docViewMode, isPartialExpanded, docStatus, missingCardKeys, requiredDocumentCards]);
   const rankedProjectMovement = useMemo(() => (
     employeeAnalytics.project_breakdown
       .map(row => ({
@@ -1128,131 +1145,212 @@ export default function HRDashboard() {
       ) : (
         <div className="space-y-4">
           <div className="rounded-lg border border-slate-200 bg-white">
-            <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Employee Documents Overview</h2>
                 <p className="text-xs text-slate-500">
-                  Required documents tracked for active &amp; inactive employees &bull; Click any card for 1-click filter
+                  {docViewMode === 'all'
+                    ? 'Required documents tracked for all (active & inactive) employees • Click any card for 1-click filter'
+                    : 'Required documents tracked for active employees • Click any card for 1-click filter'}
                 </p>
               </div>
-              {docStatus !== 'all' && (
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-800 border border-teal-200">
-                    <span className="h-1.5 w-1.5 rounded-full bg-teal-600 animate-pulse" />
-                    Filter: {requiredDocumentCards.find(c => c.key === docStatus)?.label || docStatus}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setDocStatus('all'); setStatus('all'); setPage(1); }}
-                    className="text-xs font-medium text-slate-500 hover:text-rose-600 hover:underline cursor-pointer"
-                  >
-                    Clear Filter
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-2.5 p-4 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-10 overflow-visible">
-              {requiredDocumentCards.map(item => {
-                const isSelected = docStatus === item.key;
-                const isTodayCard = item.key === 'uploaded_today';
-                return (
-                  <div key={item.key} className="relative group overflow-visible">
+              <div className="flex flex-wrap items-center gap-3">
+                {docStatus !== 'all' && (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-800 border border-teal-200">
+                      <span className="h-1.5 w-1.5 rounded-full bg-teal-600 animate-pulse" />
+                      Filter: {requiredDocumentCards.find(c => c.key === docStatus)?.label || docStatus}
+                    </span>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (item.key === 'inactive_docs') {
-                          setStatus(docStatus === 'inactive_docs' ? 'all' : 'inactive');
-                        } else if (docStatus === 'inactive_docs') {
-                          setStatus('all');
-                        }
-                        setDocStatus(curr => (curr === item.key ? 'all' : item.key));
-                        setPage(1);
-                      }}
-                      title={`Click to filter by ${item.label}`}
-                      className={`w-full text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer relative flex flex-col justify-between h-full min-h-[98px] ${
-                        isSelected
-                          ? item.activeTone
-                          : `${item.tone} hover:shadow-md hover:scale-[1.02]`
-                      }`}
+                      onClick={() => { setDocStatus('all'); setStatus('all'); setPage(1); }}
+                      className="text-xs font-medium text-slate-500 hover:text-rose-600 hover:underline cursor-pointer"
                     >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-2xl font-black tracking-tight">{item.value}</span>
-                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                          isSelected ? 'bg-white/80 text-slate-900 shadow-xs' : 'bg-white/60 text-slate-700'
-                        }`}>
-                          {item.badge}
-                        </span>
-                      </div>
-                      <div className="mt-2">
-                        <div className="text-xs font-bold leading-tight">{item.label}</div>
-                        <div className="mt-0.5 text-[10px] opacity-75 truncate">
-                          {isSelected
-                            ? 'Active filter'
-                            : (isTodayCard
-                              ? `${item.value} Users • ${documentStats.uploaded_today_docs || 0} Docs`
-                              : item.key === 'total_docs'
-                                ? `${documentStats.total_employees_with_docs || 0} Users • ${documentStats.total_all_docs || 0} Docs`
-                                : item.key === 'inactive_docs'
-                                  ? `${documentStats.inactive_employees_with_docs || 0} Inactive • ${documentStats.inactive_docs_count || 0} Docs`
-                                  : 'Click to filter'
-                            )}
-                        </div>
-                      </div>
+                      Clear Filter
                     </button>
-
-                    {/* HR Hover Breakdown Popover for Uploaded Today */}
-                    {isTodayCard && (
-                      <div className="hidden group-hover:block absolute left-1/2 -translate-x-1/2 top-full mt-2 z-[60] w-80 bg-slate-900/95 text-white rounded-xl shadow-2xl p-3.5 text-left border border-slate-700 pointer-events-none transition-all duration-200">
-                        <div className="flex items-center justify-between border-b border-slate-700/80 pb-2 mb-2">
-                          <div className="flex items-center gap-1.5">
-                            <span className="h-2 w-2 rounded-full bg-teal-400 animate-ping" />
-                            <span className="text-xs font-bold uppercase tracking-wider text-teal-300">Today's Upload Activity</span>
-                          </div>
-                          <span className="text-[10px] text-slate-300 bg-slate-800 px-2 py-0.5 rounded-full font-medium border border-slate-700">
-                            {documentStats.today_hr_breakdown?.length || 0} HR Active
-                          </span>
-                        </div>
-
-                        {(!documentStats.today_hr_breakdown || documentStats.today_hr_breakdown.length === 0) ? (
-                          <div className="text-xs text-slate-400 py-3 text-center">No uploads recorded today yet.</div>
-                        ) : (
-                          <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
-                            {documentStats.today_hr_breakdown.map(hr => (
-                              <div key={hr.hr_id} className="flex items-center justify-between gap-2 text-xs bg-slate-800/90 rounded-lg px-2.5 py-2 border border-slate-700/60 shadow-xs">
-                                <div className="min-w-0 flex items-center gap-2">
-                                  <div className="h-6 w-6 rounded-full bg-teal-600/40 text-teal-300 flex items-center justify-center font-bold text-[11px] shrink-0 border border-teal-500/40">
-                                    {hr.hr_name.charAt(0).toUpperCase()}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className="font-semibold text-slate-100 truncate text-xs">{hr.hr_name}</div>
-                                    <div className="text-[10px] text-slate-400 truncate">For {hr.users_count} {hr.users_count === 1 ? 'employee' : 'employees'}</div>
-                                  </div>
-                                </div>
-                                <div className="shrink-0 text-right">
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-teal-500/25 text-teal-300 text-[11px] font-bold border border-teal-500/40">
-                                    {hr.documents_count} {hr.documents_count === 1 ? 'doc' : 'docs'}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        <div className="mt-2.5 pt-2 border-t border-slate-700/80 grid grid-cols-2 gap-2 text-[11px]">
-                          <div className="bg-slate-800/60 rounded-lg p-1.5 px-2 border border-slate-700/40">
-                            <span className="text-slate-400 block text-[10px]">Unique Employees:</span>
-                            <span className="font-bold text-slate-100 text-xs">{documentStats.uploaded_today} Users</span>
-                          </div>
-                          <div className="bg-slate-800/60 rounded-lg p-1.5 px-2 border border-slate-700/40 text-right">
-                            <span className="text-slate-400 block text-[10px]">Total Files Uploaded:</span>
-                            <span className="font-bold text-teal-300 text-xs">{documentStats.uploaded_today_docs || 0} Files</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
-                );
-              })}
+                )}
+
+                {/* View Mode Toggle: Active Employees vs All Employees */}
+                <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100/90 p-1 text-xs font-medium shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDocViewMode('active');
+                      if (docStatus === 'total_docs' || docStatus === 'inactive_docs') {
+                        setDocStatus('all');
+                        setStatus('all');
+                        setPage(1);
+                      }
+                    }}
+                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-semibold transition-all cursor-pointer ${
+                      docViewMode === 'active'
+                        ? 'bg-white text-teal-800 shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <span className={`h-2 w-2 rounded-full ${docViewMode === 'active' ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                    Active Employees
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDocViewMode('all')}
+                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-semibold transition-all cursor-pointer ${
+                      docViewMode === 'all'
+                        ? 'bg-white text-slate-900 shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <span className={`h-2 w-2 rounded-full ${docViewMode === 'all' ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                    All Employees
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className={`grid grid-cols-2 gap-2.5 p-4 sm:grid-cols-3 transition-all duration-300 ${
+              docViewMode === 'all'
+                ? (isPartialExpanded ? 'md:grid-cols-5 xl:grid-cols-10' : 'md:grid-cols-3 xl:grid-cols-6')
+                : (isPartialExpanded ? 'md:grid-cols-4 xl:grid-cols-8' : 'md:grid-cols-2 xl:grid-cols-4')
+            } overflow-visible`}>
+              <AnimatePresence mode="sync">
+                {visibleDocumentCards.map(item => {
+                  const isSelected = docStatus === item.key;
+                  const isTodayCard = item.key === 'uploaded_today';
+                  const isPartialCard = item.key === 'incomplete';
+                  const isMissingChild = missingCardKeys.has(item.key);
+
+                  return (
+                    <motion.div
+                      key={item.key}
+                      layout="position"
+                      initial={isMissingChild ? { opacity: 0, scale: 0.88, x: -20 } : undefined}
+                      animate={{ opacity: 1, scale: 1, x: 0 }}
+                      exit={isMissingChild ? { opacity: 0, scale: 0.88, x: -20 } : undefined}
+                      transition={{ duration: 0.22, ease: 'easeOut' }}
+                      className="relative group overflow-visible"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (item.key === 'inactive_docs') {
+                            setStatus(docStatus === 'inactive_docs' ? 'all' : 'inactive');
+                          } else if (docStatus === 'inactive_docs') {
+                            setStatus('all');
+                          }
+                          if (isPartialCard) {
+                            setIsPartialExpanded(prev => !prev);
+                          } else if (isMissingChild) {
+                            setIsPartialExpanded(true);
+                          }
+                          setDocStatus(curr => (curr === item.key ? 'all' : item.key));
+                          setPage(1);
+                        }}
+                        title={isPartialCard ? 'Click to filter and slide 4 missing document types' : `Click to filter by ${item.label}`}
+                        className={`w-full text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer relative flex flex-col justify-between h-full min-h-[98px] ${
+                          isSelected
+                            ? item.activeTone
+                            : isPartialCard && isPartialExpanded
+                              ? 'bg-amber-50/90 text-amber-900 border-amber-400 ring-2 ring-amber-400/70 shadow-sm'
+                              : `${item.tone} hover:shadow-md hover:scale-[1.02]`
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-2xl font-black tracking-tight">{item.value}</span>
+                          <div className="flex items-center gap-1">
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                              isSelected ? 'bg-white/80 text-slate-900 shadow-xs' : 'bg-white/60 text-slate-700'
+                            }`}>
+                              {item.badge}
+                            </span>
+                            {isPartialCard && (
+                              <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full transition-all shadow-2xs ${
+                                isPartialExpanded
+                                  ? 'bg-amber-200 text-amber-950 border border-amber-300'
+                                  : 'bg-amber-100/90 text-amber-800 border border-amber-200 hover:bg-amber-200'
+                              }`}>
+                                {isPartialExpanded ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
+                                {isPartialExpanded ? 'Hide' : '4 Types'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <div className="text-xs font-bold leading-tight flex items-center gap-1">
+                            {item.label}
+                          </div>
+                          <div className="mt-0.5 text-[10px] opacity-75 truncate">
+                            {isSelected
+                              ? 'Active filter'
+                              : (isTodayCard
+                                ? `${item.value} Users • ${documentStats.uploaded_today_docs || 0} Docs`
+                                : item.key === 'total_docs'
+                                  ? `${documentStats.total_employees_with_docs || 0} Users • ${documentStats.total_all_docs || 0} Docs`
+                                  : item.key === 'inactive_docs'
+                                    ? `${documentStats.inactive_employees_with_docs || 0} Inactive • ${documentStats.inactive_docs_count || 0} Docs`
+                                    : isMissingChild
+                                      ? `↳ ${item.sublabel}`
+                                      : isPartialCard
+                                        ? `${item.value} users • Click to ${isPartialExpanded ? 'collapse' : 'expand'}`
+                                        : 'Click to filter'
+                              )}
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* HR Hover Breakdown Popover for Uploaded Today */}
+                      {isTodayCard && (
+                        <div className="hidden group-hover:block absolute left-1/2 -translate-x-1/2 top-full mt-2 z-[60] w-80 bg-slate-900/95 text-white rounded-xl shadow-2xl p-3.5 text-left border border-slate-700 pointer-events-none transition-all duration-200">
+                          <div className="flex items-center justify-between border-b border-slate-700/80 pb-2 mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full bg-teal-400 animate-ping" />
+                              <span className="text-xs font-bold uppercase tracking-wider text-teal-300">Today's Upload Activity</span>
+                            </div>
+                            <span className="text-[10px] text-slate-300 bg-slate-800 px-2 py-0.5 rounded-full font-medium border border-slate-700">
+                              {documentStats.today_hr_breakdown?.length || 0} HR Active
+                            </span>
+                          </div>
+
+                          {(!documentStats.today_hr_breakdown || documentStats.today_hr_breakdown.length === 0) ? (
+                            <div className="text-xs text-slate-400 py-3 text-center">No uploads recorded today yet.</div>
+                          ) : (
+                            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
+                              {documentStats.today_hr_breakdown.map(hr => (
+                                <div key={hr.hr_id} className="flex items-center justify-between gap-2 text-xs bg-slate-800/90 rounded-lg px-2.5 py-2 border border-slate-700/60 shadow-xs">
+                                  <div className="min-w-0 flex items-center gap-2">
+                                    <div className="h-6 w-6 rounded-full bg-teal-600/40 text-teal-300 flex items-center justify-center font-bold text-[11px] shrink-0 border border-teal-500/40">
+                                      {hr.hr_name.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="font-semibold text-slate-100 truncate text-xs">{hr.hr_name}</div>
+                                      <div className="text-[10px] text-slate-400 truncate">For {hr.users_count} {hr.users_count === 1 ? 'employee' : 'employees'}</div>
+                                    </div>
+                                  </div>
+                                  <div className="shrink-0 text-right">
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-teal-500/25 text-teal-300 text-[11px] font-bold border border-teal-500/40">
+                                      {hr.documents_count} {hr.documents_count === 1 ? 'doc' : 'docs'}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="mt-2.5 pt-2 border-t border-slate-700/80 grid grid-cols-2 gap-2 text-[11px]">
+                            <div className="bg-slate-800/60 rounded-lg p-1.5 px-2 border border-slate-700/40">
+                              <span className="text-slate-400 block text-[10px]">Unique Employees:</span>
+                              <span className="font-bold text-slate-100 text-xs">{documentStats.uploaded_today} Users</span>
+                            </div>
+                            <div className="bg-slate-800/60 rounded-lg p-1.5 px-2 border border-slate-700/40 text-right">
+                              <span className="text-slate-400 block text-[10px]">Total Files Uploaded:</span>
+                              <span className="font-bold text-teal-300 text-xs">{documentStats.uploaded_today_docs || 0} Files</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
             </div>
           </div>
 
