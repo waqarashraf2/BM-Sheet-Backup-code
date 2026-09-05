@@ -5269,7 +5269,7 @@ $endDate = $request->input('end_date');
         $query = DB::table(DB::raw("({$unionQuery}) as queue_orders"));
 
 // ✅ ADD HERE (global filter)
-if (!in_array($statusFilter, ['completed', 'pending_by_drawer', 'client_issue', 'action' ,'all'])) {
+if (!in_array($statusFilter, ['completed', 'pending_by_drawer', 'client_issue', 'action'])) {
     $query->where('workflow_state', '!=', 'DELIVERED');
     $query->where('workflow_state', '!=', 'PENDING_BY_DRAWER');
     $query->where('workflow_state', '!=', 'CLIENT_ISSUE');
@@ -5277,8 +5277,7 @@ if (!in_array($statusFilter, ['completed', 'pending_by_drawer', 'client_issue', 
 
 // Global hide
 // Global hide (applies to "all" / "pending" etc, but skips drawer-pending & rejected & client_issue)
-if (!in_array($statusFilter, ['completed', 'rejected', 'pending_by_drawer', 'client_issue', 'action' , 'all'])) {
-
+if (!in_array($statusFilter, ['completed', 'rejected', 'pending_by_drawer', 'client_issue', 'action'])) {
     $query->where('workflow_state', '!=', 'DELIVERED')
           ->where('workflow_state', 'NOT LIKE', '%REJECT%');
 }
@@ -5649,20 +5648,6 @@ if ($statusFilter === 'client_issue' || $statusFilter === 'action') {
         $pendingByDrawerCount = (int) ($countsRow->pending_by_drawer ?? 0);
         $clientIssuesCount = (int) ($countsRow->client_issues ?? 0);
 
-          // Fetch client order summary from the unionQuery to respect date filters but ignore status filters
-        $clientSummaryList = DB::table(DB::raw("({$unionQuery}) as queue_orders"))
-            ->select(
-                'client_name as name',
-                DB::raw('COUNT(*) as total'),
-                DB::raw("SUM(CASE WHEN workflow_state = 'DELIVERED' OR workflow_state LIKE '%COMPLETE%' THEN 1 ELSE 0 END) as completed")
-            )
-            ->whereNotNull('client_name')
-            ->where('client_name', '!=', '')
-            ->groupBy('client_name')
-            ->orderByDesc('total')
-            ->get()
-            ->toArray();
-
         // ─── 4. Date-wise summary (last 7 days) — 2 bulk queries instead of 42+ ───
         $sevenDaysAgo = today()->subDays(6)->toDateString();
 
@@ -5788,8 +5773,6 @@ if ($statusFilter === 'client_issue' || $statusFilter === 'action') {
             'counts' => $counts,
             'date_stats' => $dateStats,
             'role_completions' => $roleCompletions,
-            'client_order_summary' => $clientSummaryList,
-
         ];
 
         $project51PortalAccounts = $this->buildProject51PortalAccountsForAssignment($projectIds, $dateFilter, $startDate, $endDate);
