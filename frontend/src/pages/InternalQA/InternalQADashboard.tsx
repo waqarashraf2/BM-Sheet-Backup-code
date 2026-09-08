@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSelector } from 'react-redux';
+import type { RootState } from '../../store/store';
 import { liveQAService } from '../../services';
 import { AnimatedPage, PageHeader } from '../../components/ui';
 import LiveQAChecklistModal from '../../components/LiveQAChecklistModal';
+import ManageProductChecklistsModal from './ManageProductChecklistsModal';
 import {
     ShieldCheck, Search, AlertTriangle, CheckCircle, BarChart3,
     Loader2, FileSearch, ClipboardList, RefreshCw, X, Calendar,
-    TrendingUp, FolderKanban, Eye, Clock, Filter, FileText,
+    TrendingUp, FolderKanban, Eye, Clock, Filter, FileText, Settings2,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -125,6 +128,9 @@ function MiniStat({ label, value, color }: { label: string; value: number; color
 const CLIENT_CODE_PROJECT_IDS = [9, 14, 46];
 
 export default function InternalQADashboard() {
+    const user = useSelector((state: RootState) => state.auth.user);
+    const canManageChecklists = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'live_qa'].includes(user?.role || '');
+    const [showManageChecklistModal, setShowManageChecklistModal] = useState(false);
     const [activeTab, setActiveTab] = useState<ActiveTab>('orders');
 
     /* -- Project list -- */
@@ -464,35 +470,50 @@ export default function InternalQADashboard() {
                 </button>
             </div>
 
-            {/* -- Tab Bar -- */}
-            <div className="flex flex-wrap items-center gap-2 mb-5 border-b border-slate-100 pb-3">
-                <button
-                    onClick={() => setActiveTab('orders')}
-                    className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${activeTab === 'orders'
-                        ? 'bg-brand-700 text-white shadow-sm ring-1 ring-brand-800'
-                        : 'bg-brand-50 text-brand-700 hover:bg-brand-100'
-                        }`}
-                >
-                    <ClipboardList className="h-4 w-4" /> Orders Review
-                </button>
-                <button
-                    onClick={() => setActiveTab('project-report')}
-                    className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${activeTab === 'project-report'
-                        ? 'bg-brand-700 text-white shadow-sm ring-1 ring-brand-800'
-                        : 'bg-brand-50 text-brand-700 hover:bg-brand-100'
-                        }`}
-                >
-                    <FileSearch className="h-4 w-4" /> Project Detail Report
-                </button>
-                <button
-                    onClick={() => setActiveTab('all-projects-report')}
-                    className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${activeTab === 'all-projects-report'
-                        ? 'bg-brand-700 text-white shadow-sm ring-1 ring-brand-800'
-                        : 'bg-brand-50 text-brand-700 hover:bg-brand-100'
-                        }`}
-                >
-                    <BarChart3 className="h-4 w-4" /> All Projects Report
-                </button>
+            {/* -- Tab Bar & Manage Checklists Action -- */}
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-5 border-b border-slate-100 pb-3">
+                <div className="flex flex-wrap items-center gap-2">
+                    <button
+                        onClick={() => setActiveTab('orders')}
+                        className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${activeTab === 'orders'
+                            ? 'bg-brand-700 text-white shadow-sm ring-1 ring-brand-800'
+                            : 'bg-brand-50 text-brand-700 hover:bg-brand-100'
+                            }`}
+                    >
+                        <ClipboardList className="h-4 w-4" /> Orders Review
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('project-report')}
+                        className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${activeTab === 'project-report'
+                            ? 'bg-brand-700 text-white shadow-sm ring-1 ring-brand-800'
+                            : 'bg-brand-50 text-brand-700 hover:bg-brand-100'
+                            }`}
+                    >
+                        <FileSearch className="h-4 w-4" /> Project Detail Report
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('all-projects-report')}
+                        className={`inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${activeTab === 'all-projects-report'
+                            ? 'bg-brand-700 text-white shadow-sm ring-1 ring-brand-800'
+                            : 'bg-brand-50 text-brand-700 hover:bg-brand-100'
+                            }`}
+                    >
+                        <BarChart3 className="h-4 w-4" /> All Projects Report
+                    </button>
+                </div>
+
+                {/* Manage Checklists Button placed in green box location */}
+                {canManageChecklists && (
+                    <button
+                        type="button"
+                        onClick={() => setShowManageChecklistModal(true)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-lg border border-teal-600 bg-teal-600 text-white hover:bg-teal-700 shadow-sm transition-all"
+                        title="Add, edit, or configure checklist items with project IDs"
+                    >
+                        <Settings2 className="h-4 w-4" />
+                        <span>Manage Checklists</span>
+                    </button>
+                )}
             </div>
 
             {/* TAB 1 - ORDERS REVIEW */}
@@ -1111,6 +1132,19 @@ export default function InternalQADashboard() {
                     onSaved={() => {
                         setReviewModal({ open: false, orderNumber: '' });
                         fetchOrders();
+                    }}
+                />
+            )}
+
+            {/* Manage Product Checklists Modal */}
+            {showManageChecklistModal && (
+                <ManageProductChecklistsModal
+                    isOpen={showManageChecklistModal}
+                    onClose={() => setShowManageChecklistModal(false)}
+                    projects={projects}
+                    defaultProjectId={selectedProject}
+                    onUpdated={() => {
+                        if (activeTab === 'orders') fetchOrders();
                     }}
                 />
             )}

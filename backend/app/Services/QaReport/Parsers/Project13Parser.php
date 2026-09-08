@@ -38,15 +38,11 @@ class Project13Parser implements ChecklistParserInterface
         // Split comment lines
         $lines = preg_split('/\r\n|\r|\n/', $comment);
 
-        // Track final files sub-mistakes
-        $finalFilesFailed = [];
-
         foreach ($lines as $line) {
             $trimmed = trim($line);
             if ($trimmed === '') continue;
 
             // Check if this line is marked as NO / Mistake
-            // Format: ✗ [NO] 1. Template OR [NO] 3. Dimensions
             $isNo = (
                 str_contains($trimmed, '[NO]') ||
                 str_contains($trimmed, '✗') ||
@@ -55,37 +51,27 @@ class Project13Parser implements ChecklistParserInterface
 
             if (!$isNo) continue;
 
-            // Check which point this belongs to
+            // Record column mistakes only (DO NOT add checklist labels to remarks)
             if (preg_match('/1\.\s*Template/i', $trimmed)) {
                 $mistakes['template'] = 1;
-                $remarks[] = '1. Template';
             } elseif (preg_match('/2\.\s*Tour\s*Walkthrough/i', $trimmed)) {
                 $mistakes['tour_walkthrough'] = 1;
-                $remarks[] = '2. Tour Walkthrough';
             } elseif (preg_match('/3\.\s*Dimensions/i', $trimmed)) {
                 $mistakes['dimensions'] = 1;
-                $remarks[] = '3. Dimensions';
             } elseif (preg_match('/4\.\s*Labeling/i', $trimmed)) {
                 $mistakes['labeling'] = 1;
-                $remarks[] = '4. Labeling';
             } elseif (preg_match('/5\.\s*Site\s*Plan/i', $trimmed)) {
                 $mistakes['site_plan'] = 1;
-                $remarks[] = '5. Site Plan';
             } elseif (preg_match('/6\.\s*North\s*Arrow/i', $trimmed)) {
                 $mistakes['north_arrow'] = 1;
-                $remarks[] = '6. North Arrow';
             } elseif (preg_match('/7\.\s*Address/i', $trimmed)) {
                 $mistakes['address_title'] = 1;
-                $remarks[] = '7. Address/Title';
             } elseif (preg_match('/8\.\s*Area/i', $trimmed)) {
                 $mistakes['area'] = 1;
-                $remarks[] = '8. Area';
             } elseif (preg_match('/9\.\s*360/i', $trimmed)) {
                 $mistakes['views_360'] = 1;
-                $remarks[] = '9. 360° Views';
             } elseif (preg_match('/10\.\s*Notes/i', $trimmed)) {
                 $mistakes['notes_point'] = 1;
-                $remarks[] = '10. Notes';
             } elseif (
                 preg_match('/File\s*Formats/i', $trimmed) ||
                 preg_match('/Naming/i', $trimmed) ||
@@ -95,17 +81,10 @@ class Project13Parser implements ChecklistParserInterface
                 preg_match('/11\.\s*Final/i', $trimmed)
             ) {
                 $mistakes['final_files'] = 1;
-                // Extract clean label for remarks
-                $cleanedLabel = preg_replace('/^[✓✗—\s\-]*(\[(?:YES|NO|UNANSWERED|PASS|FAIL)\])?\s*/i', '', $trimmed);
-                $finalFilesFailed[] = $cleanedLabel;
             }
         }
 
-        if (!empty($finalFilesFailed)) {
-            $remarks[] = '11. Final Files (' . implode(', ', array_unique($finalFilesFailed)) . ')';
-        }
-
-        // Extract any free-text QA Comment / Notes at the bottom: e.g. "QA Comment: kitchen dim missing, wrong north arrow"
+        // ONLY extract what was manually typed by QA in the comment / notes during submission
         if (preg_match_all('/(?:^|\n)\s*(?:QA\s*Comment|Comment|Notes|Remarks)\s*:\s*([\s\S]*?)(?=\n[A-Z][A-Za-z0-9\s]*:|\z)/i', $comment, $allMatches)) {
             foreach ($allMatches[1] as $rawText) {
                 $notesText = trim($rawText);

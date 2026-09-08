@@ -59,6 +59,11 @@ class LiveQAController extends Controller
             $query->where('check_list_type_id', $request->type_id);
         }
 
+        if ($request->filled('project_id')) {
+            $pId = (int) $request->project_id;
+            $query->where('project_id', $pId);
+        }
+
         return response()->json([
             'success' => true,
             'data' => $query->orderBy('sort_order')->orderBy('id')->get(),
@@ -71,28 +76,33 @@ class LiveQAController extends Controller
      */
     public function createChecklist(Request $request)
     {
+        if ($request->has('project_id') && (empty($request->project_id) || (int)$request->project_id === 0)) {
+            $request->merge(['project_id' => null]);
+        }
+
         $validated = $request->validate([
             'title' => 'required|string|max:500',
             'client' => 'nullable|string|max:500',
             'product' => 'nullable|string|max:500',
-            'check_list_type_id' => 'required|integer|in:1,2,3',
+            'check_list_type_id' => 'nullable|integer|in:1,2,3',
             'project_id' => 'nullable|integer|exists:projects,id',
+            'sort_order' => 'nullable|integer',
         ]);
 
         $insert = [
             'title' => $validated['title'],
             'client' => $validated['client'] ?? null,
             'product' => $validated['product'] ?? 'FP',
-            'check_list_type_id' => $validated['check_list_type_id'],
-            'sort_order' => DB::table('product_checklists')->max('sort_order') + 1,
+            'check_list_type_id' => $validated['check_list_type_id'] ?? 1,
+            'sort_order' => $validated['sort_order'] ?? (DB::table('product_checklists')->max('sort_order') + 1),
             'is_active' => true,
             'created_by' => auth()->id(),
             'created_at' => now(),
             'updated_at' => now(),
         ];
 
-        if (!empty($validated['project_id']) && Schema::hasColumn('product_checklists', 'project_id')) {
-            $insert['project_id'] = $validated['project_id'];
+        if (Schema::hasColumn('product_checklists', 'project_id')) {
+            $insert['project_id'] = !empty($validated['project_id']) ? (int) $validated['project_id'] : null;
         }
 
         $id = DB::table('product_checklists')->insertGetId($insert);
@@ -109,14 +119,23 @@ class LiveQAController extends Controller
      */
     public function updateChecklist(Request $request, int $id)
     {
+        if ($request->has('project_id') && (empty($request->project_id) || (int)$request->project_id === 0)) {
+            $request->merge(['project_id' => null]);
+        }
+
         $validated = $request->validate([
             'title' => 'sometimes|string|max:500',
             'client' => 'nullable|string|max:500',
             'product' => 'nullable|string|max:500',
             'check_list_type_id' => 'sometimes|integer|in:1,2,3',
+            'project_id' => 'nullable|integer|exists:projects,id',
             'is_active' => 'sometimes|boolean',
             'sort_order' => 'sometimes|integer',
         ]);
+
+        if (array_key_exists('project_id', $validated)) {
+            $validated['project_id'] = !empty($validated['project_id']) ? (int) $validated['project_id'] : null;
+        }
 
         $validated['updated_at'] = now();
         DB::table('product_checklists')->where('id', $id)->update($validated);

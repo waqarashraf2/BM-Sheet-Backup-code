@@ -53,7 +53,7 @@ export default function LiveQAChecklistModal({ open, onClose, projectId, orderNu
   const [editingChecklist, setEditingChecklist] = useState<ProductChecklistItem | null>(null);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const canManageChecklist = ['ceo', 'director', 'checker', 'qa'].includes(user?.role || '');
+  const canManageChecklist = ['ceo', 'director', 'operations_manager', 'project_manager', 'checker', 'qa', 'live_qa'].includes(user?.role || '');
 
   const checklistClientOptions = useMemo(() => {
     const options = new Set<string>();
@@ -270,6 +270,7 @@ export default function LiveQAChecklistModal({ open, onClose, projectId, orderNu
         title: newChecklistTitle.trim(),
         check_list_type_id: 1,
         client: (newChecklistClient || reviewData?.order?.client_name || '').trim(),
+        project_id: projectId > 0 ? projectId : null,
       });
       resetChecklistForm();
       await Promise.all([fetchChecklists(), fetchReview()]);

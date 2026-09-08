@@ -768,7 +768,7 @@ export const projectService = {
   createTeam: (projectId: number, name: string) => api.post<{ data: Team; message: string }>(`/projects/${projectId}/teams`, { name }),
   updateTeam: (projectId: number, teamId: number, data: { name: string }) => api.put<{ data: Team; message: string }>(`/projects/${projectId}/teams/${teamId}`, data),
   deleteTeam: (projectId: number, teamId: number) => api.delete(`/projects/${projectId}/teams/${teamId}`),
-  saveProjectActionLog: (data: { project_id: number; order_id: number; reason: string; [key: string]: any }) => api.post<{ message: string; data: any; order?: any; timeline?: any }>('/client-issues', data),
+  saveProjectActionLog: (data: { project_id: number; order_id: number; reason: string;[key: string]: any }) => api.post<{ message: string; data: any; order?: any; timeline?: any }>('/client-issues', data),
   getProjectActionLog: (projectId: number, orderId?: number) => api.get<{ data: any; order?: any; timeline?: any }>(orderId ? `/client-issues/${projectId}/${orderId}` : `/client-issues/${projectId}`),
   resumeClientIssue: (projectId: number, orderId: number) => api.post<{ message: string; order: any; timeline?: any }>(`/client-issues/${projectId}/${orderId}/resume`),
   getClientIssuesDashboard: (params?: { project_id?: number; search?: string; status?: string; page?: number }) => api.get<{ data: any[]; current_page: number; last_page: number; total: number; stats?: { total: number; waiting: number; in_progress: number; finished: number } }>('/client-issues/dashboard', { params }),
@@ -1083,6 +1083,7 @@ export interface ProductChecklistItem {
   client: string;
   product: string;
   check_list_type_id: number;
+  project_id?: number | null;
   is_active: boolean;
   sort_order: number;
 }
@@ -1293,12 +1294,12 @@ export interface LiveQAWorkerOrdersResponse {
 // ═══════════════════════════════════════════
 export const liveQAService = {
   // ─── Checklists (Product Definitions) ───────────────────────────────────
-  // GET /live-qa/checklists - Fetch all checklists
-  getChecklists: () =>
-    api.get<{ data: ProductChecklistItem[] }>('/live-qa/checklists'),
+  // GET /live-qa/checklists - Fetch all checklists (supports project_id filter)
+  getChecklists: (params?: { type_id?: number; project_id?: number }) =>
+    api.get<{ data: ProductChecklistItem[] }>('/live-qa/checklists', { params }),
 
   // POST /live-qa/checklists - Create new checklist
-  createChecklist: (data: { title: string; check_list_type_id: number; client?: string; product?: string }) =>
+  createChecklist: (data: { title: string; check_list_type_id?: number; client?: string; product?: string; project_id?: number | null; sort_order?: number }) =>
     api.post<{ data: ProductChecklistItem; message: string }>('/live-qa/checklists', data),
 
   // PUT /live-qa/checklists/{id} - Update checklist
