@@ -105,11 +105,13 @@ class Project13Parser implements ChecklistParserInterface
             $remarks[] = '11. Final Files (' . implode(', ', array_unique($finalFilesFailed)) . ')';
         }
 
-        // Extract any free-text Notes at the bottom: e.g. "Notes: kitchen dim missing, wrong north arrow"
-        if (preg_match('/(?:^|\n)\s*Notes\s*:\s*([\s\S]*?)(?=\n[A-Z][A-Za-z0-9\s]*:|\z)/i', $comment, $m)) {
-            $notesText = trim($m[1]);
-            if ($notesText !== '' && !in_array($notesText, ['-', '--', 'N/A', 'none', 'nil'], true)) {
-                $remarks[] = $notesText;
+        // Extract any free-text QA Comment / Notes at the bottom: e.g. "QA Comment: kitchen dim missing, wrong north arrow"
+        if (preg_match_all('/(?:^|\n)\s*(?:QA\s*Comment|Comment|Notes|Remarks)\s*:\s*([\s\S]*?)(?=\n[A-Z][A-Za-z0-9\s]*:|\z)/i', $comment, $allMatches)) {
+            foreach ($allMatches[1] as $rawText) {
+                $notesText = trim($rawText);
+                if ($notesText !== '' && !in_array(strtolower($notesText), ['-', '--', 'n/a', 'none', 'nil'], true)) {
+                    $remarks[] = $notesText;
+                }
             }
         }
 

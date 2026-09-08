@@ -371,6 +371,7 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
   const isProject16 = order.project_id === 16;
   const isProject15 = Number(order.project_id || order.project?.id || 0) === 15;
   const isProject13 = Number(order.project_id || order.project?.id || 0) === 13;
+  const [qaComment, setQaComment] = useState('');
   const [cubiBwBugsCount, setCubiBwBugsCount] = useState('');
   const [cubiBwBugsComment, setCubiBwBugsComment] = useState('');
   const [cubiMbOkCount, setCubiMbOkCount] = useState('');
@@ -549,7 +550,10 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
             : '',
         ].filter(Boolean).join('')
         : '';
-      const comment = `QA Approved${checklistSummary ? `\n\nChecklist:\n${checklistSummary}` : ''}${areaSummary}${imageCountSummary}${cubiQaDetailsSummary}${notes ? `\n\nNotes: ${notes}` : ''}`;
+      const qaCommentSummary = (isProject13 || isProject15) && qaComment.trim()
+        ? `\n\nQA Comment: ${qaComment.trim()}`
+        : '';
+      const comment = `QA Approved${checklistSummary ? `\n\nChecklist:\n${checklistSummary}` : ''}${areaSummary}${imageCountSummary}${cubiQaDetailsSummary}${qaCommentSummary}${notes ? `\n\nNotes: ${notes}` : ''}`;
       await workflowService.submitWork(order.id, comment);
 
       if (isPh2Layer && imageCountFields.some((field) => field.payloadKey)) {
@@ -1134,6 +1138,30 @@ export default function QAWorkForm({ order, onComplete, onClose }: QAWorkFormPro
                           </div>
                         );
                       })}
+
+                      {/* Project 13 and 15 QA Comment / Remarks Box */}
+                      {(isProject13 || isProject15) && (
+                        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label htmlFor="qa-custom-comment" className="flex items-center gap-1.5 text-xs font-bold text-slate-800 uppercase tracking-wider">
+                              <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
+                              QA Comment / Mistakes Remarks
+                            </label>
+                            <span className="text-[10px] font-semibold text-slate-400">Optional</span>
+                          </div>
+                          <p className="text-[11px] text-slate-500">
+                            Add any specific mistake remarks or feedback to display in the QA Report.
+                          </p>
+                          <textarea
+                            id="qa-custom-comment"
+                            rows={3}
+                            value={qaComment}
+                            onChange={(e) => setQaComment(e.target.value)}
+                            placeholder="e.g. kitchen dim missing, wrong north arrow, label wrong..."
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
