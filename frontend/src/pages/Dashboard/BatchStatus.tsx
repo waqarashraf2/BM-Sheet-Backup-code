@@ -440,7 +440,7 @@ export default function BatchStatus() {
                       : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50'
                   }`}
                 >
-                  Cubi QA Report
+                  QA Report
                 </button>
 
                 <button

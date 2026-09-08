@@ -15,6 +15,12 @@ class CubiQaReportController extends Controller
 
     public function index(Request $request)
     {
+        $requestedProjectId = $request->query('project_id');
+        if ($requestedProjectId && (int) $requestedProjectId !== self::PROJECT_ID) {
+            $service = new \App\Services\QaReport\QaReportService();
+            return response()->json($service->generateReport((int) $requestedProjectId, $request));
+        }
+
         $startDate = $request->query('start_date');
         $endDate = $request->query('end_date');
 
@@ -137,6 +143,7 @@ class CubiQaReportController extends Controller
         return response()->json([
             'success' => true,
             'project_id' => self::PROJECT_ID,
+            'project_name' => 'Cubi 2D',
             'selected_date' => $date,
             'selected_date_display' => $displayDate,
             'start_time' => $shiftStartPkt->format('Y-m-d H:i:s'),

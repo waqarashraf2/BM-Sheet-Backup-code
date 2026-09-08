@@ -126,16 +126,21 @@ type BatchStatusResponse = {
 export type CubiQaReportRow = {
   checker_name: string;
   total_plans: number;
-  bw: number;
-  bugs: number;
-  mb: number;
-  ok: number;
+  bw?: number;
+  bugs?: number;
+  mb?: number;
+  ok?: number;
+  columns?: Record<string, number>;
+  mistake_plans?: number;
+  ok_plans?: number;
   mistakes_remarks: string;
 };
 
 export type CubiQaReportResponse = {
   success: boolean;
   project_id: number;
+  project_name?: string;
+  column_definitions?: Record<string, string>;
   selected_date: string;
   selected_date_display: string;
   start_time: string;
@@ -143,17 +148,23 @@ export type CubiQaReportResponse = {
   rows: CubiQaReportRow[];
   totals: {
     total_plans: number;
-    bw: number;
-    bugs: number;
-    mb: number;
-    ok: number;
+    bw?: number;
+    bugs?: number;
+    mb?: number;
+    ok?: number;
+    mistake_plans?: number;
+    ok_plans?: number;
+    columns?: Record<string, number>;
   };
   percentages: {
     total_plans: number;
-    bw: number;
-    bugs: number;
-    mb: number;
-    ok: number;
+    bw?: number;
+    bugs?: number;
+    mb?: number;
+    ok?: number;
+    mistake_plans?: number;
+    ok_plans?: number;
+    columns?: Record<string, number>;
   };
   upload_summary: {
     date: string;
@@ -666,7 +677,7 @@ export const dashboardService = {
   batchStatus: (params?: { date?: string; start_date?: string; end_date?: string; project_id?: number }) =>
     api.get<BatchStatusResponse>('/dashboard/batch-status', { params }),
 
-  cubiQaReport: (params?: { date?: string; start_date?: string; end_date?: string }) =>
+  cubiQaReport: (params?: { date?: string; start_date?: string; end_date?: string; project_id?: number }) =>
     api.get<CubiQaReportResponse>('/dashboard/cubi-qa-report', { params }),
 
   // Queues list — returns distinct queue names with their projects

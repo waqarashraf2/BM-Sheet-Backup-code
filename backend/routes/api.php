@@ -180,6 +180,7 @@ Route::middleware(['auth:sanctum', 'single.session', 'throttle:api'])->group(fun
         Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard/batch-status', [DashboardController::class, 'batchStatusReport']);
     Route::get('/dashboard/cubi-qa-report', [CubiQaReportController::class, 'index']);
+    Route::get('/dashboard/qa-report', [CubiQaReportController::class, 'index']);
     Route::get('/dashboard/batch-statusv2', [DashboardController::class, 'batchStatusReportv2']);
    Route::get('/test-date-debug', [DashboardController::class, 'testDateDebug']);
    Route::get('/test-vet-date', [DashboardController::class, 'testVetDate']);

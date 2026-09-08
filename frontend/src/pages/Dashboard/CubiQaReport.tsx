@@ -11,21 +11,29 @@ type CubiQaReportProps = {
   endDate?: string;
 };
 
+const QA_PROJECT_OPTIONS = [
+  { id: 16, label: 'Project 16 (Cubi 2D)' },
+  { id: 13, label: 'Project 13 (Metro FP)' },
+  { id: 15, label: 'Project 15 (Roomio FP)' },
+];
+
 const emptyReport: CubiQaReportResponse = {
   success: true,
   project_id: 16,
+  project_name: 'Cubi 2D',
   selected_date: '',
   selected_date_display: '',
   start_time: '',
   end_time: '',
   rows: [],
-  totals: { total_plans: 0, bw: 0, bugs: 0, mb: 0, ok: 0 },
-  percentages: { total_plans: 0, bw: 0, bugs: 0, mb: 0, ok: 0 },
+  totals: { total_plans: 0, bw: 0, bugs: 0, mb: 0, ok: 0, columns: {} },
+  percentages: { total_plans: 0, bw: 0, bugs: 0, mb: 0, ok: 0, columns: {} },
   upload_summary: { date: '', total_plans: 0, upload: 0, pending: 0 },
   qa_counts: [],
 };
 
 export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportProps) {
+  const [selectedProjectId, setSelectedProjectId] = useState<number>(16);
   const [report, setReport] = useState<CubiQaReportResponse>(emptyReport);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -40,7 +48,9 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
       try {
         setLoading(true);
         setError('');
-        const params: { date?: string; start_date?: string; end_date?: string } = {};
+        const params: { date?: string; start_date?: string; end_date?: string; project_id?: number } = {
+          project_id: selectedProjectId,
+        };
         if (startDate && endDate) {
           params.start_date = startDate;
           params.end_date = endDate;
@@ -51,10 +61,10 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
         if (!isMounted) return;
         setReport(response.data);
       } catch (err) {
-        console.error('Cubi QA Report Error:', err);
+        console.error('QA Report Error:', err);
         if (isMounted) {
-          setError('Unable to load Cubi QA report.');
-          setReport(emptyReport);
+          setError('Unable to load QA report.');
+          setReport({ ...emptyReport, project_id: selectedProjectId });
         }
       } finally {
         if (isMounted) setLoading(false);
@@ -66,20 +76,23 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
     return () => {
       isMounted = false;
     };
-  }, [date, startDate, endDate]);
+  }, [date, startDate, endDate, selectedProjectId]);
 
-  const renderCellWithPercentage = (count: number, totalPlans: number) => {
-    if (!count || count <= 0) return '-';
-    const pct = totalPlans > 0 ? ((count / totalPlans) * 100).toFixed(1) : '0.0';
+  const renderCellWithPercentage = (count?: number, totalPlans?: number) => {
+    const validCount = count ?? 0;
+    const total = totalPlans ?? 0;
+    if (validCount <= 0) return '-';
+    const pct = total > 0 ? ((validCount / total) * 100).toFixed(1) : '0.0';
     return (
       <div className="flex flex-col items-center justify-center leading-tight">
-        <span>{count}</span>
+        <span>{validCount}</span>
         <span className="text-[9.5px] font-semibold text-slate-700">({pct}%)</span>
       </div>
     );
   };
 
   const titleDate = (report.selected_date_display || (startDate && endDate && startDate !== endDate ? `${startDate} TO ${endDate}` : date || '')).toUpperCase();
+  const projectNameDisplay = (report.project_name || (selectedProjectId === 16 ? 'CUBI 2D' : selectedProjectId === 13 ? 'METRO FP' : selectedProjectId === 15 ? 'ROOMIO FP' : `PROJECT ${selectedProjectId}`)).toUpperCase();
 
   const handleDownloadJpg = async () => {
     if (!reportRef.current) return;
@@ -87,7 +100,7 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
       setExportingJpg(true);
       const element = reportRef.current;
 
-      // Primary engine: html-to-image with 3x scale for crystal clear HD rendering (no pixel drop)
+      // Primary engine: html-to-image with 3x scale for crystal clear HD rendering
       let dataUrl: string;
       try {
         dataUrl = await toJpeg(element, {
@@ -112,7 +125,7 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
         dataUrl = canvas.toDataURL('image/jpeg', 0.98);
       }
 
-      const filename = `${titleDate || 'CUBI_QA'}_CUBI_2D_QA_REPORT.jpg`.replace(/\s+/g, '_');
+      const filename = `${titleDate || 'QA'}_${projectNameDisplay.replace(/\s+/g, '_')}_QA_REPORT.jpg`.replace(/\s+/g, '_');
       const link = document.createElement('a');
       link.download = filename;
       link.href = dataUrl;
@@ -153,24 +166,26 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
         setCopiedImage(true);
         setTimeout(() => setCopiedImage(false), 2500);
       } else {
-        // Fallback to downloading JPG
         await handleDownloadJpg();
       }
     } catch (clipErr) {
       console.error('Clipboard copy failed:', clipErr);
-      // Fallback to downloading JPG
       await handleDownloadJpg();
     } finally {
       setExportingJpg(false);
     }
   };
 
+  const isCubi16 = report.project_id === 16 && !report.column_definitions;
+  const customCols = report.column_definitions ? Object.entries(report.column_definitions) : [];
+  const totalTableCols = isCubi16 ? 7 : customCols.length + 3; // Checker + Plans + [Cols] + Remarks
+
   if (loading) {
     return (
       <div className="rounded-lg border border-slate-200 bg-white p-6">
         <div className="flex items-center justify-center gap-2 text-xs font-semibold text-slate-500">
           <Loader2 className="h-4 w-4 animate-spin text-[#2AA7A0]" />
-          Loading Cubi QA report
+          Loading {projectNameDisplay} QA report...
         </div>
       </div>
     );
@@ -180,7 +195,7 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
     <div className="space-y-3">
       {/* Top Action Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800">
             <ImageIcon className="h-4 w-4 text-[#2AA7A0]" />
             QA Report Export
@@ -188,6 +203,22 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
           <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
             Ultra-HD (No Pixel Drop)
           </span>
+
+          {/* Project Selector for OP / PM */}
+          <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50/80 px-2 py-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Project</span>
+            <select
+              value={selectedProjectId}
+              onChange={(e) => setSelectedProjectId(Number(e.target.value))}
+              className="h-7 rounded border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 outline-none transition focus:border-[#2AA7A0] focus:ring-1 focus:ring-[#2AA7A0]"
+            >
+              {QA_PROJECT_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -248,60 +279,132 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
           <table className="w-full min-w-[860px] border-collapse text-[11px] text-slate-950">
             <thead>
               <tr>
-                <th colSpan={7} className="border border-slate-500 bg-neutral-500 px-2 py-1.5 text-center text-base font-black text-black tracking-wide">
-                  {titleDate} CUBI 2D QA
+                <th
+                  colSpan={totalTableCols}
+                  className="border border-slate-500 bg-neutral-500 px-2 py-1.5 text-center text-base font-black text-black tracking-wide"
+                >
+                  {titleDate} {projectNameDisplay} QA
                 </th>
               </tr>
-              <tr className="bg-neutral-400 text-[11px] font-bold">
-                <th className="border border-slate-500 px-2 py-1 text-left">Checker Names</th>
-                <th className="border border-slate-500 px-2 py-1 text-center">Total Plans</th>
-                <th className="border border-slate-500 px-2 py-1 text-center">BW</th>
-                <th className="border border-slate-500 px-2 py-1 text-center">Bugs</th>
-                <th className="border border-slate-500 px-2 py-1 text-center">MB</th>
-                <th className="border border-slate-500 px-2 py-1 text-center">OK</th>
-                <th className="border border-slate-500 px-2 py-1 text-center">Mistakes Remarks</th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.rows.length > 0 ? report.rows.map((row) => (
-                <tr key={row.checker_name} className="align-top">
-                  <td className="border border-slate-400 px-2 py-1 font-medium">{row.checker_name}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center font-semibold">{row.total_plans}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.bw, row.total_plans)}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.bugs, row.total_plans)}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.mb, row.total_plans)}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.ok, row.total_plans)}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{row.mistakes_remarks || '-'}</td>
+
+              {/* Standard Project 16 Table Header */}
+              {isCubi16 ? (
+                <tr className="bg-neutral-400 text-[11px] font-bold">
+                  <th className="border border-slate-500 px-2 py-1 text-left">Checker Names</th>
+                  <th className="border border-slate-500 px-2 py-1 text-center">Total Plans</th>
+                  <th className="border border-slate-500 px-2 py-1 text-center">BW</th>
+                  <th className="border border-slate-500 px-2 py-1 text-center">Bugs</th>
+                  <th className="border border-slate-500 px-2 py-1 text-center">MB</th>
+                  <th className="border border-slate-500 px-2 py-1 text-center">OK</th>
+                  <th className="border border-slate-500 px-2 py-1 text-center">Mistakes Remarks</th>
                 </tr>
-              )) : (
-                <tr>
-                  <td colSpan={7} className="border border-slate-400 px-2 py-8 text-center text-xs text-slate-500">
-                    No QA submissions found for this date.
-                  </td>
+              ) : (
+                /* Dynamic Custom Project Table Header */
+                <tr className="bg-neutral-400 text-[11px] font-bold">
+                  <th className="border border-slate-500 px-2 py-1 text-left">Checker Names</th>
+                  <th className="border border-slate-500 px-2 py-1 text-center whitespace-nowrap">Total Plans</th>
+                  {customCols.map(([key, label]) => (
+                    <th key={key} className="border border-slate-500 px-2 py-1 text-center whitespace-nowrap">
+                      {label}
+                    </th>
+                  ))}
+                  <th className="border border-slate-500 px-2 py-1 text-center">Mistakes Remarks</th>
                 </tr>
               )}
-              <tr className="bg-neutral-500 font-bold">
-                <td className="border border-slate-500 px-2 py-1 text-center text-black">Total</td>
-                <td className="border border-slate-500 px-2 py-1 text-center font-bold">{report.totals.total_plans}</td>
-                <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.bw, report.totals.total_plans)}</td>
-                <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.bugs, report.totals.total_plans)}</td>
-                <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.mb, report.totals.total_plans)}</td>
-                <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.ok, report.totals.total_plans)}</td>
-                <td className="border border-slate-500 px-2 py-1" />
-              </tr>
-              <tr>
-                <td className="border border-slate-500 bg-neutral-500 px-2 py-1 text-center font-bold text-black">Percentage</td>
-                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.total_plans.toFixed(1)}%</td>
-                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.bw.toFixed(1)}%</td>
-                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.bugs.toFixed(1)}%</td>
-                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.mb.toFixed(1)}%</td>
-                <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.ok.toFixed(1)}%</td>
-                <td className="border border-slate-400 px-2 py-1" />
-              </tr>
+            </thead>
+
+            <tbody>
+              {/* Project 16 Table Rows */}
+              {isCubi16 ? (
+                <>
+                  {report.rows.length > 0 ? (
+                    report.rows.map((row) => (
+                      <tr key={row.checker_name} className="align-top">
+                        <td className="border border-slate-400 px-2 py-1 font-medium">{row.checker_name}</td>
+                        <td className="border border-slate-400 px-2 py-1 text-center font-semibold">{row.total_plans}</td>
+                        <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.bw, row.total_plans)}</td>
+                        <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.bugs, row.total_plans)}</td>
+                        <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.mb, row.total_plans)}</td>
+                        <td className="border border-slate-400 px-2 py-1 text-center">{renderCellWithPercentage(row.ok, row.total_plans)}</td>
+                        <td className="border border-slate-400 px-2 py-1 text-center">{row.mistakes_remarks || '-'}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="border border-slate-400 px-2 py-8 text-center text-xs text-slate-500">
+                        No QA submissions found for this date.
+                      </td>
+                    </tr>
+                  )}
+                  <tr className="bg-neutral-500 font-bold">
+                    <td className="border border-slate-500 px-2 py-1 text-center text-black">Total</td>
+                    <td className="border border-slate-500 px-2 py-1 text-center font-bold">{report.totals.total_plans}</td>
+                    <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.bw, report.totals.total_plans)}</td>
+                    <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.bugs, report.totals.total_plans)}</td>
+                    <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.mb, report.totals.total_plans)}</td>
+                    <td className="border border-slate-500 px-2 py-1 text-center">{renderCellWithPercentage(report.totals.ok, report.totals.total_plans)}</td>
+                    <td className="border border-slate-500 px-2 py-1" />
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-500 bg-neutral-500 px-2 py-1 text-center font-bold text-black">Percentage</td>
+                    <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.total_plans.toFixed(1)}%</td>
+                    <td className="border border-slate-400 px-2 py-1 text-center font-bold">{(report.percentages.bw ?? 0).toFixed(1)}%</td>
+                    <td className="border border-slate-400 px-2 py-1 text-center font-bold">{(report.percentages.bugs ?? 0).toFixed(1)}%</td>
+                    <td className="border border-slate-400 px-2 py-1 text-center font-bold">{(report.percentages.mb ?? 0).toFixed(1)}%</td>
+                    <td className="border border-slate-400 px-2 py-1 text-center font-bold">{(report.percentages.ok ?? 0).toFixed(1)}%</td>
+                    <td className="border border-slate-400 px-2 py-1" />
+                  </tr>
+                </>
+              ) : (
+                /* Dynamic Custom Project Table Rows */
+                <>
+                  {report.rows.length > 0 ? (
+                    report.rows.map((row) => (
+                      <tr key={row.checker_name} className="align-top">
+                        <td className="border border-slate-400 px-2 py-1 font-medium">{row.checker_name}</td>
+                        <td className="border border-slate-400 px-2 py-1 text-center font-semibold">{row.total_plans}</td>
+                        {customCols.map(([key]) => (
+                          <td key={key} className="border border-slate-400 px-2 py-1 text-center">
+                            {renderCellWithPercentage(row.columns?.[key] ?? 0, row.total_plans)}
+                          </td>
+                        ))}
+                        <td className="border border-slate-400 px-2 py-1 text-center">{row.mistakes_remarks || '-'}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={totalTableCols} className="border border-slate-400 px-2 py-8 text-center text-xs text-slate-500">
+                        No QA submissions found for this date.
+                      </td>
+                    </tr>
+                  )}
+                  <tr className="bg-neutral-500 font-bold">
+                    <td className="border border-slate-500 px-2 py-1 text-center text-black">Total</td>
+                    <td className="border border-slate-500 px-2 py-1 text-center font-bold">{report.totals.total_plans}</td>
+                    {customCols.map(([key]) => (
+                      <td key={key} className="border border-slate-500 px-2 py-1 text-center font-bold">
+                        {renderCellWithPercentage(report.totals.columns?.[key] ?? 0, report.totals.total_plans)}
+                      </td>
+                    ))}
+                    <td className="border border-slate-500 px-2 py-1" />
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-500 bg-neutral-500 px-2 py-1 text-center font-bold text-black">Percentage</td>
+                    <td className="border border-slate-400 px-2 py-1 text-center font-bold">{report.percentages.total_plans.toFixed(1)}%</td>
+                    {customCols.map(([key]) => (
+                      <td key={key} className="border border-slate-400 px-2 py-1 text-center font-bold">
+                        {(report.percentages.columns?.[key] ?? 0).toFixed(1)}%
+                      </td>
+                    ))}
+                    <td className="border border-slate-400 px-2 py-1" />
+                  </tr>
+                </>
+              )}
             </tbody>
           </table>
         </div>
 
+        {/* Bottom Upload & QA Summary Grid */}
         <div className="grid gap-3 lg:grid-cols-[minmax(320px,520px)_minmax(240px,360px)]">
           <table className="w-full border-collapse text-[11px] text-slate-950">
             <thead>
@@ -330,14 +433,18 @@ export default function CubiQaReport({ date, startDate, endDate }: CubiQaReportP
               </tr>
             </thead>
             <tbody>
-              {report.qa_counts.length > 0 ? report.qa_counts.map((qa) => (
-                <tr key={qa.name}>
-                  <td className="border border-slate-400 px-2 py-1 text-center">{qa.name}</td>
-                  <td className="border border-slate-400 px-2 py-1 text-center font-semibold">{qa.count}</td>
-                </tr>
-              )) : (
+              {report.qa_counts.length > 0 ? (
+                report.qa_counts.map((qa) => (
+                  <tr key={qa.name}>
+                    <td className="border border-slate-400 px-2 py-1 text-center">{qa.name}</td>
+                    <td className="border border-slate-400 px-2 py-1 text-center font-semibold">{qa.count}</td>
+                  </tr>
+                ))
+              ) : (
                 <tr>
-                  <td colSpan={2} className="border border-slate-400 px-2 py-3 text-center text-slate-500">No QA counts.</td>
+                  <td colSpan={2} className="border border-slate-400 px-2 py-3 text-center text-slate-500">
+                    No QA counts.
+                  </td>
                 </tr>
               )}
             </tbody>
