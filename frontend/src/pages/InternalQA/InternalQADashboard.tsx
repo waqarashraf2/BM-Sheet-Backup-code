@@ -12,6 +12,7 @@ import {
     Camera, Download,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { toJpeg } from 'html-to-image';
 
 /* =================================================================
  * ROLE CONFIGURATION - edit this one block to change who can access
@@ -104,12 +105,11 @@ function calcEfficiency(totalOrders: number, mistakeOrders: number): number {
 
 function EfficiencyBadge({ pct }: { pct: number }) {
     const cls =
-        pct >= 95 ? 'bg-green-100 text-green-700' :
-            pct >= 85 ? 'bg-yellow-100 text-yellow-700' :
-                pct >= 70 ? 'bg-orange-100 text-orange-700' :
-                    'bg-red-100 text-red-700';
+        pct >= 95 ? 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300' :
+            pct >= 80 ? 'bg-brand-100 text-brand-800 ring-1 ring-brand-300' :
+                'bg-slate-100 text-slate-800 ring-1 ring-slate-300';
     return (
-        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${cls}`}>
+        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${cls}`}>
             <TrendingUp className="h-3 w-3" />{pct}%
         </span>
     );
@@ -176,28 +176,77 @@ export default function InternalQADashboard() {
     const [screenshotLoading, setScreenshotLoading] = useState(false);
     const detailReportCardRef = useRef<HTMLDivElement>(null);
 
-    const captureDetailScreenshot = async () => {
-        if (!detailReportCardRef.current) return;
+    const captureDetailJpg = async () => {
+        const element = detailReportCardRef.current;
+        if (!element) return;
         setScreenshotLoading(true);
+
+        const table = element.querySelector('table');
+        const prevOverflow = element.style.overflow;
+        const prevOverflowX = element.style.overflowX;
+        const prevWidth = element.style.width;
+        const prevMaxWidth = element.style.maxWidth;
+        const prevScrollLeft = element.scrollLeft;
+        const prevTableWidth = table ? (table as HTMLElement).style.width : '';
+
         try {
-            const { default: html2canvas } = await import('html2canvas');
-            const element = detailReportCardRef.current;
-            const canvas = await html2canvas(element, {
+            // Measure the full unrolled content width and height
+            const fullWidth = Math.max(element.scrollWidth, 1400);
+
+            // Temporarily un-constrain scroll and width so all columns render
+            element.scrollLeft = 0;
+            element.style.overflow = 'visible';
+            element.style.overflowX = 'visible';
+            element.style.width = `${fullWidth}px`;
+            element.style.maxWidth = 'none';
+            if (table) {
+                (table as HTMLElement).style.width = `${fullWidth}px`;
+            }
+
+            // Brief delay to allow browser to calculate full layout
+            await new Promise((resolve) => setTimeout(resolve, 100));
+
+            const fullHeight = element.scrollHeight;
+
+            // Generate ultra high-resolution JPG using html-to-image (3x pixelRatio for print/HD zoom quality)
+            const dataUrl = await toJpeg(element, {
+                quality: 0.99, // Near-lossless JPEG quality, no compression artifacts
+                pixelRatio: 3, // 3x Ultra HD resolution so text never blurs on zoom
                 backgroundColor: '#ffffff',
-                scale: 2,
-                useCORS: true,
-                logging: false,
-                windowWidth: Math.max(element.scrollWidth + 50, 1400),
+                cacheBust: true,
+                width: fullWidth,
+                height: fullHeight,
+                style: {
+                    margin: '0',
+                    backgroundColor: '#ffffff',
+                    transform: 'none',
+                },
             });
-            const dataUrl = canvas.toDataURL('image/png');
-            const link = document.createElement('a');
+
+            // Trigger safe download
             const projName = projects.find(p => p.id === detailProject)?.name || 'project';
-            link.download = `internal_qa_detail_${projName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.png`;
+            const dateStr = (detailDateFrom || new Date().toISOString().slice(0, 10)).replace(/[^a-zA-Z0-9]/g, '_');
+            const filename = `internal_qa_detail_${projName.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.jpg`;
+
+            const link = document.createElement('a');
+            link.download = filename;
             link.href = dataUrl;
+            document.body.appendChild(link);
             link.click();
-        } catch (err) {
-            console.error('Failed to capture screenshot:', err);
+            document.body.removeChild(link);
+        } catch (err: any) {
+            console.error('Failed to export detail report JPG:', err);
+            alert(`Failed to export JPG: ${err?.message || 'Unknown error'}`);
         } finally {
+            // Safely restore original styles and scroll position
+            element.style.overflow = prevOverflow;
+            element.style.overflowX = prevOverflowX;
+            element.style.width = prevWidth;
+            element.style.maxWidth = prevMaxWidth;
+            element.scrollLeft = prevScrollLeft;
+            if (table) {
+                (table as HTMLElement).style.width = prevTableWidth;
+            }
             setScreenshotLoading(false);
         }
     };
@@ -392,29 +441,35 @@ export default function InternalQADashboard() {
         const overallEff = calcEfficiency(totalPlans, totalMistakePlans);
         const overallMistPct = totalPlans > 0 ? Math.round((totalMistakePlans / totalPlans) * 100) : 0;
 
+        const totalOkPlans = Math.max(0, totalPlans - totalMistakePlans);
+
         const colTotals: Record<string, number> = {};
         checklistCols.forEach((col) => {
             colTotals[col] = qaRows.reduce((s, r) => s + (r.checklist_counts[col] || 0), 0);
         });
 
-        const headers = ['QA Person', 'Total Plans', ...checklistCols, 'Total Mistakes', 'Efficiency (%)', 'Mistake (%)', 'QA Comments'];
+        const headers = ['QA Person', 'Total Plans', 'OK', 'BW', ...checklistCols, 'Total Mistakes', 'Efficiency (%)', 'Mistake (%)', 'QA Comments'];
         const csvRows = qaRows.map(r => {
+            const okCount = Math.max(0, r.total_plans - r.mistake_plans);
+            const bwCount = r.mistake_plans;
             const cols = checklistCols.map(col => r.checklist_counts[col] ?? 0);
             const eff = calcEfficiency(r.total_plans, r.mistake_plans);
             const mistPct = r.total_plans > 0 ? Math.round((r.mistake_plans / r.total_plans) * 100) : 0;
             const comments = r.comments.join('; ') || '-';
-            return [r.qa_name, String(r.total_plans), ...cols.map(String), String(r.total_mistakes), `${eff}%`, `${mistPct}%`, comments];
+            return [r.qa_name, String(r.total_plans), String(okCount), String(bwCount), ...cols.map(String), String(r.total_mistakes), `${eff}%`, `${mistPct}%`, comments];
         });
 
         // Add overall summary row at bottom
         csvRows.push([
             'TOTAL / SUMMARY',
             String(totalPlans),
+            String(totalOkPlans),
+            String(totalMistakePlans),
             ...checklistCols.map(c => String(colTotals[c] ?? 0)),
             String(totalMistakes),
             `${overallEff}%`,
             `${overallMistPct}%`,
-            `Total ${totalMistakes} mistakes across ${totalPlans} plans`,
+            `Total ${totalMistakes} mistakes across ${totalPlans} plans (${totalOkPlans} OK, ${totalMistakePlans} BW)`,
         ]);
 
         const csv = [headers, ...csvRows].map(row => row.map((c: string) => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
@@ -758,7 +813,7 @@ export default function InternalQADashboard() {
                                                     <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" /> Delivered</span>
                                                 </th>
                                                 <th className="px-3 py-2.5 text-center font-semibold text-xs whitespace-nowrap">Review Progress</th>
-                                                <th className="px-3 py-2.5 text-center font-semibold text-xs whitespace-nowrap">Action</th>
+                                                <th className="px-3 py-3 text-center font-semibold text-xs whitespace-nowrap">Action</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -927,13 +982,13 @@ export default function InternalQADashboard() {
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={captureDetailScreenshot}
+                                        onClick={captureDetailJpg}
                                         disabled={screenshotLoading}
                                         className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-xs disabled:opacity-50"
-                                        title="Capture and download report image"
+                                        title="Export complete table as JPG image"
                                     >
                                         {screenshotLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
-                                        <span>{screenshotLoading ? 'Capturing...' : 'Screenshot'}</span>
+                                        <span>{screenshotLoading ? 'Generating JPG...' : 'Export JPG'}</span>
                                     </button>
                                 </div>
                             )}
@@ -1023,6 +1078,7 @@ export default function InternalQADashboard() {
                             // Overall Totals for Footer (Last Row)
                             const totalAllPlans = qaSummaryRows.reduce((acc, r) => acc + r.total_plans, 0);
                             const totalAllMistakePlans = qaSummaryRows.reduce((acc, r) => acc + r.mistake_plans, 0);
+                            const totalAllOkPlans = Math.max(0, totalAllPlans - totalAllMistakePlans);
                             const totalAllMistakes = qaSummaryRows.reduce((acc, r) => acc + r.total_mistakes, 0);
                             const overallEfficiency = calcEfficiency(totalAllPlans, totalAllMistakePlans);
                             const overallMistakePct = totalAllPlans > 0 ? Math.round((totalAllMistakePlans / totalAllPlans) * 100) : 0;
@@ -1032,13 +1088,36 @@ export default function InternalQADashboard() {
                                 totalChecklistMistakes[col] = qaSummaryRows.reduce((acc, r) => acc + (r.checklist_counts[col] || 0), 0);
                             });
 
+                            const dateLabel = detailDateFrom && detailDateTo && detailDateFrom === detailDateTo
+                                ? (detailDateFrom.includes('-') ? detailDateFrom.split('-').reverse().join('/') : detailDateFrom)
+                                : detailDateFrom && detailDateTo
+                                ? `${detailDateFrom.includes('-') ? detailDateFrom.split('-').reverse().join('/') : detailDateFrom} - ${detailDateTo.includes('-') ? detailDateTo.split('-').reverse().join('/') : detailDateTo}`
+                                : detailDateFrom || detailDateTo || 'Today';
+                            const timeLabel = [detailFromDateTime, detailToDateTime].filter(Boolean).join(' - ');
+
                             return (
-                                <div ref={detailReportCardRef} className="overflow-x-auto">
+                                <div ref={detailReportCardRef} className="overflow-x-auto bg-white rounded-xl ring-1 ring-slate-200/80 shadow-xs">
+                                    {/* Clean Header with Project Report Name on Left & Date on Right */}
+                                    <div className="flex items-center justify-between py-2.5 px-4 bg-white border-b border-slate-100">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                                                {projects.find(p => p.id === detailProject)?.name || 'Project'} Report
+                                            </span>
+                                        </div>
+                                        <div className="inline-flex items-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-700 shadow-2xs">
+                                            <Calendar className="h-3.5 w-3.5 text-brand-600" />
+                                            <span>Date: {dateLabel}</span>
+                                            {timeLabel && <span className="text-slate-400 font-normal">({timeLabel})</span>}
+                                        </div>
+                                    </div>
+
                                     <table className="w-full text-sm border-collapse">
                                         <thead>
                                             <tr className="bg-brand-700 text-white">
                                                 <th className="px-4 py-3 text-left font-semibold text-xs whitespace-nowrap">QA Person</th>
                                                 <th className="px-3 py-3 text-center font-semibold text-xs whitespace-nowrap">Total Plans</th>
+                                                <th className="px-3 py-3 text-center font-semibold text-xs whitespace-nowrap">OK</th>
+                                                <th className="px-3 py-3 text-center font-semibold text-xs whitespace-nowrap">BW</th>
                                                 {checklistCols.map(col => (
                                                     <th key={col} className="px-3 py-3 text-center font-semibold text-xs whitespace-normal min-w-[90px] max-w-[140px] leading-snug">
                                                         {col}
@@ -1056,17 +1135,18 @@ export default function InternalQADashboard() {
                                                 const comments = row.comments.join(' | ');
                                                 const eff = calcEfficiency(row.total_plans, row.mistake_plans);
                                                 const mistPct = row.total_plans > 0 ? Math.round((row.mistake_plans / row.total_plans) * 100) : 0;
+                                                const okCount = Math.max(0, row.total_plans - row.mistake_plans);
                                                 return (
                                                     <motion.tr
                                                         key={row.qa_name || i}
                                                         initial={{ opacity: 0 }}
                                                         animate={{ opacity: 1 }}
                                                         transition={{ delay: Math.min(i * 0.01, 0.3) }}
-                                                        className={`border-b border-slate-100 ${hasMistake ? 'bg-red-50/20 hover:bg-red-50/50' : i % 2 === 0 ? 'bg-white hover:bg-brand-50/10' : 'bg-slate-50/30 hover:bg-brand-50/10'}`}
+                                                        className={`border-b border-slate-100 ${hasMistake ? 'bg-slate-50/50 hover:bg-brand-50/15' : i % 2 === 0 ? 'bg-white hover:bg-brand-50/15' : 'bg-slate-50/30 hover:bg-brand-50/15'}`}
                                                     >
                                                         <td className="px-4 py-3 whitespace-nowrap">
                                                             <div className="inline-flex items-center gap-2">
-                                                                <div className="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-[10px] font-bold shrink-0 shadow-xs">
+                                                                <div className="w-6 h-6 rounded-full bg-brand-600 text-white flex items-center justify-center text-[10px] font-bold shrink-0 shadow-xs">
                                                                     {row.qa_name.charAt(0).toUpperCase()}
                                                                 </div>
                                                                 <span className="text-xs text-slate-800 font-bold whitespace-nowrap">{row.qa_name}</span>
@@ -1077,14 +1157,32 @@ export default function InternalQADashboard() {
                                                                 {row.total_plans}
                                                             </span>
                                                         </td>
+                                                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                            {okCount > 0 ? (
+                                                                <span className="inline-flex items-center justify-center min-w-[24px] px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300">
+                                                                    {okCount}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-xs font-semibold text-slate-400">0</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                            {row.mistake_plans > 0 ? (
+                                                                <span className="inline-flex items-center justify-center min-w-[24px] px-2 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-700 ring-1 ring-rose-300">
+                                                                    {row.mistake_plans}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-xs font-semibold text-slate-400">0</span>
+                                                            )}
+                                                        </td>
                                                         {checklistCols.map(col => {
                                                             const count = row.checklist_counts[col] ?? 0;
                                                             return (
                                                                 <td key={col} className="px-3 py-3 text-center whitespace-nowrap">
                                                                     {count === 0 ? (
-                                                                        <span className="text-xs font-semibold text-emerald-600">0</span>
+                                                                        <span className="text-xs font-semibold text-slate-400">0</span>
                                                                     ) : (
-                                                                        <span className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-0.5 rounded-md text-xs font-bold bg-red-100 text-red-700 shadow-2xs">
+                                                                        <span className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-0.5 rounded-md text-xs font-bold bg-rose-100 text-rose-700 ring-1 ring-rose-300 shadow-2xs">
                                                                             {count}
                                                                         </span>
                                                                     )}
@@ -1093,7 +1191,7 @@ export default function InternalQADashboard() {
                                                         })}
                                                         <td className="px-3 py-3 text-center whitespace-nowrap">
                                                             {row.total_mistakes > 0 ? (
-                                                                <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-700">
+                                                                <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-700 ring-1 ring-rose-300 shadow-2xs">
                                                                     {row.total_mistakes}
                                                                 </span>
                                                             ) : (
@@ -1104,13 +1202,13 @@ export default function InternalQADashboard() {
                                                             <EfficiencyBadge pct={eff} />
                                                         </td>
                                                         <td className="px-3 py-3 text-center whitespace-nowrap">
-                                                            <span className={`text-xs font-bold ${mistPct > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
+                                                            <span className="text-xs font-bold text-slate-700">
                                                                 {mistPct}%
                                                             </span>
                                                         </td>
                                                         <td className="px-4 py-3 min-w-[220px] max-w-[420px]">
                                                             {comments ? (
-                                                                <span className="text-xs text-amber-800 font-medium whitespace-normal break-words leading-relaxed block">
+                                                                <span className="text-xs text-slate-700 font-medium whitespace-normal break-words leading-relaxed block">
                                                                     {comments}
                                                                 </span>
                                                             ) : (
@@ -1123,7 +1221,7 @@ export default function InternalQADashboard() {
                                         </tbody>
                                         {/* Prominent Footer Row: Overall totals, issues, and percentages */}
                                         <tfoot>
-                                            <tr className="bg-slate-100 border-t-2 border-brand-600 font-bold text-slate-800">
+                                            <tr className="bg-slate-100 border-t-2 border-brand-700 font-bold text-slate-800">
                                                 <td className="px-4 py-3 whitespace-nowrap">
                                                     <span className="text-xs font-black tracking-wide uppercase text-brand-900">Total / Summary</span>
                                                 </td>
@@ -1132,14 +1230,24 @@ export default function InternalQADashboard() {
                                                         {totalAllPlans}
                                                     </span>
                                                 </td>
+                                                <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                    <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-black bg-emerald-200 text-emerald-900">
+                                                        {totalAllOkPlans}
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                    <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-black bg-rose-200 text-rose-900">
+                                                        {totalAllMistakePlans}
+                                                    </span>
+                                                </td>
                                                 {checklistCols.map(col => {
                                                     const count = totalChecklistMistakes[col] ?? 0;
                                                     return (
                                                         <td key={col} className="px-3 py-3 text-center whitespace-nowrap">
                                                             {count === 0 ? (
-                                                                <span className="text-xs font-bold text-emerald-700">0</span>
+                                                                <span className="text-xs font-bold text-slate-400">0</span>
                                                             ) : (
-                                                                <span className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-0.5 rounded-md text-xs font-bold bg-red-200 text-red-800">
+                                                                <span className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-0.5 rounded-md text-xs font-bold bg-rose-200 text-rose-800">
                                                                     {count}
                                                                 </span>
                                                             )}
@@ -1155,22 +1263,22 @@ export default function InternalQADashboard() {
                                                     <EfficiencyBadge pct={overallEfficiency} />
                                                 </td>
                                                 <td className="px-3 py-3 text-center whitespace-nowrap">
-                                                    <span className={`text-xs font-black ${overallMistakePct > 0 ? 'text-rose-700' : 'text-slate-600'}`}>
+                                                    <span className="text-xs font-black text-slate-800">
                                                         {overallMistakePct}%
                                                     </span>
                                                 </td>
-                                                <td className="px-4 py-3 text-xs text-slate-500 italic">
+                                                <td className="px-4 py-3 text-xs text-slate-600 font-medium italic">
                                                     Total {totalAllMistakes} issues across {totalAllPlans} plans
                                                 </td>
                                             </tr>
                                         </tfoot>
                                     </table>
-                                    <div className="flex items-center justify-between px-4 py-2.5 border-t border-slate-100 bg-slate-50/30">
+                                    <div className="flex items-center justify-between px-4 py-2.5 border-t border-slate-100 bg-slate-50/40">
                                         <span className="text-xs text-slate-600 font-medium">
-                                            Showing <strong>{qaSummaryRows.length}</strong> QA persons (<strong>{detailReport.report_rows.length}</strong> total plans)
+                                            Showing <strong className="text-slate-800">{qaSummaryRows.length}</strong> QA persons (<strong className="text-slate-800">{detailReport.report_rows.length}</strong> total plans: <strong className="text-emerald-700">{totalAllOkPlans} OK</strong>, <strong className="text-rose-700">{totalAllMistakePlans} BW</strong>)
                                         </span>
                                         <span className="text-xs text-slate-500">
-                                            Overall Efficiency: <strong>{overallEfficiency}%</strong> &bull; <strong>{detailReport.summary?.total_mistakes ?? 0}</strong> total mistakes
+                                            Overall Efficiency: <strong className="text-slate-700">{overallEfficiency}%</strong> &bull; <strong className="text-slate-700">{detailReport.summary?.total_mistakes ?? 0}</strong> total mistakes
                                         </span>
                                     </div>
                                 </div>
