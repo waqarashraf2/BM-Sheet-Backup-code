@@ -1621,6 +1621,7 @@ $toDateTime   = $request->input('to_datetime');
             if (Schema::hasTable($orderTable)) {
                 $sourceSelectCols = [
                     "{$internalMistakeTable}.order_id",
+                    "{$internalMistakeTable}.worker as mistake_worker",
                     "{$internalMistakeTable}.count_value",
                     "{$internalMistakeTable}.text_value",
                     "{$internalMistakeTable}.created_at as review_created_at",
@@ -1660,7 +1661,7 @@ $toDateTime   = $request->input('to_datetime');
                             'live_qa_time'    => $liveQaTime,
                             'drawer_name'     => $firstRow->drawer_name,
                             'checker_name'    => $firstRow->checker_name,
-                            'qa_name'         => $firstRow->qa_name,
+                            'qa_name'         => $firstRow->qa_name ?: ($firstRow->mistake_worker ?: null),
                         ] + $nullChecklistMap;
 
                         $totalMistakes = 0;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../store/store';
 import { liveQAService } from '../../services';
@@ -9,6 +9,7 @@ import {
     ShieldCheck, Search, AlertTriangle, CheckCircle, BarChart3,
     Loader2, FileSearch, ClipboardList, RefreshCw, X, Calendar,
     TrendingUp, FolderKanban, Eye, Clock, Filter, FileText, Settings2,
+    Camera, Download,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -172,6 +173,34 @@ export default function InternalQADashboard() {
     const [detailToDateTime, setDetailToDateTime] = useState('');
     const [detailReport, setDetailReport] = useState<DetailReport | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
+    const [screenshotLoading, setScreenshotLoading] = useState(false);
+    const detailReportCardRef = useRef<HTMLDivElement>(null);
+
+    const captureDetailScreenshot = async () => {
+        if (!detailReportCardRef.current) return;
+        setScreenshotLoading(true);
+        try {
+            const { default: html2canvas } = await import('html2canvas');
+            const element = detailReportCardRef.current;
+            const canvas = await html2canvas(element, {
+                backgroundColor: '#ffffff',
+                scale: 2,
+                useCORS: true,
+                logging: false,
+                windowWidth: Math.max(element.scrollWidth + 50, 1400),
+            });
+            const dataUrl = canvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            const projName = projects.find(p => p.id === detailProject)?.name || 'project';
+            link.download = `internal_qa_detail_${projName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.png`;
+            link.href = dataUrl;
+            link.click();
+        } catch (err) {
+            console.error('Failed to capture screenshot:', err);
+        } finally {
+            setScreenshotLoading(false);
+        }
+    };
 
     /* -- Load projects -- */
     useEffect(() => {
@@ -313,13 +342,81 @@ export default function InternalQADashboard() {
                 commentMap[c.order_id].push(c.text_value);
             }
         });
-        const headers = ['Date', 'Address', 'Drawer', 'Checker', 'QA Person', ...checklistCols, 'QA Comments'];
-        const csvRows = detailReport.report_rows.map(r => {
-            const date = r.first_order_date ? String(r.first_order_date).substring(0, 10) : '-';
-            const cols = checklistCols.map(col => (r[col] == null || r[col] === 0) ? 'OK' : 'NOT OK');
-            const comments = (commentMap[r.order_number] || []).join('; ') || '-';
-            return [date, r.client_name || '-', r.drawer_name || '-', r.checker_name || '-', r.qa_name || '-', ...cols, comments];
+
+        // Group by QA Person
+        const qaMap = new Map<string, {
+            qa_name: string;
+            total_plans: number;
+            mistake_plans: number;
+            checklist_counts: Record<string, number>;
+            total_mistakes: number;
+            comments: string[];
+        }>();
+
+        detailReport.report_rows.forEach((row) => {
+            const qa = (row.qa_name || 'Unassigned').trim();
+            if (!qaMap.has(qa)) {
+                qaMap.set(qa, {
+                    qa_name: qa,
+                    total_plans: 0,
+                    mistake_plans: 0,
+                    checklist_counts: {},
+                    total_mistakes: 0,
+                    comments: [],
+                });
+            }
+            const item = qaMap.get(qa)!;
+            item.total_plans += 1;
+            const m = row.total_mistakes || 0;
+            item.total_mistakes += m;
+            if (m > 0) item.mistake_plans += 1;
+
+            checklistCols.forEach((col) => {
+                const val = Number(row[col]) || 0;
+                item.checklist_counts[col] = (item.checklist_counts[col] || 0) + val;
+            });
+
+            const oComments = commentMap[row.order_number];
+            if (oComments && oComments.length) {
+                oComments.forEach((cm) => {
+                    if (!item.comments.includes(cm)) item.comments.push(cm);
+                });
+            }
         });
+
+        const qaRows = Array.from(qaMap.values()).sort((a, b) => b.total_plans - a.total_plans);
+
+        const totalPlans = qaRows.reduce((s, r) => s + r.total_plans, 0);
+        const totalMistakePlans = qaRows.reduce((s, r) => s + r.mistake_plans, 0);
+        const totalMistakes = qaRows.reduce((s, r) => s + r.total_mistakes, 0);
+        const overallEff = calcEfficiency(totalPlans, totalMistakePlans);
+        const overallMistPct = totalPlans > 0 ? Math.round((totalMistakePlans / totalPlans) * 100) : 0;
+
+        const colTotals: Record<string, number> = {};
+        checklistCols.forEach((col) => {
+            colTotals[col] = qaRows.reduce((s, r) => s + (r.checklist_counts[col] || 0), 0);
+        });
+
+        const headers = ['QA Person', 'Total Plans', ...checklistCols, 'Total Mistakes', 'Efficiency (%)', 'Mistake (%)', 'QA Comments'];
+        const csvRows = qaRows.map(r => {
+            const cols = checklistCols.map(col => r.checklist_counts[col] ?? 0);
+            const eff = calcEfficiency(r.total_plans, r.mistake_plans);
+            const mistPct = r.total_plans > 0 ? Math.round((r.mistake_plans / r.total_plans) * 100) : 0;
+            const comments = r.comments.join('; ') || '-';
+            return [r.qa_name, String(r.total_plans), ...cols.map(String), String(r.total_mistakes), `${eff}%`, `${mistPct}%`, comments];
+        });
+
+        // Add overall summary row at bottom
+        csvRows.push([
+            'TOTAL / SUMMARY',
+            String(totalPlans),
+            ...checklistCols.map(c => String(colTotals[c] ?? 0)),
+            String(totalMistakes),
+            `${overallEff}%`,
+            `${overallMistPct}%`,
+            `Total ${totalMistakes} mistakes across ${totalPlans} plans`,
+        ]);
+
         const csv = [headers, ...csvRows].map(row => row.map((c: string) => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
@@ -823,10 +920,22 @@ export default function InternalQADashboard() {
                                 <X className="h-3.5 w-3.5" /> Clear
                             </button>
                             {(detailReport?.report_rows?.length ?? 0) > 0 && (
-                                <button onClick={downloadDetailCsv}
-                                    className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
-                                    Export CSV
-                                </button>
+                                <div className="ml-auto flex items-center gap-2">
+                                    <button onClick={downloadDetailCsv}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-xs">
+                                        <Download className="h-3.5 w-3.5" /> Export CSV
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={captureDetailScreenshot}
+                                        disabled={screenshotLoading}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors shadow-xs disabled:opacity-50"
+                                        title="Capture and download report image"
+                                    >
+                                        {screenshotLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+                                        <span>{screenshotLoading ? 'Capturing...' : 'Screenshot'}</span>
+                                    </button>
+                                </div>
                             )}
                         </div>
 
@@ -864,70 +973,205 @@ export default function InternalQADashboard() {
                                     commentMap[c.order_id].push(c.text_value);
                                 }
                             });
+
+                            // Aggregate by QA Person
+                            const qaMap = new Map<string, {
+                                qa_name: string;
+                                total_plans: number;
+                                mistake_plans: number;
+                                checklist_counts: Record<string, number>;
+                                total_mistakes: number;
+                                comments: string[];
+                                order_numbers: string[];
+                            }>();
+
+                            detailReport.report_rows.forEach((row) => {
+                                const qa = (row.qa_name || 'Unassigned').trim();
+                                if (!qaMap.has(qa)) {
+                                    qaMap.set(qa, {
+                                        qa_name: qa,
+                                        total_plans: 0,
+                                        mistake_plans: 0,
+                                        checklist_counts: {},
+                                        total_mistakes: 0,
+                                        comments: [],
+                                        order_numbers: [],
+                                    });
+                                }
+                                const item = qaMap.get(qa)!;
+                                item.total_plans += 1;
+                                item.order_numbers.push(row.order_number);
+                                const m = row.total_mistakes || 0;
+                                item.total_mistakes += m;
+                                if (m > 0) item.mistake_plans += 1;
+
+                                checklistCols.forEach((col) => {
+                                    const val = Number(row[col]) || 0;
+                                    item.checklist_counts[col] = (item.checklist_counts[col] || 0) + val;
+                                });
+
+                                const oComments = commentMap[row.order_number];
+                                if (oComments && oComments.length) {
+                                    oComments.forEach((cm) => {
+                                        if (!item.comments.includes(cm)) item.comments.push(cm);
+                                    });
+                                }
+                            });
+
+                            const qaSummaryRows = Array.from(qaMap.values()).sort((a, b) => b.total_plans - a.total_plans);
+
+                            // Overall Totals for Footer (Last Row)
+                            const totalAllPlans = qaSummaryRows.reduce((acc, r) => acc + r.total_plans, 0);
+                            const totalAllMistakePlans = qaSummaryRows.reduce((acc, r) => acc + r.mistake_plans, 0);
+                            const totalAllMistakes = qaSummaryRows.reduce((acc, r) => acc + r.total_mistakes, 0);
+                            const overallEfficiency = calcEfficiency(totalAllPlans, totalAllMistakePlans);
+                            const overallMistakePct = totalAllPlans > 0 ? Math.round((totalAllMistakePlans / totalAllPlans) * 100) : 0;
+
+                            const totalChecklistMistakes: Record<string, number> = {};
+                            checklistCols.forEach((col) => {
+                                totalChecklistMistakes[col] = qaSummaryRows.reduce((acc, r) => acc + (r.checklist_counts[col] || 0), 0);
+                            });
+
                             return (
-                                <div className="overflow-x-auto">
+                                <div ref={detailReportCardRef} className="overflow-x-auto">
                                     <table className="w-full text-sm border-collapse">
                                         <thead>
                                             <tr className="bg-brand-700 text-white">
-                                                <th className="px-3 py-2.5 text-left font-semibold text-xs whitespace-nowrap">Date</th>
-                                                <th className="px-3 py-2.5 text-left font-semibold text-xs">Address</th>
-                                                <th className="px-3 py-2.5 text-center font-semibold text-xs whitespace-nowrap">Drawer</th>
-                                                <th className="px-3 py-2.5 text-center font-semibold text-xs whitespace-nowrap">Checker</th>
-                                                <th className="px-3 py-2.5 text-center font-semibold text-xs whitespace-nowrap">QA Person</th>
+                                                <th className="px-4 py-3 text-left font-semibold text-xs whitespace-nowrap">QA Person</th>
+                                                <th className="px-3 py-3 text-center font-semibold text-xs whitespace-nowrap">Total Plans</th>
                                                 {checklistCols.map(col => (
-                                                    <th key={col} className="px-3 py-2.5 text-center font-semibold text-xs whitespace-nowrap">{col}</th>
+                                                    <th key={col} className="px-3 py-3 text-center font-semibold text-xs whitespace-normal min-w-[90px] max-w-[140px] leading-snug">
+                                                        {col}
+                                                    </th>
                                                 ))}
-                                                <th className="px-3 py-2.5 text-left font-semibold text-xs whitespace-nowrap">QA Comments</th>
+                                                <th className="px-3 py-3 text-center font-semibold text-xs whitespace-nowrap">Total Mistakes</th>
+                                                <th className="px-3 py-3 text-center font-semibold text-xs whitespace-nowrap">Efficiency (%)</th>
+                                                <th className="px-3 py-3 text-center font-semibold text-xs whitespace-nowrap">Mistake (%)</th>
+                                                <th className="px-4 py-3 text-left font-semibold text-xs whitespace-nowrap min-w-[220px]">QA Comments</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {detailReport.report_rows.map((row, i) => {
-                                                const date = row.first_order_date ? String(row.first_order_date).substring(0, 10) : '-';
-                                                const comments = (commentMap[row.order_number] || []).join(' | ');
+                                            {qaSummaryRows.map((row, i) => {
                                                 const hasMistake = row.total_mistakes > 0;
+                                                const comments = row.comments.join(' | ');
+                                                const eff = calcEfficiency(row.total_plans, row.mistake_plans);
+                                                const mistPct = row.total_plans > 0 ? Math.round((row.mistake_plans / row.total_plans) * 100) : 0;
                                                 return (
                                                     <motion.tr
-                                                        key={row.order_number || i}
+                                                        key={row.qa_name || i}
                                                         initial={{ opacity: 0 }}
                                                         animate={{ opacity: 1 }}
                                                         transition={{ delay: Math.min(i * 0.01, 0.3) }}
-                                                        className={`border-b border-slate-100 ${hasMistake ? 'bg-red-50/30 hover:bg-red-50/60' : i % 2 === 0 ? 'bg-white hover:bg-brand-50/10' : 'bg-slate-50/30 hover:bg-brand-50/10'}`}
+                                                        className={`border-b border-slate-100 ${hasMistake ? 'bg-red-50/20 hover:bg-red-50/50' : i % 2 === 0 ? 'bg-white hover:bg-brand-50/10' : 'bg-slate-50/30 hover:bg-brand-50/10'}`}
                                                     >
-                                                        <td className="px-3 py-2 whitespace-nowrap text-xs text-slate-500">{date}</td>
-                                                        <td className="px-3 py-2 max-w-[180px]">
-                                                            <span className="text-xs text-slate-700 line-clamp-1" title={row.client_name || ''}>
-                                                                {row.client_name || '-'}
+                                                        <td className="px-4 py-3 whitespace-nowrap">
+                                                            <div className="inline-flex items-center gap-2">
+                                                                <div className="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-[10px] font-bold shrink-0 shadow-xs">
+                                                                    {row.qa_name.charAt(0).toUpperCase()}
+                                                                </div>
+                                                                <span className="text-xs text-slate-800 font-bold whitespace-nowrap">{row.qa_name}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                            <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-brand-50 text-brand-700 ring-1 ring-brand-200">
+                                                                {row.total_plans}
                                                             </span>
                                                         </td>
-                                                        <td className="px-3 py-2 text-center text-xs text-slate-700 whitespace-nowrap">{row.drawer_name || '-'}</td>
-                                                        <td className="px-3 py-2 text-center text-xs text-slate-700 whitespace-nowrap">{row.checker_name || '-'}</td>
-                                                        <td className="px-3 py-2 text-center text-xs text-slate-700 whitespace-nowrap">{row.qa_name || '-'}</td>
                                                         {checklistCols.map(col => {
-                                                            const val = row[col];
-                                                            const isOk = val == null || val === 0;
+                                                            const count = row.checklist_counts[col] ?? 0;
                                                             return (
-                                                                <td key={col} className="px-3 py-2 text-center">
-                                                                    {isOk
-                                                                        ? <span className="text-[10px] font-semibold text-green-600">OK</span>
-                                                                        : <span className="text-[10px] font-bold text-red-600">NOT OK</span>
-                                                                    }
+                                                                <td key={col} className="px-3 py-3 text-center whitespace-nowrap">
+                                                                    {count === 0 ? (
+                                                                        <span className="text-xs font-semibold text-emerald-600">0</span>
+                                                                    ) : (
+                                                                        <span className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-0.5 rounded-md text-xs font-bold bg-red-100 text-red-700 shadow-2xs">
+                                                                            {count}
+                                                                        </span>
+                                                                    )}
                                                                 </td>
                                                             );
                                                         })}
-                                                        <td className="px-3 py-2 max-w-[220px]">
-                                                            {comments
-                                                                ? <span className="text-xs text-amber-700 font-medium">{comments}</span>
-                                                                : <span className="text-xs text-slate-300">-</span>
-                                                            }
+                                                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                            {row.total_mistakes > 0 ? (
+                                                                <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-700">
+                                                                    {row.total_mistakes}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-xs font-semibold text-emerald-600">0</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                            <EfficiencyBadge pct={eff} />
+                                                        </td>
+                                                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                            <span className={`text-xs font-bold ${mistPct > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
+                                                                {mistPct}%
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-3 min-w-[220px] max-w-[420px]">
+                                                            {comments ? (
+                                                                <span className="text-xs text-amber-800 font-medium whitespace-normal break-words leading-relaxed block">
+                                                                    {comments}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-xs text-slate-300">-</span>
+                                                            )}
                                                         </td>
                                                     </motion.tr>
                                                 );
                                             })}
                                         </tbody>
+                                        {/* Prominent Footer Row: Overall totals, issues, and percentages */}
+                                        <tfoot>
+                                            <tr className="bg-slate-100 border-t-2 border-brand-600 font-bold text-slate-800">
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <span className="text-xs font-black tracking-wide uppercase text-brand-900">Total / Summary</span>
+                                                </td>
+                                                <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                    <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-black bg-brand-200 text-brand-900">
+                                                        {totalAllPlans}
+                                                    </span>
+                                                </td>
+                                                {checklistCols.map(col => {
+                                                    const count = totalChecklistMistakes[col] ?? 0;
+                                                    return (
+                                                        <td key={col} className="px-3 py-3 text-center whitespace-nowrap">
+                                                            {count === 0 ? (
+                                                                <span className="text-xs font-bold text-emerald-700">0</span>
+                                                            ) : (
+                                                                <span className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-0.5 rounded-md text-xs font-bold bg-red-200 text-red-800">
+                                                                    {count}
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                    );
+                                                })}
+                                                <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                    <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-black bg-rose-200 text-rose-900">
+                                                        {totalAllMistakes}
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                    <EfficiencyBadge pct={overallEfficiency} />
+                                                </td>
+                                                <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                    <span className={`text-xs font-black ${overallMistakePct > 0 ? 'text-rose-700' : 'text-slate-600'}`}>
+                                                        {overallMistakePct}%
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-xs text-slate-500 italic">
+                                                    Total {totalAllMistakes} issues across {totalAllPlans} plans
+                                                </td>
+                                            </tr>
+                                        </tfoot>
                                     </table>
                                     <div className="flex items-center justify-between px-4 py-2.5 border-t border-slate-100 bg-slate-50/30">
-                                        <span className="text-xs text-slate-500">{detailReport.report_rows.length} orders reviewed</span>
-                                        <span className="text-xs text-slate-400">{detailReport.summary?.total_mistakes ?? 0} total mistakes</span>
+                                        <span className="text-xs text-slate-600 font-medium">
+                                            Showing <strong>{qaSummaryRows.length}</strong> QA persons (<strong>{detailReport.report_rows.length}</strong> total plans)
+                                        </span>
+                                        <span className="text-xs text-slate-500">
+                                            Overall Efficiency: <strong>{overallEfficiency}%</strong> &bull; <strong>{detailReport.summary?.total_mistakes ?? 0}</strong> total mistakes
+                                        </span>
                                     </div>
                                 </div>
                             );
