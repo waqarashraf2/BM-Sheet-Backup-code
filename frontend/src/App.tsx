@@ -43,6 +43,7 @@ const QATeamAssignment = lazy(() => import('./pages/Workflow/QATeamAssignment'))
 const CheckerTeamAssignment = lazy(() => import('./pages/Workflow/CheckerTeamAssignment'));
 const LiveQADashboard = lazy(() => import('./pages/LiveQA/LiveQADashboard'));
 const InternalQADashboard = lazy(() => import('./pages/InternalQA/InternalQADashboard'));
+const AmendAssignmentDashboard = lazy(() => import('./pages/Workflow/AmendAssignmentDashboard'));
 
 // ─── Loading fallback for lazy routes ───
 function PageLoader() {
@@ -130,6 +131,12 @@ function App() {
         return (
           <Suspense fallback={<PageLoader />}>
             <ClientIssueDashboard />
+          </Suspense>
+        );
+      case 'amender':
+        return (
+          <Suspense fallback={<PageLoader />}>
+            <AmendAssignmentDashboard />
           </Suspense>
         );
       default:
@@ -385,6 +392,17 @@ function App() {
                 <ProtectedRoute allowedRoles={['live_qa', 'ceo', 'director', 'operations_manager']}>
                   <Suspense fallback={<PageLoader />}>
                     <InternalQADashboard />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="amends/*"
+              element={
+                <ProtectedRoute allowedRoles={['amender', 'ceo', 'director', 'operations_manager', 'project_manager', 'qa']}>
+                  <Suspense fallback={<PageLoader />}>
+                    <AmendAssignmentDashboard />
                   </Suspense>
                 </ProtectedRoute>
               }

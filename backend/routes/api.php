@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\ClientPortalUploadController;
 use App\Http\Controllers\Api\CubiQaReportController;
 use App\Http\Controllers\Api\OrderAssetZipDownloadController;
 use App\Http\Controllers\Api\HrController;
+use App\Http\Controllers\Api\AmendController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -577,7 +578,17 @@ Route::middleware('auth:sanctum')->prefix('live-qa')->group(function () {
     Route::get('/internal-qa/review/{projectId}/{orderNumber}', [LiveQAController::class, 'getInternalQaReview']);
     Route::post('/internal-qa/review/{projectId}/{orderNumber}', [LiveQAController::class, 'submitInternalQaReview']);
     Route::get('/internal-qa/mistake-summary/{projectId}', [LiveQAController::class, 'getInternalQaMistakeSummary']);
-    Route::get('/internal-qa/all-projects-report', [LiveQAController::class, 'getInternalQaAllProjectsReport']);
+});
+
+// ─── Amend Management Routes ───────────────────────────────────────
+Route::middleware('auth:sanctum')->prefix('amends')->group(function () {
+    Route::get('/orders/{projectId}', [AmendController::class, 'getOrders']);
+    Route::get('/workers', [AmendController::class, 'getAmenders']);
+    Route::post('/assign/{projectId}/{orderId}', [AmendController::class, 'assignOrder']);
+    Route::post('/complete/{projectId}/{orderId}', [AmendController::class, 'completeOrder']);
+    Route::post('/notes/{projectId}/{orderId}', [AmendController::class, 'updateNotes']);
+    Route::post('/mark-as-amend/{projectId}/{orderId}', [AmendController::class, 'markAsAmend']);
+    Route::post('/sync/{projectId}', [AmendController::class, 'syncFromPortal']);
 });
 
 

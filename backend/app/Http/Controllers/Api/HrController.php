@@ -186,7 +186,7 @@ class HrController extends Controller
         $rules = [
             'name' => 'sometimes|string|max:255',
             'email' => ['sometimes', 'email', Rule::unique('users', 'email')->ignore($user->id)],
-            'role' => 'sometimes|in:drawer,checker,filler,qa,designer,project_manager,operations_manager,accounts_manager,hr,csr,it',
+            'role' => 'sometimes|in:drawer,checker,filler,qa,designer,project_manager,operations_manager,accounts_manager,hr,csr,it,amender',
             'country' => 'sometimes|nullable|string|max:255',
             'department' => 'sometimes|nullable|in:floor_plan,photos_enhancement,general,support,it',
             'project_id' => 'sometimes|nullable|exists:projects,id',

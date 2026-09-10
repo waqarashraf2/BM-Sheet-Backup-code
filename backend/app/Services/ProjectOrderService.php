@@ -315,4 +315,51 @@ class ProjectOrderService
     {
         return Schema::hasTable(static::getInternalQaMistakeTableName($projectId));
     }
+
+    /**
+     * Get amend table name for a project.
+     * e.g. project_16_amends
+     */
+    public static function getAmendTableName(int $projectId): string
+    {
+        return "project_{$projectId}_amends";
+    }
+
+    /**
+     * Create the amend tracking table for a project if it does not exist.
+     * Created lazily only when an amender/supervisor accesses amends for the project.
+     */
+    public static function createAmendTable(int $projectId): void
+    {
+        $tableName = static::getAmendTableName($projectId);
+
+        if (Schema::hasTable($tableName)) {
+            return;
+        }
+
+        Schema::create($tableName, function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('order_id')->index();
+            $table->string('order_number', 100)->index();
+            $table->string('amend', 10)->default('yes');
+            $table->text('amend_notes')->nullable();
+            $table->string('amend_status', 30)->default('pending')->index(); // pending, in_progress, delivered, done
+            $table->unsignedBigInteger('amender_id')->nullable()->index();
+            $table->string('amender_name', 191)->nullable();
+            $table->timestamp('assigned_at')->nullable();
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('completed_at')->nullable();
+            $table->timestamps();
+
+            $table->index(['order_id', 'amend_status']);
+        });
+    }
+
+    /**
+     * Check if the amend table exists for a project.
+     */
+    public static function amendTableExists(int $projectId): bool
+    {
+        return Schema::hasTable(static::getAmendTableName($projectId));
+    }
 }

@@ -89,6 +89,7 @@ export default function UserManagement() {
     { value: 'csr', label: 'CSR' },
     { value: 'it', label: 'IT' },
     { value: 'client', label: 'Client' },
+    { value: 'amender', label: 'Amender' },
   ];
   const hiddenRoles: Record<string, string[]> = {
     ceo: ['ceo'],

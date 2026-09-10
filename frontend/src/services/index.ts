@@ -1423,3 +1423,85 @@ export const columnService = {
     }),
 
 };
+
+// ═══════════════════════════════════════════
+// AMEND SERVICE
+// ═══════════════════════════════════════════
+export interface AmendOrder {
+  order_id: number;
+  order_number: string;
+  client_name?: string | null;
+  client_reference?: string | null;
+  address?: string | null;
+  plan_type?: string | null;
+  instruction?: string | null;
+  workflow_state?: string | null;
+  order_status?: string | null;
+  priority?: string | null;
+  due_in?: string | null;
+  received_at?: string | null;
+  delivered_at?: string | null;
+  drawer_id?: number | null;
+  drawer_name?: string | null;
+  checker_id?: number | null;
+  checker_name?: string | null;
+  qa_id?: number | null;
+  qa_name?: string | null;
+  order_amend_flag?: string | null;
+  amend_id: number;
+  amend: string;
+  amend_notes?: string | null;
+  amend_status: 'pending' | 'in_progress' | 'delivered' | 'done';
+  amender_id?: number | null;
+  amender_name?: string | null;
+  amend_assigned_at?: string | null;
+  amend_started_at?: string | null;
+  amend_completed_at?: string | null;
+  amend_created_at?: string | null;
+}
+
+export interface AmendOrdersResponse {
+  data: AmendOrder[];
+  counts: {
+    total: number;
+    pending: number;
+    in_progress: number;
+    delivered: number;
+  };
+  pagination: {
+    current_page: number;
+    last_page: number;
+    per_page: number;
+    total: number;
+  };
+}
+
+export interface AmenderWorker {
+  id: number;
+  name: string;
+  role: string;
+  email: string;
+}
+
+export const amendService = {
+  getOrders: (projectId: number, params?: { status?: string; search?: string; page?: number; per_page?: number }) =>
+    api.get<AmendOrdersResponse>(`/amends/orders/${projectId}`, { params }),
+
+  getWorkers: () =>
+    api.get<{ data: AmenderWorker[] }>('/amends/workers'),
+
+  assign: (projectId: number, orderId: number, data: { amender_id: number; amend_notes?: string }) =>
+    api.post<{ message: string; amender_name: string; amend_status: string }>(`/amends/assign/${projectId}/${orderId}`, data),
+
+  complete: (projectId: number, orderId: number, data?: { amend_notes?: string }) =>
+    api.post<{ message: string; amend_status: string; completed_at: string }>(`/amends/complete/${projectId}/${orderId}`, data),
+
+  updateNotes: (projectId: number, orderId: number, notes: string) =>
+    api.post<{ message: string; amend_notes: string }>(`/amends/notes/${projectId}/${orderId}`, { amend_notes: notes }),
+
+  markAsAmend: (projectId: number, orderId: number, data?: { amend_notes?: string; amend_status?: string }) =>
+    api.post<{ message: string; amend_status: string; amend_notes: string }>(`/amends/mark-as-amend/${projectId}/${orderId}`, data),
+
+  syncFromPortal: (projectId: number) =>
+    api.post<{ success: boolean; message: string; data: any }>(`/amends/sync/${projectId}`),
+};
