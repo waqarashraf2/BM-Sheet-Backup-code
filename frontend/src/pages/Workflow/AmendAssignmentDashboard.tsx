@@ -30,6 +30,7 @@ import {
   UploadCloud,
   X,
   Info,
+  Building,
 } from 'lucide-react';
 
 const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
@@ -41,7 +42,7 @@ export default function AmendAssignmentDashboard() {
   const { toast } = useToast();
 
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | 'all'>('all');
   const [orders, setOrders] = useState<AmendOrder[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -107,7 +108,8 @@ export default function AmendAssignmentDashboard() {
   const isPrimaryAmender = user?.role === 'amender';
 
   // Selected project data
-  const selectedProjectData = projects.find((p) => p.id === selectedProjectId);
+  const selectedProjectData =
+    selectedProjectId !== 'all' ? projects.find((p) => p.id === selectedProjectId) : null;
   const projectTz = selectedProjectData?.timezone || DEFAULT_PROJECT_TIMEZONE;
 
   // Load Projects on initial mount
@@ -117,9 +119,7 @@ export default function AmendAssignmentDashboard() {
 
   // When project changes, fetch amend orders
   useEffect(() => {
-    if (selectedProjectId) {
-      loadOrders(selectedProjectId);
-    }
+    loadOrders(selectedProjectId);
   }, [selectedProjectId]);
 
   const loadProjects = async () => {
@@ -128,9 +128,6 @@ export default function AmendAssignmentDashboard() {
       const list = res.data?.data || res.data || [];
       const arrayList = Array.isArray(list) ? list : [];
       setProjects(arrayList);
-      if (arrayList.length > 0 && !selectedProjectId) {
-        setSelectedProjectId(arrayList[0].id);
-      }
     } catch (error) {
       console.error('Failed to load projects:', error);
       toast({
@@ -141,12 +138,16 @@ export default function AmendAssignmentDashboard() {
     }
   };
 
-  const loadOrders = async (projectId: number, isSilent = false) => {
+  const loadOrders = async (projectId: number | 'all', isSilent = false) => {
     if (!isSilent) setLoading(true);
     else setRefreshing(true);
 
     try {
-      const res = await amendService.getOrders(projectId);
+      const res =
+        projectId === 'all'
+          ? await amendService.getAllOrders()
+          : await amendService.getOrders(projectId);
+
       if (res.data) {
         setOrders(res.data.data || []);
         if (res.data.counts) {
@@ -168,17 +169,27 @@ export default function AmendAssignmentDashboard() {
 
   // Explicit sync from client portal
   const handleFetchClientPortal = async () => {
-    if (!selectedProjectId) {
+    let syncProjectId: number | null = null;
+    if (selectedProjectId !== 'all') {
+      syncProjectId = selectedProjectId;
+    } else {
+      // Find default floorplan project (e.g., project 15 or first project)
+      const p15 = projects.find((p) => p.id === 15);
+      syncProjectId = p15 ? p15.id : projects[0]?.id || 15;
+    }
+
+    if (!syncProjectId) {
       toast({
         title: 'Project required',
-        description: 'Please select a project first.',
+        description: 'Please select a project to sync with client portal.',
         type: 'error',
       });
       return;
     }
+
     setFetchingPortal(true);
     try {
-      const res = await amendService.syncFromPortal(selectedProjectId);
+      const res = await amendService.syncFromPortal(syncProjectId);
       toast({
         title: 'Synced successfully',
         description: res.data?.message || 'Amend orders updated from client portal.',
@@ -236,7 +247,10 @@ export default function AmendAssignmentDashboard() {
   // Submit Amender Done
   const handleAmenderDoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!orderForAmenderDone || !selectedProjectId) return;
+    if (!orderForAmenderDone) return;
+
+    const targetProjectId =
+      orderForAmenderDone.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
 
     setSubmittingDone(true);
     try {
@@ -249,7 +263,7 @@ export default function AmendAssignmentDashboard() {
         completed_at: new Date().toISOString(),
       };
 
-      await amendService.amenderDone(selectedProjectId, orderForAmenderDone.order_id, {
+      await amendService.amenderDone(targetProjectId, orderForAmenderDone.order_id, {
         amend_category: selectedCategory,
         points_data: pointsPayload,
         notes: amenderNotesContent,
@@ -313,7 +327,10 @@ export default function AmendAssignmentDashboard() {
   // Submit Direct Amender Deliver
   const handleDeliverSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!orderForDeliver || !selectedProjectId) return;
+    if (!orderForDeliver) return;
+
+    const targetProjectId =
+      orderForDeliver.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
 
     setSubmittingDeliver(true);
     try {
@@ -336,7 +353,7 @@ export default function AmendAssignmentDashboard() {
         delivered_at: new Date().toISOString(),
       };
 
-      await amendService.deliver(selectedProjectId, orderForDeliver.order_id, {
+      await amendService.deliver(targetProjectId, orderForDeliver.order_id, {
         amend_category: selectedCategory,
         points_data: pointsPayload,
         uploader_name: user?.name,
@@ -412,6 +429,7 @@ export default function AmendAssignmentDashboard() {
         const matchPlan = (order.plan_type || '').toLowerCase().includes(q);
         const matchNotes = (order.amend_notes || '').toLowerCase().includes(q);
         const matchCat = (order.amend_category || '').toLowerCase().includes(q);
+        const matchProj = (order.project_name || '').toLowerCase().includes(q);
 
         return (
           matchId ||
@@ -423,7 +441,8 @@ export default function AmendAssignmentDashboard() {
           matchUploader ||
           matchPlan ||
           matchNotes ||
-          matchCat
+          matchCat ||
+          matchProj
         );
       }
 
@@ -445,11 +464,11 @@ export default function AmendAssignmentDashboard() {
                 <h1 className="text-lg font-bold text-slate-900 tracking-tight flex items-center gap-2">
                   Amend Orders Hub
                   <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200">
-                    Two-Tier Amender Flow
+                    {selectedProjectId === 'all' ? 'All Projects (Multi-Project)' : (selectedProjectData?.name || 'Project View')}
                   </span>
                 </h1>
                 <p className="text-xs text-slate-500">
-                  Amender fixes &bull; Direct Amender checks &bull; Classifications: Team Mistake | Request | Amender Mistake
+                  Amender can work across all projects &bull; Direct Amender verifies &bull; Classifications: Team Mistake | Request | Amender Mistake
                 </p>
               </div>
             </div>
@@ -463,7 +482,7 @@ export default function AmendAssignmentDashboard() {
             <Button
               variant="secondary"
               icon={RefreshCw}
-              onClick={() => selectedProjectId && loadOrders(selectedProjectId, true)}
+              onClick={() => loadOrders(selectedProjectId, true)}
               disabled={refreshing || loading}
             >
               {refreshing ? 'Refreshing...' : 'Refresh'}
@@ -484,10 +503,8 @@ export default function AmendAssignmentDashboard() {
         <div className="bg-brand-50/60 border border-brand-100 rounded-xl p-3 flex items-start gap-3">
           <Info className="w-4 h-4 text-brand-600 mt-0.5 shrink-0" />
           <p className="text-xs text-brand-800">
-            <span className="font-semibold">Amender Submission Points:</span> Amender / Direct Amender submission ke waqt 3 points (
-            <span className="font-bold text-rose-700">Team Mistake</span>,{' '}
-            <span className="font-bold text-blue-700">Request</span>,{' '}
-            <span className="font-bold text-amber-700">Amender Mistake</span>) me se category choose kar saktay hain jo JSON aur CSV reports me store hoti hai.
+            <span className="font-semibold">Universal Amender Hub:</span> Amenders har project ki amends dekh aur complete kar saktay hain.
+            Aap dropdown se <span className="font-bold">"All Projects (Every Project)"</span> ya koi bhi specific project select kar saktay hain.
           </p>
         </div>
 
@@ -495,11 +512,15 @@ export default function AmendAssignmentDashboard() {
         <div className="flex flex-wrap items-center gap-2 bg-white p-3 rounded-xl border border-slate-200/80 shadow-sm">
           {/* Project Select */}
           <select
-            value={selectedProjectId || ''}
-            onChange={(e) => setSelectedProjectId(Number(e.target.value))}
-            className="select text-xs min-w-[200px] font-medium"
+            value={selectedProjectId}
+            onChange={(e) => {
+              const val = e.target.value;
+              setSelectedProjectId(val === 'all' ? 'all' : Number(val));
+            }}
+            className="select text-xs min-w-[220px] font-semibold text-brand-700 bg-brand-50/40 border-brand-200"
             aria-label="Select Project"
           >
+            <option value="all">🌟 All Projects (Every Project Amends)</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} ({p.department || 'Floorplan'} - {p.country || 'Global'})
@@ -597,8 +618,9 @@ export default function AmendAssignmentDashboard() {
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 font-semibold uppercase tracking-wider text-[11px]">
                   <th className="py-3 px-3.5"># Order Number</th>
-                  <th className="py-3 px-3.5">Client & Address</th>
-                  <th className="py-3 px-3.5">Classification & Plan</th>
+                  <th className="py-3 px-3.5">Project & Client</th>
+                  <th className="py-3 px-3.5">Address & Plan</th>
+                  <th className="py-3 px-3.5">Classification</th>
                   <th className="py-3 px-3.5">Amend Notes</th>
                   <th className="py-3 px-3.5">Amender (Stage 1)</th>
                   <th className="py-3 px-3.5">Direct Amender / Uploader</th>
@@ -610,14 +632,14 @@ export default function AmendAssignmentDashboard() {
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-slate-400">
+                    <td colSpan={10} className="py-12 text-center text-slate-400">
                       <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-brand-600" />
                       <span>Loading amend orders...</span>
                     </td>
                   </tr>
                 ) : filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-slate-400">
+                    <td colSpan={10} className="py-12 text-center text-slate-400">
                       <AlertCircle className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                       <p className="text-sm font-medium text-slate-600">No amend orders found</p>
                       <p className="text-xs text-slate-400 mt-0.5">
@@ -632,13 +654,13 @@ export default function AmendAssignmentDashboard() {
 
                     return (
                       <tr
-                        key={order.order_id}
+                        key={`${order.project_id || 'p'}-${order.order_id}`}
                         className="hover:bg-slate-50/80 transition-colors duration-150"
                       >
                         {/* Order Number */}
                         <td className="py-2.5 px-3.5 font-bold text-slate-900 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
-                            <span className="text-brand-700">#{order.order_id}</span>
+                            <span className="text-brand-700 font-mono">#{order.order_id}</span>
                             {order.order_number && (
                               <span className="text-[11px] font-normal text-slate-500">
                                 ({order.order_number})
@@ -653,42 +675,55 @@ export default function AmendAssignmentDashboard() {
                           )}
                         </td>
 
-                        {/* Client & Address */}
+                        {/* Project & Client */}
                         <td className="py-2.5 px-3.5 max-w-xs">
+                          {order.project_name && (
+                            <div className="mb-0.5">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 text-[10px] font-bold border border-slate-200">
+                                <Building className="w-3 h-3 text-slate-500" />
+                                <span>{order.project_name}</span>
+                              </span>
+                            </div>
+                          )}
                           <div className="font-semibold text-slate-800 truncate" title={order.client_name || ''}>
                             {order.client_name || 'N/A'}
                           </div>
+                        </td>
+
+                        {/* Address & Plan */}
+                        <td className="py-2.5 px-3.5 max-w-xs">
                           <div
-                            className="text-[11px] text-slate-500 truncate mt-0.5"
+                            className="text-[11px] text-slate-700 font-medium truncate"
                             title={order.address || ''}
                           >
                             {order.address || 'No Address'}
                           </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1.5">
+                            <span>{order.plan_type || '-'}</span>
+                            {order.priority && order.priority !== 'regular' && (
+                              <span className="px-1 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200">
+                                {order.priority}
+                              </span>
+                            )}
+                          </div>
                         </td>
 
-                        {/* Classification & Plan */}
-                        <td className="py-2.5 px-3.5">
-                          {/* Classification Badge (Team Mistake, Request, Amender Mistake) */}
-                          {order.amend_category && (
-                            <div className="mb-1">
-                              <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
-                                  order.amend_category === 'Team Mistake'
-                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                    : order.amend_category === 'Amender Mistake'
-                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                    : 'bg-blue-50 text-blue-700 border-blue-200'
-                                }`}
-                              >
-                                {order.amend_category}
-                              </span>
-                            </div>
-                          )}
-                          <div className="font-medium text-slate-700">{order.plan_type || '-'}</div>
-                          {order.priority && order.priority !== 'regular' && (
-                            <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200">
-                              {order.priority}
+                        {/* Classification (Team Mistake, Request, Amender Mistake) */}
+                        <td className="py-2.5 px-3.5 whitespace-nowrap">
+                          {order.amend_category ? (
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
+                                order.amend_category === 'Team Mistake'
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                  : order.amend_category === 'Amender Mistake'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-blue-50 text-blue-700 border-blue-200'
+                              }`}
+                            >
+                              {order.amend_category}
                             </span>
+                          ) : (
+                            <span className="text-slate-400 italic text-[11px]">-</span>
                           )}
                         </td>
 
@@ -839,11 +874,17 @@ export default function AmendAssignmentDashboard() {
         <Modal
           open={amenderDoneModalOpen}
           onClose={() => setAmenderDoneModalOpen(false)}
-          title={`Amender Completion - Order #${orderForAmenderDone?.order_id}`}
+          title={`Amender Completion - Order #${orderForAmenderDone?.order_id} (${orderForAmenderDone?.project_name || 'Project'})`}
         >
           {orderForAmenderDone && (
             <form onSubmit={handleAmenderDoneSubmit} className="space-y-4 text-xs">
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                {orderForAmenderDone.project_name && (
+                  <div className="text-slate-700">
+                    <span className="font-semibold text-slate-900">Project:</span>{' '}
+                    <span className="font-bold text-brand-700">{orderForAmenderDone.project_name}</span>
+                  </div>
+                )}
                 <div className="text-slate-700">
                   <span className="font-semibold text-slate-900">Client:</span> {orderForAmenderDone.client_name || 'N/A'}
                 </div>
@@ -1013,11 +1054,17 @@ export default function AmendAssignmentDashboard() {
         <Modal
           open={deliverModalOpen}
           onClose={() => setDeliverModalOpen(false)}
-          title={`Check & Deliver Amend - Order #${orderForDeliver?.order_id}`}
+          title={`Check & Deliver Amend - Order #${orderForDeliver?.order_id} (${orderForDeliver?.project_name || 'Project'})`}
         >
           {orderForDeliver && (
             <form onSubmit={handleDeliverSubmit} className="space-y-4 text-xs">
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                {orderForDeliver.project_name && (
+                  <div className="text-slate-700">
+                    <span className="font-semibold text-slate-900">Project:</span>{' '}
+                    <span className="font-bold text-brand-700">{orderForDeliver.project_name}</span>
+                  </div>
+                )}
                 <div className="text-slate-700">
                   <span className="font-semibold text-slate-900">Amender:</span>{' '}
                   <span className="font-bold text-brand-700">{orderForDeliver.amender_name || user?.name}</span>
@@ -1188,7 +1235,7 @@ export default function AmendAssignmentDashboard() {
         <Modal
           open={notesModalOpen}
           onClose={() => setNotesModalOpen(false)}
-          title={`Amend Notes - Order #${orderForNotes?.order_id}`}
+          title={`Amend Notes - Order #${orderForNotes?.order_id} (${orderForNotes?.project_name || 'Project'})`}
         >
           {orderForNotes && (
             <div className="space-y-3 text-xs">
@@ -1208,7 +1255,7 @@ export default function AmendAssignmentDashboard() {
         <Modal
           open={pointsModalOpen}
           onClose={() => setPointsModalOpen(false)}
-          title={`Saved Quality Points (JSON) - Order #${orderForPoints?.order_id}`}
+          title={`Saved Quality Points (JSON) - Order #${orderForPoints?.order_id} (${orderForPoints?.project_name || 'Project'})`}
         >
           {orderForPoints && (
             <div className="space-y-3 text-xs">
@@ -1227,10 +1274,15 @@ export default function AmendAssignmentDashboard() {
 
                 return (
                   <div className="space-y-3">
-                    {/* Selected Category Highlight */}
-                    {cat && (
-                      <div className="flex items-center justify-between p-3 rounded-lg border bg-slate-50">
-                        <span className="font-bold text-slate-700">Amend Classification:</span>
+                    {/* Project & Classification Highlight */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg border bg-slate-50">
+                      {orderForPoints.project_name && (
+                        <div className="flex items-center gap-1.5">
+                          <Building className="w-4 h-4 text-slate-500" />
+                          <span className="font-bold text-slate-800">{orderForPoints.project_name}</span>
+                        </div>
+                      )}
+                      {cat && (
                         <span
                           className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase border ${
                             cat === 'Team Mistake'
@@ -1242,8 +1294,8 @@ export default function AmendAssignmentDashboard() {
                         >
                           {cat}
                         </span>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
                     {/* Amender Checklist */}
                     {(parsed?.amender_checklist || parsed?.checklist) && (

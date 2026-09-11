@@ -250,7 +250,7 @@ Route::prefix('assignments')->group(function () {
     // SHARED WORKFLOW ROUTES (management + QA supervisor)
     // QA can view projects/orders and reassign drawers
     // ═══════════════════════════════════════════
-    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,hr,client')->group(function () {
+    Route::middleware('role:ceo,director,operations_manager,project_manager,qa,live_qa,hr,client,amender,direct_amender')->group(function () {
         Route::get('/projects', [ProjectController::class, 'index']);
         Route::get('/projects/{id}', [ProjectController::class, 'show']);
         Route::get('/projects/{id}/statistics', [ProjectController::class, 'statistics']);
@@ -582,6 +582,7 @@ Route::middleware('auth:sanctum')->prefix('live-qa')->group(function () {
 
 // ─── Amend Management Routes ───────────────────────────────────────
 Route::middleware('auth:sanctum')->prefix('amends')->group(function () {
+    Route::get('/all-orders', [AmendController::class, 'getAllOrders']);
     Route::get('/orders/{projectId}', [AmendController::class, 'getOrders']);
     Route::get('/workers', [AmendController::class, 'getAmenders']);
     Route::post('/assign/{projectId}/{orderId}', [AmendController::class, 'assignOrder']);

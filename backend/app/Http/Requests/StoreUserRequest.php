@@ -11,7 +11,7 @@ class StoreUserRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return in_array(auth()->user()->role, ['ceo', 'director', 'operations_manager', 'project_manager', 'hr']);
+        return in_array(auth()->user()->role, ['ceo', 'director', 'operations_manager', 'project_manager', 'hr', 'admin']);
     }
 
     /**

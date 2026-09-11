@@ -30,10 +30,15 @@ class AmendController extends Controller
 
     /**
      * GET /api/amends/orders/{projectId}
-     * Fetch orders that have amends for a specific project.
+     * Fetch orders that have amends for a specific project or 'all' projects.
      */
-    public function getOrders(Request $request, int $projectId)
+    public function getOrders(Request $request, $projectId)
     {
+        if ($projectId === 'all' || (int)$projectId === 0) {
+            return $this->getAllOrders($request);
+        }
+
+        $projectId = (int) $projectId;
         $orderTable = ProjectOrderService::getTableName($projectId);
         if (!Schema::hasTable($orderTable)) {
             return response()->json(['error' => 'Project table not found'], 404);
@@ -42,6 +47,9 @@ class AmendController extends Controller
         $this->ensureAmendTableReady($projectId);
         $amendTable = ProjectOrderService::getAmendTableName($projectId);
         $hasAmendTable = Schema::hasTable($amendTable);
+
+        $project = Project::find($projectId);
+        $projectName = $project ? addslashes($project->name) : "Project #{$projectId}";
 
         $status = $request->input('status', 'all'); // all, pending, in_progress, amender_done, delivered
         $search = trim((string) $request->input('search', ''));
@@ -55,6 +63,8 @@ class AmendController extends Controller
                 ->select([
                     'o.id as order_id',
                     'o.order_number',
+                    DB::raw("{$projectId} as project_id"),
+                    DB::raw("'{$projectName}' as project_name"),
                     'o.client_name',
                     'o.client_reference',
                     'o.address',
@@ -102,6 +112,8 @@ class AmendController extends Controller
             $query->select([
                 'o.id as order_id',
                 'o.order_number',
+                DB::raw("{$projectId} as project_id"),
+                DB::raw("'{$projectName}' as project_name"),
                 'o.client_name',
                 'o.client_reference',
                 'o.address',
@@ -238,6 +250,253 @@ class AmendController extends Controller
                 'last_page'    => $orders->lastPage(),
                 'per_page'     => $orders->perPage(),
                 'total'        => $orders->total(),
+            ],
+        ]);
+    }
+
+    /**
+     * GET /api/amends/all-orders
+     * Fetch amend orders from all projects combined.
+     */
+    public function getAllOrders(Request $request)
+    {
+        $status = $request->input('status', 'all');
+        $search = trim((string) $request->input('search', ''));
+        $perPage = max(1, min(100, (int) $request->input('per_page', 50)));
+
+        try {
+            $projects = Project::all();
+        } catch (\Throwable $e) {
+            $projects = collect([]);
+        }
+
+        $allOrdersData = [];
+        $totalCombined = 0;
+        $pendingCombined = 0;
+        $inProgressCombined = 0;
+        $amenderDoneCombined = 0;
+        $deliveredCombined = 0;
+
+        foreach ($projects as $project) {
+            $projectId = (int) $project->id;
+            try {
+                $orderTable = ProjectOrderService::getTableName($projectId);
+                if (!Schema::hasTable($orderTable)) {
+                    continue;
+                }
+
+                $this->ensureAmendTableReady($projectId);
+                $amendTable = ProjectOrderService::getAmendTableName($projectId);
+                $hasAmendTable = Schema::hasTable($amendTable);
+                $projectName = $project->name ?? "Project #{$projectId}";
+
+                $q = DB::table($orderTable . ' as o');
+
+                if ($hasAmendTable) {
+                    $q->leftJoin($amendTable . ' as a', 'a.order_id', '=', 'o.id')
+                        ->select([
+                            'o.id as order_id',
+                            'o.order_number',
+                            DB::raw("{$projectId} as project_id"),
+                            DB::raw("'" . addslashes($projectName) . "' as project_name"),
+                            'o.client_name',
+                            'o.client_reference',
+                            'o.address',
+                            'o.plan_type',
+                            'o.instruction',
+                            'o.workflow_state',
+                            'o.status as order_status',
+                            'o.priority',
+                            'o.due_in',
+                            'o.received_at',
+                            'o.delivered_at',
+                            'o.drawer_id',
+                            'o.drawer_name',
+                            'o.checker_id',
+                            'o.checker_name',
+                            'o.qa_id',
+                            'o.qa_name',
+                            'o.amend as order_amend_flag',
+                            DB::raw('COALESCE(a.id, 0) as amend_id'),
+                            DB::raw("COALESCE(a.amend, o.amend, 'yes') as amend"),
+                            'a.amend_notes',
+                            DB::raw("COALESCE(a.amend_status, 'pending') as amend_status"),
+                            'a.amender_id',
+                            'a.amender_name',
+                            'a.assigned_at as amend_assigned_at',
+                            'a.started_at as amend_started_at',
+                            'a.amender_done_at',
+                            'a.direct_amender_id',
+                            'a.direct_amender_name',
+                            'a.uploader_id',
+                            'a.uploader_name',
+                            'a.delivered_at as amend_delivered_at',
+                            'a.completed_at as amend_completed_at',
+                            'a.amend_category',
+                            'a.points_data',
+                            'a.created_at as amend_created_at',
+                        ])
+                        ->where(function ($w) {
+                            $w->where('o.amend', 'yes')
+                              ->orWhereNotNull('a.id');
+                        });
+
+                    $countsData = DB::table($orderTable . ' as o')
+                        ->leftJoin($amendTable . ' as a', 'a.order_id', '=', 'o.id')
+                        ->where(function ($w) {
+                            $w->where('o.amend', 'yes')->orWhereNotNull('a.id');
+                        })
+                        ->selectRaw("
+                            COUNT(*) as total,
+                            SUM(CASE WHEN a.amend_status = 'pending' OR a.amend_status IS NULL THEN 1 ELSE 0 END) as pending_count,
+                            SUM(CASE WHEN a.amend_status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_count,
+                            SUM(CASE WHEN a.amend_status = 'amender_done' THEN 1 ELSE 0 END) as amender_done_count,
+                            SUM(CASE WHEN a.amend_status IN ('delivered', 'done') THEN 1 ELSE 0 END) as delivered_count
+                        ")->first();
+
+                    $totalCombined += (int) ($countsData->total ?? 0);
+                    $pendingCombined += (int) ($countsData->pending_count ?? 0);
+                    $inProgressCombined += (int) ($countsData->in_progress_count ?? 0);
+                    $amenderDoneCombined += (int) ($countsData->amender_done_count ?? 0);
+                    $deliveredCombined += (int) ($countsData->delivered_count ?? 0);
+                } else {
+                    $q->select([
+                        'o.id as order_id',
+                        'o.order_number',
+                        DB::raw("{$projectId} as project_id"),
+                        DB::raw("'" . addslashes($projectName) . "' as project_name"),
+                        'o.client_name',
+                        'o.client_reference',
+                        'o.address',
+                        'o.plan_type',
+                        'o.instruction',
+                        'o.workflow_state',
+                        'o.status as order_status',
+                        'o.priority',
+                        'o.due_in',
+                        'o.received_at',
+                        'o.delivered_at',
+                        'o.drawer_id',
+                        'o.drawer_name',
+                        'o.checker_id',
+                        'o.checker_name',
+                        'o.qa_id',
+                        'o.qa_name',
+                        'o.amend as order_amend_flag',
+                        DB::raw('0 as amend_id'),
+                        DB::raw("'yes' as amend"),
+                        DB::raw("NULL as amend_notes"),
+                        DB::raw("'pending' as amend_status"),
+                        DB::raw("NULL as amender_id"),
+                        DB::raw("NULL as amender_name"),
+                        DB::raw("NULL as amend_assigned_at"),
+                        DB::raw("NULL as amend_started_at"),
+                        DB::raw("NULL as amender_done_at"),
+                        DB::raw("NULL as direct_amender_id"),
+                        DB::raw("NULL as direct_amender_name"),
+                        DB::raw("NULL as uploader_id"),
+                        DB::raw("NULL as uploader_name"),
+                        DB::raw("NULL as amend_delivered_at"),
+                        DB::raw("NULL as amend_completed_at"),
+                        DB::raw("NULL as amend_category"),
+                        DB::raw("NULL as points_data"),
+                        DB::raw("NULL as amend_created_at"),
+                    ])
+                    ->where('o.amend', 'yes');
+
+                    $cnt = DB::table($orderTable)->where('amend', 'yes')->count();
+                    $totalCombined += $cnt;
+                    $pendingCombined += $cnt;
+                }
+
+                // Apply status filter
+                if ($status !== 'all') {
+                    if ($status === 'delivered' || $status === 'done') {
+                        if ($hasAmendTable) {
+                            $q->whereIn('a.amend_status', ['delivered', 'done']);
+                        } else {
+                            $q->whereRaw('1 = 0');
+                        }
+                    } elseif ($status === 'amender_done') {
+                        if ($hasAmendTable) {
+                            $q->where('a.amend_status', 'amender_done');
+                        } else {
+                            $q->whereRaw('1 = 0');
+                        }
+                    } elseif ($status === 'in_progress') {
+                        if ($hasAmendTable) {
+                            $q->where('a.amend_status', 'in_progress');
+                        } else {
+                            $q->whereRaw('1 = 0');
+                        }
+                    } elseif ($status === 'pending') {
+                        if ($hasAmendTable) {
+                            $q->where(function ($sub) {
+                                $sub->where('a.amend_status', 'pending')
+                                    ->orWhereNull('a.amend_status');
+                            });
+                        }
+                    }
+                }
+
+                // Search filter
+                if (!empty($search)) {
+                    $q->where(function ($sub) use ($search, $hasAmendTable) {
+                        $sub->where('o.order_number', 'like', "%{$search}%")
+                            ->orWhere('o.client_name', 'like', "%{$search}%")
+                            ->orWhere('o.address', 'like', "%{$search}%")
+                            ->orWhere('o.client_reference', 'like', "%{$search}%")
+                            ->orWhere('o.drawer_name', 'like', "%{$search}%")
+                            ->orWhere('o.checker_name', 'like', "%{$search}%")
+                            ->orWhere('o.qa_name', 'like', "%{$search}%");
+
+                        if ($hasAmendTable) {
+                            $sub->orWhere('a.amender_name', 'like', "%{$search}%")
+                                ->orWhere('a.direct_amender_name', 'like', "%{$search}%")
+                                ->orWhere('a.uploader_name', 'like', "%{$search}%")
+                                ->orWhere('a.amend_notes', 'like', "%{$search}%")
+                                ->orWhere('a.amend_category', 'like', "%{$search}%");
+                        }
+                    });
+                }
+
+                $projectOrders = $q->orderBy('o.id', 'desc')->limit(100)->get()->toArray();
+                foreach ($projectOrders as $po) {
+                    $allOrdersData[] = (array) $po;
+                }
+            } catch (\Throwable $err) {
+                // Ignore any project query issues gracefully
+                continue;
+            }
+        }
+
+        // Sort combined orders by received_at desc / order_id desc
+        usort($allOrdersData, function ($a, $b) {
+            $dateA = $a['received_at'] ?? $a['order_id'] ?? 0;
+            $dateB = $b['received_at'] ?? $b['order_id'] ?? 0;
+            return strcmp((string)$dateB, (string)$dateA);
+        });
+
+        $page = max(1, (int) $request->input('page', 1));
+        $totalItems = count($allOrdersData);
+        $offset = ($page - 1) * $perPage;
+        $pagedData = array_slice($allOrdersData, $offset, $perPage);
+        $lastPage = (int) ceil(max(1, $totalItems) / $perPage);
+
+        return response()->json([
+            'data' => $pagedData,
+            'counts' => [
+                'total'        => $totalCombined,
+                'pending'      => $pendingCombined,
+                'in_progress'  => $inProgressCombined,
+                'amender_done' => $amenderDoneCombined,
+                'delivered'    => $deliveredCombined,
+            ],
+            'pagination' => [
+                'current_page' => $page,
+                'last_page'    => $lastPage,
+                'per_page'     => $perPage,
+                'total'        => $totalItems,
             ],
         ]);
     }

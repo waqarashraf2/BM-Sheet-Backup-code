@@ -94,9 +94,9 @@ export default function UserManagement() {
   ];
   const hiddenRoles: Record<string, string[]> = {
     ceo: ['ceo'],
-    operations_manager: ['ceo', 'director', 'operations_manager', 'accounts_manager'],
-    project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr'],
-    hr: ['ceo', 'hr'],
+    operations_manager: ['ceo', 'director', 'operations_manager', 'accounts_manager', 'hr', 'csr', 'it', 'client', 'amender', 'direct_amender'],
+    project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr', 'csr', 'it', 'client', 'amender', 'direct_amender'],
+    hr: ['ceo', 'hr', 'director', 'client'],
   };
   const rolesToHide = hiddenRoles[myRole] || (myRole === 'director' ? [] : [myRole]);
   const visibleRoleOptions = allRoleOptions.filter(r => {
@@ -171,12 +171,16 @@ export default function UserManagement() {
     if (passwordChanged && formData.password && formData.password !== formData.password_confirmation) { setFormError('Passwords do not match.'); return; }
     try {
       setSaving(true); setFormError('');
+      const d: any = { ...formData };
+      d.project_id = d.project_id ? Number(d.project_id) : null;
+      d.team_id = d.team_id ? Number(d.team_id) : null;
+      d.layer = d.layer ? d.layer : null;
+
       if (editingUser) {
-        const d: any = { ...formData };
         if (!d.password || !passwordChanged) { delete d.password; delete d.password_confirmation; }
         await userService.update(editingUser.id, d);
       } else {
-        await userService.create(formData as any);
+        await userService.create(d as any);
       }
       setShowModal(false); loadUsers();
     } catch (e: any) { setFormError(e.response?.data?.message || 'Failed to save.'); }

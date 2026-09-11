@@ -1430,6 +1430,8 @@ export const columnService = {
 export interface AmendOrder {
   order_id: number;
   order_number: string;
+  project_id?: number | null;
+  project_name?: string | null;
   client_name?: string | null;
   client_reference?: string | null;
   address?: string | null;
@@ -1493,7 +1495,10 @@ export interface AmenderWorker {
 }
 
 export const amendService = {
-  getOrders: (projectId: number, params?: { status?: string; search?: string; page?: number; per_page?: number }) =>
+  getAllOrders: (params?: { status?: string; search?: string; page?: number; per_page?: number }) =>
+    api.get<AmendOrdersResponse>('/amends/all-orders', { params }),
+
+  getOrders: (projectId: number | string, params?: { status?: string; search?: string; page?: number; per_page?: number }) =>
     api.get<AmendOrdersResponse>(`/amends/orders/${projectId}`, { params }),
 
   getWorkers: () =>

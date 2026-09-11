@@ -142,10 +142,45 @@ class UserController extends Controller
     }
 
     /**
+    /**
+     * Ensure users table role ENUM includes all valid roles safely.
+     */
+    public static function ensureUserRolesEnumReady(): void
+    {
+        static $checked = false;
+        if ($checked) return;
+        $checked = true;
+        try {
+            DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM(
+                'ceo',
+                'director',
+                'operations_manager',
+                'project_manager',
+                'drawer',
+                'checker',
+                'qa',
+                'designer',
+                'accounts_manager',
+                'live_qa',
+                'hr',
+                'filler',
+                'csr',
+                'it',
+                'client',
+                'amender',
+                'direct_amender'
+            ) NOT NULL");
+        } catch (\Throwable $e) {
+            // Log or ignore if already updated / permissions restricted
+        }
+    }
+
+    /**
      * Store a newly created resource in storage.
      */
     public function store(StoreUserRequest $request)
     {
+        self::ensureUserRolesEnumReady();
         $data = $request->validated();
         $authUser = $request->user();
 
@@ -157,10 +192,24 @@ class UserController extends Controller
             return response()->json(['message' => 'Only a Director can create or assign a Client account.'], 403);
         }
 
+        if (in_array($authUser->role, ['operations_manager', 'project_manager']) && in_array($data['role'] ?? '', ['csr', 'it', 'amender', 'direct_amender', 'hr', 'ceo', 'director', 'client', 'accounts_manager'])) {
+            return response()->json(['message' => 'You do not have permission to assign this role.'], 403);
+        }
+
         if (!Schema::hasColumn('users', 'machine_id')) {
             unset($data['machine_id']);
         }
-        // Password is auto-hashed by User model's 'hashed' cast
+
+        // Clean empty values to null
+        if (array_key_exists('project_id', $data) && ($data['project_id'] === '' || $data['project_id'] === '0')) {
+            $data['project_id'] = null;
+        }
+        if (array_key_exists('team_id', $data) && ($data['team_id'] === '' || $data['team_id'] === '0')) {
+            $data['team_id'] = null;
+        }
+        if (array_key_exists('layer', $data) && $data['layer'] === '') {
+            $data['layer'] = null;
+        }
 
         // Store plain text password so PM/OM can view it later
         if (!empty($data['password'])) {
@@ -213,6 +262,7 @@ class UserController extends Controller
      */
     public function update(UpdateUserRequest $request, string $id)
     {
+        self::ensureUserRolesEnumReady();
         $user = User::findOrFail($id);
         $authUser = $request->user();
         $oldValues = $user->toArray();
@@ -240,8 +290,8 @@ class UserController extends Controller
                     }
                 }
 
-                // PM cannot edit other PMs, OMs, Directors, CEOs, HR, etc.
-                if (in_array($user->role, ['project_manager', 'operations_manager', 'director', 'ceo', 'hr', 'accounts_manager'])) {
+                // PM cannot edit PMs, OMs, Directors, CEOs, HR, Accounts, CSR, IT, Amenders, Clients
+                if (in_array($user->role, ['project_manager', 'operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'csr', 'it', 'client', 'amender', 'direct_amender'])) {
                     $canEdit = false;
                 }
 
@@ -252,7 +302,6 @@ class UserController extends Controller
                 $managedIds = $authUser->getManagedProjectIds();
                 $canEdit = false;
 
-                // OM can edit workers in their managed projects
                 if (in_array($user->project_id, $managedIds)) {
                     $canEdit = true;
                 } elseif ($user->role === 'project_manager') {
@@ -263,16 +312,16 @@ class UserController extends Controller
                     }
                 }
 
-                // OM cannot edit other OMs, Directors, CEOs, HR, or accounts_manager
-                if (in_array($user->role, ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager'])) {
+                // OM cannot edit other OMs, Directors, CEOs, HR, Accounts, CSR, IT, Amenders, Clients
+                if (in_array($user->role, ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'csr', 'it', 'client', 'amender', 'direct_amender'])) {
                     $canEdit = false;
                 }
 
                 if (!$canEdit) {
                     return response()->json(['message' => 'You can only edit PMs and workers in your projects.'], 403);
                 }
-            } elseif ($authUser->role === 'director' || $authUser->role === 'ceo') {
-                // Directors and CEOs can edit any user's profile/password
+            } elseif ($authUser->role === 'director' || $authUser->role === 'ceo' || $authUser->role === 'admin') {
+                // Directors, CEOs and Admins can edit any user's profile/password
             } elseif ($authUser->role === 'hr') {
                 // HR can edit employee profiles (except CEO, Director, other HR)
                 if (in_array($user->role, ['ceo', 'director', 'hr'])) {
@@ -287,11 +336,26 @@ class UserController extends Controller
             if (isset($data['role']) && $data['role'] === 'client' && $authUser->role !== 'director') {
                 return response()->json(['message' => 'Only a Director can assign the Client role.'], 403);
             }
+
+            if (isset($data['role']) && in_array($authUser->role, ['operations_manager', 'project_manager']) && in_array($data['role'], ['csr', 'it', 'amender', 'direct_amender', 'hr', 'ceo', 'director', 'client', 'accounts_manager'])) {
+                return response()->json(['message' => 'You do not have permission to assign this role.'], 403);
+            }
         }
+
         if (!Schema::hasColumn('users', 'machine_id')) {
             unset($data['machine_id']);
         }
-        // Password is auto-hashed by User model's 'hashed' cast
+
+        // Clean empty values to null
+        if (array_key_exists('project_id', $data) && ($data['project_id'] === '' || $data['project_id'] === '0')) {
+            $data['project_id'] = null;
+        }
+        if (array_key_exists('team_id', $data) && ($data['team_id'] === '' || $data['team_id'] === '0')) {
+            $data['team_id'] = null;
+        }
+        if (array_key_exists('layer', $data) && $data['layer'] === '') {
+            $data['layer'] = null;
+        }
 
         // Store plain text password so PM/OM can view it later
         if (!empty($data['password'])) {
