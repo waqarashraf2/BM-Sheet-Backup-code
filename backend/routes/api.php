@@ -585,7 +585,11 @@ Route::middleware('auth:sanctum')->prefix('amends')->group(function () {
     Route::get('/orders/{projectId}', [AmendController::class, 'getOrders']);
     Route::get('/workers', [AmendController::class, 'getAmenders']);
     Route::post('/assign/{projectId}/{orderId}', [AmendController::class, 'assignOrder']);
+    Route::post('/assign-direct/{projectId}/{orderId}', [AmendController::class, 'assignDirectAmender']);
+    Route::post('/amender-done/{projectId}/{orderId}', [AmendController::class, 'amenderDone']);
+    Route::post('/deliver/{projectId}/{orderId}', [AmendController::class, 'deliverOrder']);
     Route::post('/complete/{projectId}/{orderId}', [AmendController::class, 'completeOrder']);
+    Route::post('/points/{projectId}/{orderId}', [AmendController::class, 'savePointsData']);
     Route::post('/notes/{projectId}/{orderId}', [AmendController::class, 'updateNotes']);
     Route::post('/mark-as-amend/{projectId}/{orderId}', [AmendController::class, 'markAsAmend']);
     Route::post('/sync/{projectId}', [AmendController::class, 'syncFromPortal']);

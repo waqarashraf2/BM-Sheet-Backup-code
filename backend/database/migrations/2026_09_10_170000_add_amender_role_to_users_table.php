@@ -10,7 +10,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Add 'amender' role to users table enum safely
+        // Add 'amender' and 'direct_amender' roles to users table enum safely
         DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM(
             'ceo',
             'director',
@@ -27,7 +27,8 @@ return new class extends Migration
             'csr',
             'it',
             'client',
-            'amender'
+            'amender',
+            'direct_amender'
         ) NOT NULL");
     }
 

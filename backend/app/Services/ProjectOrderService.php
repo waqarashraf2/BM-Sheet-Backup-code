@@ -326,32 +326,75 @@ class ProjectOrderService
     }
 
     /**
-     * Create the amend tracking table for a project if it does not exist.
+     * Create the amend tracking table for a project if it does not exist,
+     * and ensure all necessary columns exist.
      * Created lazily only when an amender/supervisor accesses amends for the project.
      */
     public static function createAmendTable(int $projectId): void
     {
         $tableName = static::getAmendTableName($projectId);
 
-        if (Schema::hasTable($tableName)) {
-            return;
+        if (!Schema::hasTable($tableName)) {
+            Schema::create($tableName, function (Blueprint $table) {
+                $table->id();
+                $table->unsignedBigInteger('order_id')->index();
+                $table->string('order_number', 100)->index();
+                $table->string('amend', 10)->default('yes');
+                $table->text('amend_notes')->nullable();
+                $table->string('amend_status', 30)->default('pending')->index(); // pending, in_progress, amender_done, delivered
+                $table->unsignedBigInteger('amender_id')->nullable()->index();
+                $table->string('amender_name', 191)->nullable();
+                $table->timestamp('assigned_at')->nullable();
+                $table->timestamp('started_at')->nullable();
+                $table->timestamp('amender_done_at')->nullable();
+                $table->unsignedBigInteger('direct_amender_id')->nullable()->index();
+                $table->string('direct_amender_name', 191)->nullable();
+                $table->unsignedBigInteger('uploader_id')->nullable()->index();
+                $table->string('uploader_name', 191)->nullable();
+                $table->timestamp('delivered_at')->nullable();
+                $table->timestamp('completed_at')->nullable();
+                $table->string('amend_category', 50)->nullable()->comment('Team Mistake | Request | Amender Mistake');
+                $table->longText('points_data')->nullable()->comment('JSON points / checklist / review notes');
+                $table->timestamps();
+
+                $table->index(['order_id', 'amend_status']);
+            });
+        } else {
+            // Safely add any new columns to existing amend tables
+            static::ensureAmendColumnsExist($tableName);
         }
+    }
 
-        Schema::create($tableName, function (Blueprint $table) {
-            $table->id();
-            $table->unsignedBigInteger('order_id')->index();
-            $table->string('order_number', 100)->index();
-            $table->string('amend', 10)->default('yes');
-            $table->text('amend_notes')->nullable();
-            $table->string('amend_status', 30)->default('pending')->index(); // pending, in_progress, delivered, done
-            $table->unsignedBigInteger('amender_id')->nullable()->index();
-            $table->string('amender_name', 191)->nullable();
-            $table->timestamp('assigned_at')->nullable();
-            $table->timestamp('started_at')->nullable();
-            $table->timestamp('completed_at')->nullable();
-            $table->timestamps();
-
-            $table->index(['order_id', 'amend_status']);
+    /**
+     * Safely ensure all columns exist on an existing amend table.
+     */
+    public static function ensureAmendColumnsExist(string $tableName): void
+    {
+        Schema::table($tableName, function (Blueprint $table) use ($tableName) {
+            if (!Schema::hasColumn($tableName, 'amender_done_at')) {
+                $table->timestamp('amender_done_at')->nullable()->after('started_at');
+            }
+            if (!Schema::hasColumn($tableName, 'direct_amender_id')) {
+                $table->unsignedBigInteger('direct_amender_id')->nullable()->index()->after('amender_done_at');
+            }
+            if (!Schema::hasColumn($tableName, 'direct_amender_name')) {
+                $table->string('direct_amender_name', 191)->nullable()->after('direct_amender_id');
+            }
+            if (!Schema::hasColumn($tableName, 'uploader_id')) {
+                $table->unsignedBigInteger('uploader_id')->nullable()->index()->after('direct_amender_name');
+            }
+            if (!Schema::hasColumn($tableName, 'uploader_name')) {
+                $table->string('uploader_name', 191)->nullable()->after('uploader_id');
+            }
+            if (!Schema::hasColumn($tableName, 'delivered_at')) {
+                $table->timestamp('delivered_at')->nullable()->after('uploader_name');
+            }
+            if (!Schema::hasColumn($tableName, 'amend_category')) {
+                $table->string('amend_category', 50)->nullable()->after('completed_at');
+            }
+            if (!Schema::hasColumn($tableName, 'points_data')) {
+                $table->longText('points_data')->nullable()->after('amend_category');
+            }
         });
     }
 

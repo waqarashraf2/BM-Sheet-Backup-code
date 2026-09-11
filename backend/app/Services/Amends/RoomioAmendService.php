@@ -58,8 +58,8 @@ class RoomioAmendService
 
         Log::info("RoomioAmendService: Starting amendments sync for project {$pid}...");
 
-        // Fetch amendments from portal (both pending and in_progress)
-        $statusesToFetch = ['pending', 'in_progress'];
+        // Fetch amendments from portal (pending, processing, in_progress)
+        $statusesToFetch = ['pending', 'processing', 'in_progress'];
         $fetchedOrders = [];
 
         foreach ($statusesToFetch as $status) {
@@ -187,7 +187,7 @@ class RoomioAmendService
 
         $orderNumber = (string) $rawOrderId;
         $requestId = isset($order['requestId']) ? (string) $order['requestId'] : $orderNumber;
-        $address = $order['propertyAddress'] ?? null;
+        $address = $order['propertyAddress'] ?? ($order['orderableSummary']['originalPropertyAddress'] ?? null);
         $priority = $this->normalizePriority($order['priority'] ?? null);
         $portalStatus = strtolower((string) ($order['status'] ?? 'pending'));
         $receivedAt = $this->parsePortalDate($order['orderedAt'] ?? null) ?? new DateTime('now', new DateTimeZone('Asia/Karachi'));
@@ -203,41 +203,65 @@ class RoomioAmendService
             ?? $order['orderableSummary']['originalOrderType']
             ?? null;
 
-        // Extract amend notes from payload or fetch detail
-        $amendNotes = $this->extractNotesFromPayloadOrDetail($order, $orderNumber, $auth);
+        // Fetch detail payload to get exact customerNotes and previousOrder link
+        $detailData = $this->fetchOrderDetailPayload($orderNumber, $auth);
+        $fullPayload = $detailData ?: $order;
+
+        // Extract amend notes from detail or summary payload
+        $amendNotes = $this->extractNotesFromDetailOrPayload($detailData, $order);
+
+        // Extract previous order ID if available (e.g. 363533)
+        $previousOrderId = null;
+        if (!empty($detailData['orderable']['previousOrder']['id'])) {
+            $previousOrderId = (string) $detailData['orderable']['previousOrder']['id'];
+        } elseif (!empty($order['orderable']['previousOrder']['id'])) {
+            $previousOrderId = (string) $order['orderable']['previousOrder']['id'];
+        }
 
         // Map status: 'pending' or 'in_progress'
-        $amendStatus = ($portalStatus === 'in_progress' || $portalStatus === 'started') ? 'in_progress' : 'pending';
+        $amendStatus = ($portalStatus === 'in_progress' || $portalStatus === 'started' || $portalStatus === 'processing') ? 'in_progress' : 'pending';
 
-        // Check if order exists in base project order table
-        $existingOrder = DB::table($orderTable)
-            ->where('order_number', $orderNumber)
-            ->orWhere('client_portal_id', $orderNumber)
-            ->first();
+        // Check if previous order or amendment order exists in base project order table
+        $existingOrder = null;
+        if ($previousOrderId) {
+            $existingOrder = DB::table($orderTable)
+                ->where('order_number', $previousOrderId)
+                ->orWhere('client_portal_id', $previousOrderId)
+                ->first();
+        }
+
+        if (!$existingOrder) {
+            $existingOrder = DB::table($orderTable)
+                ->where('order_number', $orderNumber)
+                ->orWhere('client_portal_id', $orderNumber)
+                ->first();
+        }
 
         $createdNewOrder = false;
         $updatedExistingOrder = false;
 
         if ($existingOrder) {
-            // Update base order
+            // Update base order to flag as amend
             $orderId = $existingOrder->id;
             $updates = [
                 'amend' => 'yes',
                 'updated_at' => $nowPK->format('Y-m-d H:i:s'),
             ];
 
-            // If existing order address or due date is empty, fill them
             if (empty($existingOrder->address) && $address) {
                 $updates['address'] = $address;
             }
             if (empty($existingOrder->due_in) && $deadline) {
                 $updates['due_in'] = $deadline->format('Y-m-d H:i:s');
             }
+            if (!empty($amendNotes)) {
+                $updates['instruction'] = $amendNotes;
+            }
 
             DB::table($orderTable)->where('id', $orderId)->update($updates);
             $updatedExistingOrder = true;
         } else {
-            // Insert into base project order table
+            // Insert new order into base project order table
             $orderId = DB::table($orderTable)->insertGetId([
                 'order_number'     => $orderNumber,
                 'client_reference' => $requestId,
@@ -255,7 +279,7 @@ class RoomioAmendService
                 'received_at'      => $receivedAt->format('Y-m-d H:i:s'),
                 'due_in'           => $deadline ? $deadline->format('Y-m-d H:i:s') : null,
                 'due_date'         => $deadline ? $deadline->format('Y-m-d') : null,
-                'metadata'         => json_encode($order),
+                'metadata'         => json_encode($fullPayload),
                 'import_source'    => 'api',
                 'year'             => $receivedAt->format('Y'),
                 'month'            => $receivedAt->format('m'),
@@ -281,7 +305,7 @@ class RoomioAmendService
                 if (!empty($amendNotes)) {
                     $amendUpdates['amend_notes'] = $amendNotes;
                 }
-                // Don't overwrite if already delivered or done locally
+                // Keep local completed/delivered status if already set
                 if (!in_array($existingAmend->amend_status, ['delivered', 'done'])) {
                     $amendUpdates['amend_status'] = $amendStatus;
                 }
@@ -307,68 +331,72 @@ class RoomioAmendService
     }
 
     /**
-     * Extract amendment notes from order payload, or fetch order details JSON if needed.
+     * Fetch order detail payload from /orders/{id}.json
      */
-    protected function extractNotesFromPayloadOrDetail(array $order, string $orderNumber, array $auth): ?string
+    protected function fetchOrderDetailPayload(string $orderNumber, array $auth): ?array
     {
-        // 1. Check direct payload fields
-        $directCandidates = [
+        try {
+            $url = str_replace('{id}', urlencode($orderNumber), $this->orderDetailsUrlTemplate);
+            $response = $this->requestJson($url, [], $auth);
+
+            if ($response->successful()) {
+                $json = $response->json();
+                return $json['data'] ?? $json;
+            }
+        } catch (Exception $e) {
+            Log::warning("RoomioAmendService: Could not fetch detail for order #{$orderNumber}: " . $e->getMessage());
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract amendment notes from detail response or summary payload.
+     */
+    protected function extractNotesFromDetailOrPayload(?array $detailData, array $order): ?string
+    {
+        // 1. Check detail payload first
+        if ($detailData && is_array($detailData)) {
+            $candidates = [
+                $detailData['customerNotes'] ?? null,
+                $detailData['orderable']['requestNotes'] ?? null,
+                $detailData['customer_notes'] ?? null,
+                $detailData['requestNotes'] ?? null,
+                $detailData['notes'] ?? null,
+                $detailData['instruction'] ?? null,
+                $detailData['instructions'] ?? null,
+                $detailData['amendmentNotes'] ?? null,
+                $detailData['amendment_notes'] ?? null,
+                $detailData['orderable']['customerNotes'] ?? null,
+                $detailData['orderable']['notes'] ?? null,
+                $detailData['orderable']['instruction'] ?? null,
+                $detailData['orderable']['previousOrder']['customerNotes'] ?? null,
+            ];
+
+            foreach ($candidates as $c) {
+                if ($c !== null && trim((string) $c) !== '') {
+                    return trim((string) $c);
+                }
+            }
+        }
+
+        // 2. Check summary payload
+        $summaryCandidates = [
             $order['notes'] ?? null,
+            $order['customerNotes'] ?? null,
             $order['instruction'] ?? null,
             $order['instructions'] ?? null,
             $order['amendmentNotes'] ?? null,
             $order['amendment_notes'] ?? null,
-            $order['comments'] ?? null,
-            $order['comment'] ?? null,
-            $order['description'] ?? null,
             $order['orderableSummary']['notes'] ?? null,
-            $order['orderableSummary']['comments'] ?? null,
-            $order['orderableSummary']['description'] ?? null,
+            $order['orderable']['requestNotes'] ?? null,
             $order['orderable']['notes'] ?? null,
-            $order['orderable']['instruction'] ?? null,
-            $order['orderable']['amendmentNotes'] ?? null,
         ];
 
-        foreach ($directCandidates as $c) {
+        foreach ($summaryCandidates as $c) {
             if ($c !== null && trim((string) $c) !== '') {
                 return trim((string) $c);
             }
-        }
-
-        // 2. Fetch order details from detail endpoint if notes not in summary
-        try {
-            $url = str_replace('{id}', urlencode($orderNumber), $this->orderDetailsUrlTemplate);
-            $detailResponse = $this->requestJson($url, [], $auth);
-
-            if ($detailResponse->successful()) {
-                $detailJson = $detailResponse->json();
-                $detailData = $detailJson['data'] ?? $detailJson;
-
-                $detailCandidates = [
-                    $detailData['notes'] ?? null,
-                    $detailData['instruction'] ?? null,
-                    $detailData['instructions'] ?? null,
-                    $detailData['amendmentNotes'] ?? null,
-                    $detailData['amendment_notes'] ?? null,
-                    $detailData['client_notes'] ?? null,
-                    $detailData['customer_notes'] ?? null,
-                    $detailData['processor_notes'] ?? null,
-                    $detailData['comments'] ?? null,
-                    $detailData['comment'] ?? null,
-                    $detailData['description'] ?? null,
-                    $detailData['orderable']['notes'] ?? null,
-                    $detailData['orderable']['amendmentNotes'] ?? null,
-                    $detailData['orderable']['instruction'] ?? null,
-                ];
-
-                foreach ($detailCandidates as $dc) {
-                    if ($dc !== null && trim((string) $dc) !== '') {
-                        return trim((string) $dc);
-                    }
-                }
-            }
-        } catch (Exception $e) {
-            Log::warning("RoomioAmendService: Could not fetch detail for order #{$orderNumber}: " . $e->getMessage());
         }
 
         return null;

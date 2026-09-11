@@ -27,7 +27,7 @@ class UpdateUserRequest extends FormRequest
             'email' => ['sometimes', 'email', Rule::unique('users', 'email')->ignore($this->user)],
             'machine_id' => 'nullable|string|max:100',
             'password' => 'sometimes|string|min:8|confirmed',
-            'role' => 'sometimes|in:ceo,director,operations_manager,project_manager,qa,live_qa,checker,filler,drawer,designer,accounts_manager,hr,csr,it,client,amender',
+            'role' => 'sometimes|in:ceo,director,operations_manager,project_manager,qa,live_qa,checker,filler,drawer,designer,accounts_manager,hr,csr,it,client,amender,direct_amender',
             'country' => 'sometimes|string|max:255',
             'department' => 'sometimes|nullable|in:floor_plan,photos_enhancement,general,support,it',
             'project_id' => 'nullable|exists:projects,id',

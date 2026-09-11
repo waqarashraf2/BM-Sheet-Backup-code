@@ -1,657 +1,1311 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../store/store';
-import { amendService, projectService, type AmendOrder, type AmenderWorker } from '../../services';
 import {
-  RotateCcw, Search, UserCheck, CheckCircle2, Clock,
-  FileText, AlertCircle, RefreshCw, ChevronLeft, ChevronRight,
-  Sparkles
+  amendService,
+  projectService,
+  type AmendOrder,
+} from '../../services';
+import type { Project } from '../../types';
+import {
+  AnimatedPage,
+  Button,
+  Modal,
+  useToast,
+} from '../../components/ui';
+import ClockDisplay from '../../components/ClockDisplay';
+import {
+  RefreshCw,
+  Search,
+  CheckCircle,
+  Clock,
+  AlertCircle,
+  Send,
+  Eye,
+  CheckSquare,
+  Sparkles,
+  Layers,
+  User,
+  ShieldCheck,
+  UploadCloud,
+  X,
+  Info,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+
+const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
+
+type AmendCategoryType = 'Team Mistake' | 'Request' | 'Amender Mistake';
 
 export default function AmendAssignmentDashboard() {
   const { user } = useSelector((state: RootState) => state.auth);
+  const { toast } = useToast();
 
-  // Projects list
-  const [projects, setProjects] = useState<{ id: number; name: string }[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
-
-  // Orders and counts
   const [orders, setOrders] = useState<AmendOrder[]>([]);
-  const [counts, setCounts] = useState({ total: 0, pending: 0, in_progress: 0, delivered: 0 });
   const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [fetchingPortal, setFetchingPortal] = useState<boolean>(false);
+
+  // Filters
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [searchTerm, setSearchTerm] = useState<string>('');
-  const [page, setPage] = useState<number>(1);
-  const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, per_page: 25, total: 0 });
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
 
-  // Amenders for assignment modal
-  const [amenders, setAmenders] = useState<AmenderWorker[]>([]);
-  const [assignModalOrder, setAssignModalOrder] = useState<AmendOrder | null>(null);
-  const [selectedAmenderId, setSelectedAmenderId] = useState<number | ''>('');
-  const [assigningLoading, setAssigningLoading] = useState<boolean>(false);
+  const [counts, setCounts] = useState({
+    total: 0,
+    pending: 0,
+    in_progress: 0,
+    amender_done: 0,
+    delivered: 0,
+  });
 
-  // Notes view/edit modal
-  const [notesModalOrder, setNotesModalOrder] = useState<AmendOrder | null>(null);
-  const [notesDraft, setNotesDraft] = useState<string>('');
-  const [savingNotes, setSavingNotes] = useState<boolean>(false);
+  // Selected Amend Category during submission
+  const [selectedCategory, setSelectedCategory] = useState<AmendCategoryType>('Request');
 
-  // Success toast / message
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // Amender "Done & Add Points" Modal
+  const [amenderDoneModalOpen, setAmenderDoneModalOpen] = useState<boolean>(false);
+  const [orderForAmenderDone, setOrderForAmenderDone] = useState<AmendOrder | null>(null);
+  const [amenderChecklist, setAmenderChecklist] = useState({
+    dimensions_verified: true,
+    text_and_labels_corrected: true,
+    symbols_and_doors_checked: true,
+    client_notes_addressed: true,
+    visual_quality_cleared: true,
+  });
+  const [amenderNotesContent, setAmenderNotesContent] = useState<string>('');
+  const [submittingDone, setSubmittingDone] = useState<boolean>(false);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
-  };
+  // Direct Amender / Manager "Check & Deliver" Modal
+  const [deliverModalOpen, setDeliverModalOpen] = useState<boolean>(false);
+  const [orderForDeliver, setOrderForDeliver] = useState<AmendOrder | null>(null);
+  const [deliverChecklist, setDeliverChecklist] = useState({
+    dimensions_verified: true,
+    text_and_labels_corrected: true,
+    symbols_and_doors_checked: true,
+    client_notes_addressed: true,
+    visual_quality_cleared: true,
+  });
+  const [reviewerComments, setReviewerComments] = useState<string>('');
+  const [submittingDeliver, setSubmittingDeliver] = useState<boolean>(false);
 
-  // Load projects on mount
+  // View Notes Modal
+  const [notesModalOpen, setNotesModalOpen] = useState<boolean>(false);
+  const [orderForNotes, setOrderForNotes] = useState<AmendOrder | null>(null);
+
+  // View Points (JSON) Modal
+  const [pointsModalOpen, setPointsModalOpen] = useState<boolean>(false);
+  const [orderForPoints, setOrderForPoints] = useState<AmendOrder | null>(null);
+
+  // Role permissions
+  const isManagerOrDirector =
+    user?.role &&
+    ['operations_manager', 'project_manager', 'director', 'ceo', 'admin'].includes(user.role);
+  const isDirectAmender = user?.role === 'direct_amender';
+  const isPrimaryAmender = user?.role === 'amender';
+
+  // Selected project data
+  const selectedProjectData = projects.find((p) => p.id === selectedProjectId);
+  const projectTz = selectedProjectData?.timezone || DEFAULT_PROJECT_TIMEZONE;
+
+  // Load Projects on initial mount
   useEffect(() => {
-    projectService.list()
-      .then((res: any) => {
-        const raw = res.data?.data || res.data;
-        const list = Array.isArray(raw) ? raw : [];
-        setProjects(list);
-        if (list.length > 0) {
-          // If current user is assigned to a specific project, pick that, else pick the first project
-          const defaultProject = user?.project_id
-            ? list.find((p: any) => p.id === Number(user.project_id)) || list[0]
-            : list[0];
-          setSelectedProjectId(defaultProject.id);
-        }
-      })
-      .catch((err) => {
-        console.error('Failed to load projects:', err);
-      });
-  }, [user?.project_id]);
-
-  // Load amenders for assignment modal
-  useEffect(() => {
-    amendService.getWorkers()
-      .then((res) => {
-        setAmenders(res.data?.data || []);
-      })
-      .catch((err) => console.error('Failed to load amenders:', err));
+    loadProjects();
   }, []);
 
-  // Fetch orders when project, statusFilter, search, or page changes
-  const fetchOrders = useCallback(async () => {
-    if (!selectedProjectId) return;
-    try {
-      setLoading(true);
-      const res = await amendService.getOrders(selectedProjectId, {
-        status: statusFilter,
-        search: searchTerm,
-        page,
-        per_page: 25,
-      });
-
-      setOrders(res.data.data || []);
-      setCounts(res.data.counts || { total: 0, pending: 0, in_progress: 0, delivered: 0 });
-      setPagination(res.data.pagination || { current_page: 1, last_page: 1, per_page: 25, total: 0 });
-    } catch (err) {
-      console.error('Failed to load amend orders:', err);
-    } finally {
-      setLoading(false);
+  // When project changes, fetch amend orders
+  useEffect(() => {
+    if (selectedProjectId) {
+      loadOrders(selectedProjectId);
     }
-  }, [selectedProjectId, statusFilter, searchTerm, page]);
+  }, [selectedProjectId]);
 
-  const [syncing, setSyncing] = useState<boolean>(false);
-
-  // Handle Refresh & Sync with client portal
-  const handleRefreshAndSync = async () => {
-    if (!selectedProjectId) return;
+  const loadProjects = async () => {
     try {
-      setSyncing(true);
-      if (selectedProjectId === 15) {
-        showToast('Checking Roomio portal for new amendments...');
-        try {
-          const syncRes = await amendService.syncFromPortal(selectedProjectId);
-          const count = syncRes.data?.data?.synced ?? 0;
-          if (count > 0) {
-            showToast(`Synced ${count} amendment${count > 1 ? 's' : ''} from portal`);
-          } else {
-            showToast('Amendments are up to date');
-          }
-        } catch (syncErr: any) {
-          console.warn('Portal sync warning:', syncErr);
+      const res = await projectService.list();
+      const list = res.data?.data || res.data || [];
+      const arrayList = Array.isArray(list) ? list : [];
+      setProjects(arrayList);
+      if (arrayList.length > 0 && !selectedProjectId) {
+        setSelectedProjectId(arrayList[0].id);
+      }
+    } catch (error) {
+      console.error('Failed to load projects:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load projects list.',
+        type: 'error',
+      });
+    }
+  };
+
+  const loadOrders = async (projectId: number, isSilent = false) => {
+    if (!isSilent) setLoading(true);
+    else setRefreshing(true);
+
+    try {
+      const res = await amendService.getOrders(projectId);
+      if (res.data) {
+        setOrders(res.data.data || []);
+        if (res.data.counts) {
+          setCounts(res.data.counts);
         }
       }
-      await fetchOrders();
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
-
-  // Handle Assign Amender
-  const handleAssign = async () => {
-    if (!selectedProjectId || !assignModalOrder || !selectedAmenderId) return;
-    try {
-      setAssigningLoading(true);
-      const res = await amendService.assign(selectedProjectId, assignModalOrder.order_id, {
-        amender_id: Number(selectedAmenderId),
+    } catch (error) {
+      console.error('Failed to load amend orders:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load amend orders.',
+        type: 'error',
       });
-      showToast(res.data.message || 'Assigned successfully');
-      setAssignModalOrder(null);
-      setSelectedAmenderId('');
-      fetchOrders();
-    } catch (err: any) {
-      console.error('Failed to assign amender:', err);
-      showToast(err.response?.data?.message || 'Assignment failed');
     } finally {
-      setAssigningLoading(false);
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  // Handle Complete / Deliver
-  const handleComplete = async (order: AmendOrder) => {
-    if (!selectedProjectId) return;
-    if (!window.confirm(`Mark amend for order #${order.order_number} as Delivered / Completed?`)) {
+  // Explicit sync from client portal
+  const handleFetchClientPortal = async () => {
+    if (!selectedProjectId) {
+      toast({
+        title: 'Project required',
+        description: 'Please select a project first.',
+        type: 'error',
+      });
       return;
     }
-
+    setFetchingPortal(true);
     try {
-      const res = await amendService.complete(selectedProjectId, order.order_id);
-      showToast(res.data.message || 'Amend marked as delivered');
-      fetchOrders();
-    } catch (err: any) {
-      console.error('Failed to complete amend:', err);
-      showToast(err.response?.data?.message || 'Action failed');
-    }
-  };
-
-  // Handle Save Notes
-  const handleSaveNotes = async () => {
-    if (!selectedProjectId || !notesModalOrder) return;
-    try {
-      setSavingNotes(true);
-      const res = await amendService.updateNotes(selectedProjectId, notesModalOrder.order_id, notesDraft);
-      showToast(res.data.message || 'Notes updated');
-      setNotesModalOrder(null);
-      fetchOrders();
-    } catch (err: any) {
-      console.error('Failed to update amend notes:', err);
-      showToast(err.response?.data?.message || 'Failed to save notes');
+      const res = await amendService.syncFromPortal(selectedProjectId);
+      toast({
+        title: 'Synced successfully',
+        description: res.data?.message || 'Amend orders updated from client portal.',
+        type: 'success',
+      });
+      loadOrders(selectedProjectId, true);
+    } catch (error: any) {
+      console.error('Portal sync error:', error);
+      toast({
+        title: 'Sync failed',
+        description: error.response?.data?.message || 'Failed to fetch amends from client portal.',
+        type: 'error',
+      });
     } finally {
-      setSavingNotes(false);
+      setFetchingPortal(false);
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'delivered':
-      case 'done':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-            Delivered
-          </span>
-        );
-      case 'in_progress':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-full">
-            <Clock className="w-3.5 h-3.5 text-blue-600 animate-spin" />
-            In Progress
-          </span>
-        );
-      case 'pending':
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full">
-            <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-            Pending
-          </span>
-        );
+  // Open Amender "Mark as Done" Modal
+  const openAmenderDoneModal = (order: AmendOrder) => {
+    setOrderForAmenderDone(order);
+    let existingChecklist = {
+      dimensions_verified: true,
+      text_and_labels_corrected: true,
+      symbols_and_doors_checked: true,
+      client_notes_addressed: true,
+      visual_quality_cleared: true,
+    };
+    let existingContent = '';
+    let category: AmendCategoryType = (order.amend_category as AmendCategoryType) || 'Request';
+
+    if (order.points_data) {
+      try {
+        const parsed = typeof order.points_data === 'string' ? JSON.parse(order.points_data) : order.points_data;
+        if (parsed.amender_checklist) {
+          existingChecklist = { ...existingChecklist, ...parsed.amender_checklist };
+        }
+        if (parsed.amender_content) {
+          existingContent = parsed.amender_content;
+        }
+        if (parsed.amend_category) {
+          category = parsed.amend_category;
+        }
+      } catch (e) {
+        // ignore parse error
+      }
+    }
+
+    setSelectedCategory(category);
+    setAmenderChecklist(existingChecklist);
+    setAmenderNotesContent(existingContent);
+    setAmenderDoneModalOpen(true);
+  };
+
+  // Submit Amender Done
+  const handleAmenderDoneSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderForAmenderDone || !selectedProjectId) return;
+
+    setSubmittingDone(true);
+    try {
+      const pointsPayload = {
+        amend_category: selectedCategory,
+        amender_checklist: amenderChecklist,
+        amender_content: amenderNotesContent,
+        completed_by_amender: user?.name,
+        amender_role: user?.role,
+        completed_at: new Date().toISOString(),
+      };
+
+      await amendService.amenderDone(selectedProjectId, orderForAmenderDone.order_id, {
+        amend_category: selectedCategory,
+        points_data: pointsPayload,
+        notes: amenderNotesContent,
+      });
+
+      toast({
+        title: 'Marked as Done',
+        description: `Order #${orderForAmenderDone.order_id} marked as Done (${selectedCategory}). Sent to Direct Amender review.`,
+        type: 'success',
+      });
+      setAmenderDoneModalOpen(false);
+      loadOrders(selectedProjectId, true);
+    } catch (error: any) {
+      console.error('Failed to mark amend as done:', error);
+      toast({
+        title: 'Action failed',
+        description: error.response?.data?.message || 'Failed to update order status.',
+        type: 'error',
+      });
+    } finally {
+      setSubmittingDone(false);
     }
   };
+
+  // Open Direct Amender Deliver Modal
+  const openDeliverModal = (order: AmendOrder) => {
+    setOrderForDeliver(order);
+    let existingReview = '';
+    let existingChecklist = {
+      dimensions_verified: true,
+      text_and_labels_corrected: true,
+      symbols_and_doors_checked: true,
+      client_notes_addressed: true,
+      visual_quality_cleared: true,
+    };
+    let category: AmendCategoryType = (order.amend_category as AmendCategoryType) || 'Request';
+
+    if (order.points_data) {
+      try {
+        const parsed = typeof order.points_data === 'string' ? JSON.parse(order.points_data) : order.points_data;
+        if (parsed.direct_checklist || parsed.checklist) {
+          existingChecklist = { ...existingChecklist, ...(parsed.direct_checklist || parsed.checklist) };
+        }
+        if (parsed.reviewer_comments) {
+          existingReview = parsed.reviewer_comments;
+        }
+        if (parsed.amend_category) {
+          category = parsed.amend_category;
+        }
+      } catch (e) {
+        // ignore parse error
+      }
+    }
+
+    setSelectedCategory(category);
+    setDeliverChecklist(existingChecklist);
+    setReviewerComments(existingReview);
+    setDeliverModalOpen(true);
+  };
+
+  // Submit Direct Amender Deliver
+  const handleDeliverSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderForDeliver || !selectedProjectId) return;
+
+    setSubmittingDeliver(true);
+    try {
+      let existingParsed: any = {};
+      if (orderForDeliver.points_data) {
+        try {
+          existingParsed = typeof orderForDeliver.points_data === 'string'
+            ? JSON.parse(orderForDeliver.points_data)
+            : orderForDeliver.points_data;
+        } catch (e) {}
+      }
+
+      const pointsPayload = {
+        ...existingParsed,
+        amend_category: selectedCategory,
+        direct_checklist: deliverChecklist,
+        reviewer_comments: reviewerComments,
+        delivered_by: user?.name,
+        delivered_by_role: user?.role,
+        delivered_at: new Date().toISOString(),
+      };
+
+      await amendService.deliver(selectedProjectId, orderForDeliver.order_id, {
+        amend_category: selectedCategory,
+        points_data: pointsPayload,
+        uploader_name: user?.name,
+      });
+
+      toast({
+        title: 'Order Delivered',
+        description: `Order #${orderForDeliver.order_id} verified (${selectedCategory}) and marked Delivered.`,
+        type: 'success',
+      });
+      setDeliverModalOpen(false);
+      loadOrders(selectedProjectId, true);
+    } catch (error: any) {
+      console.error('Failed to deliver amend:', error);
+      toast({
+        title: 'Delivery failed',
+        description: error.response?.data?.message || 'Failed to deliver order.',
+        type: 'error',
+      });
+    } finally {
+      setSubmittingDeliver(false);
+    }
+  };
+
+  // Status Filter Tabs
+  const statusButtons = useMemo(
+    () => [
+      { key: 'all', label: 'All Amends', count: counts.total },
+      { key: 'pending', label: 'Pending', count: counts.pending },
+      { key: 'in_progress', label: 'In Progress', count: counts.in_progress },
+      { key: 'amender_done', label: 'Amender Done', count: counts.amender_done },
+      { key: 'delivered', label: 'Delivered', count: counts.delivered },
+    ],
+    [counts]
+  );
+
+  // Filtered Orders
+  const filteredOrders = useMemo(() => {
+    return orders.filter((order) => {
+      // Status filter
+      if (statusFilter !== 'all') {
+        if (statusFilter === 'pending' && order.amend_status !== 'pending') return false;
+        if (statusFilter === 'in_progress' && order.amend_status !== 'in_progress') return false;
+        if (statusFilter === 'amender_done' && order.amend_status !== 'amender_done') return false;
+        if (statusFilter === 'delivered' && order.amend_status !== 'delivered') return false;
+      }
+
+      // Category filter
+      if (categoryFilter !== 'all') {
+        if (order.amend_category !== categoryFilter) return false;
+      }
+
+      // Date filter
+      if (startDate || endDate) {
+        const orderDateStr = order.amend_created_at || order.received_at;
+        if (orderDateStr) {
+          const dateOnly = orderDateStr.slice(0, 10);
+          if (startDate && dateOnly < startDate) return false;
+          if (endDate && dateOnly > endDate) return false;
+        }
+      }
+
+      // Search query
+      if (searchQuery.trim() !== '') {
+        const q = searchQuery.toLowerCase();
+        const matchId = String(order.order_id).toLowerCase().includes(q);
+        const matchOrderNum = (order.order_number || '').toLowerCase().includes(q);
+        const matchAddress = (order.address || '').toLowerCase().includes(q);
+        const matchClient = (order.client_name || '').toLowerCase().includes(q);
+        const matchAmender = (order.amender_name || '').toLowerCase().includes(q);
+        const matchDirect = (order.direct_amender_name || '').toLowerCase().includes(q);
+        const matchUploader = (order.uploader_name || '').toLowerCase().includes(q);
+        const matchPlan = (order.plan_type || '').toLowerCase().includes(q);
+        const matchNotes = (order.amend_notes || '').toLowerCase().includes(q);
+        const matchCat = (order.amend_category || '').toLowerCase().includes(q);
+
+        return (
+          matchId ||
+          matchOrderNum ||
+          matchAddress ||
+          matchClient ||
+          matchAmender ||
+          matchDirect ||
+          matchUploader ||
+          matchPlan ||
+          matchNotes ||
+          matchCat
+        );
+      }
+
+      return true;
+    });
+  }, [orders, statusFilter, categoryFilter, searchQuery, startDate, endDate]);
 
   return (
-    <div className="space-y-6 pb-12">
-      {/* Toast Notification */}
-      <AnimatePresence>
-        {toastMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed top-6 right-6 z-50 flex items-center gap-2 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-sm font-medium border border-slate-700"
-          >
-            <Sparkles className="w-4 h-4 text-teal-400" />
-            <span>{toastMessage}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <AnimatedPage>
+      <div className="p-4 space-y-3 min-w-0">
+        {/* Header Row */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-brand-50 text-brand-600 rounded-lg">
+                <Layers className="w-5 h-5" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                  Amend Orders Hub
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200">
+                    Two-Tier Amender Flow
+                  </span>
+                </h1>
+                <p className="text-xs text-slate-500">
+                  Amender fixes &bull; Direct Amender checks &bull; Classifications: Team Mistake | Request | Amender Mistake
+                </p>
+              </div>
+            </div>
+          </div>
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
-        <div>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-600 font-bold border border-amber-500/20">
-              <RotateCcw className="w-5 h-5" />
+            <div className="text-right hidden md:block">
+              <ClockDisplay timezone={projectTz} className="text-xs font-semibold text-slate-700 font-mono" />
             </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">Amend Dashboard</h1>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Manage amendments, track notes, and assign dedicated amenders
-              </p>
-            </div>
+
+            <Button
+              variant="secondary"
+              icon={RefreshCw}
+              onClick={() => selectedProjectId && loadOrders(selectedProjectId, true)}
+              disabled={refreshing || loading}
+            >
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </Button>
+
+            <Button
+              variant="primary"
+              icon={UploadCloud}
+              onClick={handleFetchClientPortal}
+              disabled={fetchingPortal || loading}
+            >
+              {fetchingPortal ? 'Syncing...' : 'Fetch Client Portal'}
+            </Button>
           </div>
         </div>
 
-        {/* Project Selector & Refresh */}
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <select
-              value={selectedProjectId || ''}
-              onChange={(e) => {
-                setSelectedProjectId(Number(e.target.value));
-                setPage(1);
-              }}
-              className="pl-3 pr-8 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-700 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all cursor-pointer"
-            >
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
+        {/* Info Banner */}
+        <div className="bg-brand-50/60 border border-brand-100 rounded-xl p-3 flex items-start gap-3">
+          <Info className="w-4 h-4 text-brand-600 mt-0.5 shrink-0" />
+          <p className="text-xs text-brand-800">
+            <span className="font-semibold">Amender Submission Points:</span> Amender / Direct Amender submission ke waqt 3 points (
+            <span className="font-bold text-rose-700">Team Mistake</span>,{' '}
+            <span className="font-bold text-blue-700">Request</span>,{' '}
+            <span className="font-bold text-amber-700">Amender Mistake</span>) me se category choose kar saktay hain jo JSON aur CSV reports me store hoti hai.
+          </p>
+        </div>
 
-          <button
-            onClick={handleRefreshAndSync}
-            title="Refresh & Sync Portal"
-            disabled={loading || syncing}
-            className="p-2 text-slate-500 hover:text-teal-600 bg-slate-50 hover:bg-teal-50 border border-slate-200 rounded-xl transition-all"
+        {/* Project Selector & Filter Bar */}
+        <div className="flex flex-wrap items-center gap-2 bg-white p-3 rounded-xl border border-slate-200/80 shadow-sm">
+          {/* Project Select */}
+          <select
+            value={selectedProjectId || ''}
+            onChange={(e) => setSelectedProjectId(Number(e.target.value))}
+            className="select text-xs min-w-[200px] font-medium"
+            aria-label="Select Project"
           >
-            <RefreshCw className={`w-4 h-4 ${loading || syncing ? 'animate-spin text-teal-600' : ''}`} />
-          </button>
-        </div>
-      </div>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.department || 'Floorplan'} - {p.country || 'Global'})
+              </option>
+            ))}
+          </select>
 
-      {/* Status Filter Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {[
-          { key: 'all', label: 'Total Amends', count: counts.total, color: 'text-slate-900', bg: 'bg-slate-50', activeBorder: 'border-slate-800' },
-          { key: 'pending', label: 'Pending Amends', count: counts.pending, color: 'text-amber-600', bg: 'bg-amber-50/50', activeBorder: 'border-amber-500' },
-          { key: 'in_progress', label: 'In Progress', count: counts.in_progress, color: 'text-blue-600', bg: 'bg-blue-50/50', activeBorder: 'border-blue-500' },
-          { key: 'delivered', label: 'Delivered', count: counts.delivered, color: 'text-emerald-600', bg: 'bg-emerald-50/50', activeBorder: 'border-emerald-500' },
-        ].map((tab) => {
-          const isActive = statusFilter === tab.key;
-          return (
-            <button
-              key={tab.key}
-              onClick={() => {
-                setStatusFilter(tab.key);
-                setPage(1);
-              }}
-              className={`p-4 rounded-xl border text-left transition-all duration-200 bg-white ${
-                isActive
-                  ? `${tab.activeBorder} shadow-sm ring-1 ring-slate-900/5`
-                  : 'border-slate-200/80 hover:border-slate-300'
-              }`}
-            >
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{tab.label}</div>
-              <div className={`text-2xl font-bold mt-1 ${tab.color}`}>{tab.count}</div>
-            </button>
-          );
-        })}
-      </div>
+          {/* Status Filter Tabs */}
+          <div className="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
+            {statusButtons.map((sb) => (
+              <button
+                key={sb.key}
+                onClick={() => setStatusFilter(sb.key)}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  statusFilter === sb.key
+                    ? 'bg-brand-600 text-white shadow-sm font-semibold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {sb.label} <span className="opacity-80 font-bold">({sb.count})</span>
+              </button>
+            ))}
+          </div>
 
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200/80">
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          {/* Category Filter */}
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="select text-xs min-w-[140px]"
+            aria-label="Filter by Category"
+          >
+            <option value="all">All Categories</option>
+            <option value="Team Mistake">Team Mistake</option>
+            <option value="Request">Request</option>
+            <option value="Amender Mistake">Amender Mistake</option>
+          </select>
+
+          {/* Search Box */}
+          <div className="relative flex-1 min-w-[180px] max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search order, address, client, amender..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="input pl-8 text-xs h-8"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Date Filters */}
           <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                setPage(1);
-                fetchOrders();
-              }
-            }}
-            placeholder="Search order #, worker, client..."
-            className="w-full pl-9 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all"
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            className="input text-xs h-8 w-36"
+            title="Start Date"
           />
+
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            className="input text-xs h-8 w-36"
+            title="End Date"
+          />
+
+          {(startDate || endDate || searchQuery || statusFilter !== 'all' || categoryFilter !== 'all') && (
+            <button
+              onClick={() => {
+                setStartDate('');
+                setEndDate('');
+                setSearchQuery('');
+                setStatusFilter('all');
+                setCategoryFilter('all');
+              }}
+              className="text-xs text-brand-600 hover:underline font-medium px-2 py-1"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
 
-        <div className="text-xs text-slate-500 font-medium">
-          Showing {orders.length} of {pagination.total} orders
-        </div>
-      </div>
-
-      {/* Orders Table */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                <th className="py-3.5 px-4">Order # & Status</th>
-                <th className="py-3.5 px-4">Client & Property</th>
-                <th className="py-3.5 px-4">Original Team</th>
-                <th className="py-3.5 px-4">Amend Notes</th>
-                <th className="py-3.5 px-4">Amender</th>
-                <th className="py-3.5 px-4">Timestamps</th>
-                <th className="py-3.5 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-sm">
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400">
-                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-teal-600" />
-                    Loading amend orders...
-                  </td>
+        {/* Orders Table */}
+        <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 font-semibold uppercase tracking-wider text-[11px]">
+                  <th className="py-3 px-3.5"># Order Number</th>
+                  <th className="py-3 px-3.5">Client & Address</th>
+                  <th className="py-3 px-3.5">Classification & Plan</th>
+                  <th className="py-3 px-3.5">Amend Notes</th>
+                  <th className="py-3 px-3.5">Amender (Stage 1)</th>
+                  <th className="py-3 px-3.5">Direct Amender / Uploader</th>
+                  <th className="py-3 px-3.5 text-center">Quality Points (JSON)</th>
+                  <th className="py-3 px-3.5">Status</th>
+                  <th className="py-3 px-3.5 text-right">Actions</th>
                 </tr>
-              ) : orders.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="py-16 text-center text-slate-400">
-                    <AlertCircle className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                    <p className="font-semibold text-slate-600">No amend orders found</p>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      No orders matching the selected status filter in this project
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                orders.map((order) => {
-                  const hasNotes = Boolean(order.amend_notes);
-                  return (
-                    <tr key={order.order_id} className="hover:bg-slate-50/70 transition-colors">
-                      {/* Order # and Status */}
-                      <td className="py-3.5 px-4 align-top">
-                        <div className="font-bold text-slate-900 tracking-tight">
-                          {order.order_number}
-                        </div>
-                        <div className="mt-1.5 flex items-center gap-1.5">
-                          {getStatusBadge(order.amend_status)}
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
-                            AMEND
-                          </span>
-                        </div>
-                      </td>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {loading ? (
+                  <tr>
+                    <td colSpan={9} className="py-12 text-center text-slate-400">
+                      <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-brand-600" />
+                      <span>Loading amend orders...</span>
+                    </td>
+                  </tr>
+                ) : filteredOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="py-12 text-center text-slate-400">
+                      <AlertCircle className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                      <p className="text-sm font-medium text-slate-600">No amend orders found</p>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Click "Fetch Client Portal" to sync new amendments from external supplier.
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredOrders.map((order) => {
+                    const isDone = order.amend_status === 'amender_done';
+                    const isDelivered = order.amend_status === 'delivered';
 
-                      {/* Client and Property */}
-                      <td className="py-3.5 px-4 align-top max-w-[220px]">
-                        <div className="font-medium text-slate-800 truncate" title={order.client_name || ''}>
-                          {order.client_name || '—'}
-                        </div>
-                        <div className="text-xs text-slate-500 truncate mt-0.5" title={order.address || ''}>
-                          {order.address || '—'}
-                        </div>
-                        {order.plan_type && (
-                          <span className="inline-block mt-1 text-[11px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
-                            {order.plan_type}
-                          </span>
-                        )}
-                      </td>
+                    return (
+                      <tr
+                        key={order.order_id}
+                        className="hover:bg-slate-50/80 transition-colors duration-150"
+                      >
+                        {/* Order Number */}
+                        <td className="py-2.5 px-3.5 font-bold text-slate-900 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-brand-700">#{order.order_id}</span>
+                            {order.order_number && (
+                              <span className="text-[11px] font-normal text-slate-500">
+                                ({order.order_number})
+                              </span>
+                            )}
+                          </div>
+                          {order.received_at && (
+                            <div className="text-[10px] text-slate-400 font-normal mt-0.5 flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              <span>{order.received_at}</span>
+                            </div>
+                          )}
+                        </td>
 
-                      {/* Original Workers */}
-                      <td className="py-3.5 px-4 align-top">
-                        <div className="space-y-1 text-xs">
-                          <div className="flex items-center gap-1.5 text-slate-600">
-                            <span className="font-semibold text-slate-400 w-12">Draw:</span>
-                            <span className="font-medium text-slate-800">{order.drawer_name || '—'}</span>
+                        {/* Client & Address */}
+                        <td className="py-2.5 px-3.5 max-w-xs">
+                          <div className="font-semibold text-slate-800 truncate" title={order.client_name || ''}>
+                            {order.client_name || 'N/A'}
                           </div>
-                          <div className="flex items-center gap-1.5 text-slate-600">
-                            <span className="font-semibold text-slate-400 w-12">Check:</span>
-                            <span className="font-medium text-slate-800">{order.checker_name || '—'}</span>
+                          <div
+                            className="text-[11px] text-slate-500 truncate mt-0.5"
+                            title={order.address || ''}
+                          >
+                            {order.address || 'No Address'}
                           </div>
-                          <div className="flex items-center gap-1.5 text-slate-600">
-                            <span className="font-semibold text-slate-400 w-12">QA:</span>
-                            <span className="font-medium text-slate-800">{order.qa_name || '—'}</span>
-                          </div>
-                        </div>
-                      </td>
+                        </td>
 
-                      {/* Amend Notes */}
-                      <td className="py-3.5 px-4 align-top max-w-[240px]">
-                        {hasNotes ? (
-                          <div>
-                            <p className="text-xs text-slate-700 line-clamp-2 italic bg-amber-50/60 p-2 rounded-lg border border-amber-100/60">
-                              "{order.amend_notes}"
-                            </p>
+                        {/* Classification & Plan */}
+                        <td className="py-2.5 px-3.5">
+                          {/* Classification Badge (Team Mistake, Request, Amender Mistake) */}
+                          {order.amend_category && (
+                            <div className="mb-1">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
+                                  order.amend_category === 'Team Mistake'
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                    : order.amend_category === 'Amender Mistake'
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : 'bg-blue-50 text-blue-700 border-blue-200'
+                                }`}
+                              >
+                                {order.amend_category}
+                              </span>
+                            </div>
+                          )}
+                          <div className="font-medium text-slate-700">{order.plan_type || '-'}</div>
+                          {order.priority && order.priority !== 'regular' && (
+                            <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200">
+                              {order.priority}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Amend Notes */}
+                        <td className="py-2.5 px-3.5 max-w-xs">
+                          {order.amend_notes ? (
+                            <div
+                              onClick={() => {
+                                setOrderForNotes(order);
+                                setNotesModalOpen(true);
+                              }}
+                              className="cursor-pointer group/note bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded p-1.5 transition-all"
+                            >
+                              <p className="text-[11px] text-slate-700 line-clamp-2 italic">
+                                "{order.amend_notes}"
+                              </p>
+                              <span className="text-[10px] text-brand-600 group-hover/note:underline flex items-center gap-1 mt-1 font-semibold">
+                                <Eye className="w-3 h-3" /> View full note
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 italic text-[11px]">-</span>
+                          )}
+                        </td>
+
+                        {/* Amender (Stage 1) */}
+                        <td className="py-2.5 px-3.5">
+                          {order.amender_name ? (
+                            <div>
+                              <div className="font-semibold text-slate-800 flex items-center gap-1">
+                                <User className="w-3.5 h-3.5 text-brand-600" />
+                                <span>{order.amender_name}</span>
+                              </div>
+                              {order.amender_done_at && (
+                                <div className="text-[10px] text-emerald-600 font-medium flex items-center gap-0.5 mt-0.5">
+                                  <CheckCircle className="w-3 h-3" /> Done: {order.amender_done_at.slice(11, 16)}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 font-normal italic">Self-Service</span>
+                          )}
+                        </td>
+
+                        {/* Direct Amender / Uploader (Stage 2) */}
+                        <td className="py-2.5 px-3.5 space-y-0.5">
+                          {order.direct_amender_name && (
+                            <div className="text-indigo-700 font-medium flex items-center gap-1">
+                              <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
+                              <span>Direct: {order.direct_amender_name}</span>
+                            </div>
+                          )}
+                          {order.uploader_name && (
+                            <div className="text-emerald-700 font-medium flex items-center gap-1">
+                              <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                              <span>Uploader: {order.uploader_name}</span>
+                            </div>
+                          )}
+                          {!order.direct_amender_name && !order.uploader_name && (
+                            <span className="text-slate-400 italic">-</span>
+                          )}
+                        </td>
+
+                        {/* Quality Points (JSON) */}
+                        <td className="py-2.5 px-3.5 text-center">
+                          {order.points_data ? (
                             <button
                               onClick={() => {
-                                setNotesModalOrder(order);
-                                setNotesDraft(order.amend_notes || '');
+                                setOrderForPoints(order);
+                                setPointsModalOpen(true);
                               }}
-                              className="mt-1 text-[11px] font-medium text-teal-600 hover:text-teal-700 underline"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-semibold transition-all"
+                              title="View saved quality points JSON"
                             >
-                              Edit Notes
+                              <Sparkles className="w-3 h-3 text-indigo-500" />
+                              <span>Points Saved</span>
                             </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setNotesModalOrder(order);
-                              setNotesDraft('');
-                            }}
-                            className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-teal-600 border border-dashed border-slate-300 hover:border-teal-400 px-2.5 py-1.5 rounded-lg transition-colors"
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            Add Notes
-                          </button>
-                        )}
-                      </td>
-
-                      {/* Amender */}
-                      <td className="py-3.5 px-4 align-top">
-                        {order.amender_name ? (
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-6 h-6 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center font-bold text-[10px]">
-                              {order.amender_name.charAt(0)}
-                            </div>
-                            <span className="font-semibold text-xs text-slate-800">
-                              {order.amender_name}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-500">
-                            Unassigned
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Timestamps */}
-                      <td className="py-3.5 px-4 align-top text-[11px] text-slate-500">
-                        {order.amend_completed_at ? (
-                          <div>
-                            <span className="text-emerald-600 font-semibold">Done:</span>{' '}
-                            {new Date(order.amend_completed_at).toLocaleString()}
-                          </div>
-                        ) : order.amend_assigned_at ? (
-                          <div>
-                            <span className="text-blue-600 font-semibold">Assigned:</span>{' '}
-                            {new Date(order.amend_assigned_at).toLocaleString()}
-                          </div>
-                        ) : order.received_at ? (
-                          <div>
-                            <span className="font-semibold">Recv:</span>{' '}
-                            {new Date(order.received_at).toLocaleDateString()}
-                          </div>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-
-                      {/* Action Buttons */}
-                      <td className="py-3.5 px-4 align-top text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => {
-                              setAssignModalOrder(order);
-                              setSelectedAmenderId(order.amender_id || '');
-                            }}
-                            className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                          >
-                            Assign
-                          </button>
-
-                          {order.amend_status !== 'delivered' && order.amend_status !== 'done' && (
-                            <button
-                              onClick={() => handleComplete(order)}
-                              className="px-2.5 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs"
-                            >
-                              Deliver
-                            </button>
+                          ) : (
+                            <span className="text-slate-300">-</span>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                        </td>
 
-        {/* Pagination */}
-        {pagination.last_page > 1 && (
-          <div className="flex items-center justify-between px-6 py-3 border-t border-slate-200 bg-slate-50/50">
-            <span className="text-xs text-slate-500">
-              Page {pagination.current_page} of {pagination.last_page}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={pagination.current_page <= 1}
-                className="p-1.5 rounded-lg border border-slate-200 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed text-slate-600"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setPage((p) => Math.min(pagination.last_page, p + 1))}
-                disabled={pagination.current_page >= pagination.last_page}
-                className="p-1.5 rounded-lg border border-slate-200 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed text-slate-600"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+                        {/* Status Badge */}
+                        <td className="py-2.5 px-3.5">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                              order.amend_status === 'delivered'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : order.amend_status === 'amender_done'
+                                ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                : order.amend_status === 'in_progress'
+                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                : 'bg-amber-50 text-amber-700 border-amber-200'
+                            }`}
+                          >
+                            {order.amend_status === 'amender_done'
+                              ? 'Amender Done'
+                              : order.amend_status === 'in_progress'
+                              ? 'In Progress'
+                              : order.amend_status.charAt(0).toUpperCase() + order.amend_status.slice(1)}
+                          </span>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* Amender Mark as Done Button */}
+                            {(isPrimaryAmender || isManagerOrDirector) && !isDone && !isDelivered && (
+                              <button
+                                onClick={() => openAmenderDoneModal(order)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold shadow-sm transition-all active:scale-95"
+                                title="Amender: Complete and add review points"
+                              >
+                                <CheckSquare className="w-3.5 h-3.5" />
+                                <span>Mark Done</span>
+                              </button>
+                            )}
+
+                            {/* Direct Amender Deliver Button */}
+                            {(isDirectAmender || isManagerOrDirector) && !isDelivered && (
+                              <button
+                                onClick={() => openDeliverModal(order)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold shadow-sm transition-all active:scale-95"
+                                title="Direct Amender: Check checklist and Deliver"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                                <span>Check & Deliver</span>
+                              </button>
+                            )}
+
+                            {isDelivered && (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-bold px-2 py-0.5 bg-emerald-50 rounded border border-emerald-200">
+                                <CheckCircle className="w-3.5 h-3.5" /> Delivered
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
-
-      {/* Assign Amender Modal */}
-      {assignModalOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200"
-          >
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center font-bold">
-                <UserCheck className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Assign Amender</h3>
-                <p className="text-xs text-slate-500">
-                  Order #{assignModalOrder.order_number}
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                  Select Amender
-                </label>
-                <select
-                  value={selectedAmenderId}
-                  onChange={(e) => setSelectedAmenderId(Number(e.target.value))}
-                  className="w-full p-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-                >
-                  <option value="">-- Choose Amender / Worker --</option>
-                  {amenders.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name} ({w.role.toUpperCase()})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setAssignModalOrder(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleAssign}
-                  disabled={!selectedAmenderId || assigningLoading}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50 rounded-xl transition-colors shadow-xs"
-                >
-                  {assigningLoading ? 'Assigning...' : 'Confirm Assignment'}
-                </button>
-              </div>
-            </div>
-          </motion.div>
         </div>
-      )}
 
-      {/* Notes Modal */}
-      {notesModalOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200"
-          >
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
-                <FileText className="w-5 h-5" />
+        {/* MODAL 1: Amender Mark Done & Add Points */}
+        <Modal
+          open={amenderDoneModalOpen}
+          onClose={() => setAmenderDoneModalOpen(false)}
+          title={`Amender Completion - Order #${orderForAmenderDone?.order_id}`}
+        >
+          {orderForAmenderDone && (
+            <form onSubmit={handleAmenderDoneSubmit} className="space-y-4 text-xs">
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                <div className="text-slate-700">
+                  <span className="font-semibold text-slate-900">Client:</span> {orderForAmenderDone.client_name || 'N/A'}
+                </div>
+                <div className="text-slate-700">
+                  <span className="font-semibold text-slate-900">Property:</span> {orderForAmenderDone.address || 'N/A'}
+                </div>
+                {orderForAmenderDone.amend_notes && (
+                  <div className="mt-2 text-amber-800 bg-amber-50 p-2 rounded border border-amber-200">
+                    <span className="font-bold">Client Amend Notes:</span> {orderForAmenderDone.amend_notes}
+                  </div>
+                )}
               </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Amend Notes</h3>
-                <p className="text-xs text-slate-500">
-                  Order #{notesModalOrder.order_number}
-                </p>
-              </div>
-            </div>
 
-            <div className="space-y-4">
+              {/* THREE POINTS / CATEGORY SELECTION */}
+              <div className="space-y-2 bg-slate-50 p-3.5 rounded-lg border border-slate-200">
+                <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px] block">
+                  Select Amend Category (Required for Submission):
+                </span>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {/* Team Mistake */}
+                  <label
+                    onClick={() => setSelectedCategory('Team Mistake')}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-lg border cursor-pointer transition-all ${
+                      selectedCategory === 'Team Mistake'
+                        ? 'bg-rose-50 border-rose-400 ring-2 ring-rose-400/30 text-rose-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-3 h-3 rounded-full ${selectedCategory === 'Team Mistake' ? 'bg-rose-500' : 'border border-slate-300'}`} />
+                      <span className="text-xs">Team Mistake</span>
+                    </div>
+                  </label>
+
+                  {/* Request */}
+                  <label
+                    onClick={() => setSelectedCategory('Request')}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-lg border cursor-pointer transition-all ${
+                      selectedCategory === 'Request'
+                        ? 'bg-blue-50 border-blue-400 ring-2 ring-blue-400/30 text-blue-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-3 h-3 rounded-full ${selectedCategory === 'Request' ? 'bg-blue-500' : 'border border-slate-300'}`} />
+                      <span className="text-xs">Request</span>
+                    </div>
+                  </label>
+
+                  {/* Amender Mistake */}
+                  <label
+                    onClick={() => setSelectedCategory('Amender Mistake')}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-lg border cursor-pointer transition-all ${
+                      selectedCategory === 'Amender Mistake'
+                        ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-400/30 text-amber-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-3 h-3 rounded-full ${selectedCategory === 'Amender Mistake' ? 'bg-amber-500' : 'border border-slate-300'}`} />
+                      <span className="text-xs">Amender Mistake</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Checklist points */}
+              <div className="space-y-2 bg-slate-50 p-3.5 rounded-lg border border-slate-200">
+                <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px] block">
+                  Amender Verification Checklist (Saved in JSON)
+                </span>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={amenderChecklist.dimensions_verified}
+                    onChange={(e) =>
+                      setAmenderChecklist({ ...amenderChecklist, dimensions_verified: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>All room dimensions & measurements fixed and verified</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={amenderChecklist.text_and_labels_corrected}
+                    onChange={(e) =>
+                      setAmenderChecklist({ ...amenderChecklist, text_and_labels_corrected: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>Room labels, text, and annotations corrected</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={amenderChecklist.symbols_and_doors_checked}
+                    onChange={(e) =>
+                      setAmenderChecklist({ ...amenderChecklist, symbols_and_doors_checked: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>Doors, windows, orientation, and symbols confirmed</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={amenderChecklist.client_notes_addressed}
+                    onChange={(e) =>
+                      setAmenderChecklist({ ...amenderChecklist, client_notes_addressed: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>Every point mentioned by the client resolved completely</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={amenderChecklist.visual_quality_cleared}
+                    onChange={(e) =>
+                      setAmenderChecklist({ ...amenderChecklist, visual_quality_cleared: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>Visual presentation & template style cleared</span>
+                </label>
+              </div>
+
+              {/* Amender Content & Notes */}
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                  Enter Instructions / Notes for this Amend:
+                <label className="block font-semibold text-slate-800 mb-1">
+                  Amender Notes / Remarks (Saved in JSON & CSV Export):
                 </label>
                 <textarea
-                  rows={4}
-                  value={notesDraft}
-                  onChange={(e) => setNotesDraft(e.target.value)}
-                  placeholder="e.g. Correct kitchen dimensions, add missing door on balcony, change wall color..."
-                  className="w-full p-3 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+                  rows={3}
+                  value={amenderNotesContent}
+                  onChange={(e) => setAmenderNotesContent(e.target.value)}
+                  placeholder="Enter details of changes made for the reviewer..."
+                  className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setNotesModalOrder(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveNotes}
-                  disabled={savingNotes}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50 rounded-xl transition-colors shadow-xs"
-                >
-                  {savingNotes ? 'Saving...' : 'Save Notes'}
-                </button>
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                <span className="text-[11px] text-slate-500">
+                  Logged in as: <span className="font-semibold text-slate-800">{user?.name}</span>
+                </span>
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={() => setAmenderDoneModalOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button variant="primary" type="submit" disabled={submittingDone}>
+                    {submittingDone ? 'Saving...' : 'Confirm Mark Done'}
+                  </Button>
+                </div>
+              </div>
+            </form>
+          )}
+        </Modal>
+
+        {/* MODAL 2: Direct Amender / Manager Check & Deliver */}
+        <Modal
+          open={deliverModalOpen}
+          onClose={() => setDeliverModalOpen(false)}
+          title={`Check & Deliver Amend - Order #${orderForDeliver?.order_id}`}
+        >
+          {orderForDeliver && (
+            <form onSubmit={handleDeliverSubmit} className="space-y-4 text-xs">
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                <div className="text-slate-700">
+                  <span className="font-semibold text-slate-900">Amender:</span>{' '}
+                  <span className="font-bold text-brand-700">{orderForDeliver.amender_name || user?.name}</span>
+                </div>
+                <div className="text-slate-700">
+                  <span className="font-semibold text-slate-900">Property:</span> {orderForDeliver.address || 'N/A'}
+                </div>
+                {orderForDeliver.amend_notes && (
+                  <div className="mt-2 text-amber-800 bg-amber-50 p-2 rounded border border-amber-200">
+                    <span className="font-bold">Client Notes:</span> {orderForDeliver.amend_notes}
+                  </div>
+                )}
+              </div>
+
+              {/* THREE POINTS / CATEGORY CONFIRMATION */}
+              <div className="space-y-2 bg-slate-50 p-3.5 rounded-lg border border-slate-200">
+                <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px] block">
+                  Verify Amend Category:
+                </span>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {/* Team Mistake */}
+                  <label
+                    onClick={() => setSelectedCategory('Team Mistake')}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-lg border cursor-pointer transition-all ${
+                      selectedCategory === 'Team Mistake'
+                        ? 'bg-rose-50 border-rose-400 ring-2 ring-rose-400/30 text-rose-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-3 h-3 rounded-full ${selectedCategory === 'Team Mistake' ? 'bg-rose-500' : 'border border-slate-300'}`} />
+                      <span className="text-xs">Team Mistake</span>
+                    </div>
+                  </label>
+
+                  {/* Request */}
+                  <label
+                    onClick={() => setSelectedCategory('Request')}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-lg border cursor-pointer transition-all ${
+                      selectedCategory === 'Request'
+                        ? 'bg-blue-50 border-blue-400 ring-2 ring-blue-400/30 text-blue-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-3 h-3 rounded-full ${selectedCategory === 'Request' ? 'bg-blue-500' : 'border border-slate-300'}`} />
+                      <span className="text-xs">Request</span>
+                    </div>
+                  </label>
+
+                  {/* Amender Mistake */}
+                  <label
+                    onClick={() => setSelectedCategory('Amender Mistake')}
+                    className={`flex flex-col items-center justify-center p-2.5 rounded-lg border cursor-pointer transition-all ${
+                      selectedCategory === 'Amender Mistake'
+                        ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-400/30 text-amber-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-3 h-3 rounded-full ${selectedCategory === 'Amender Mistake' ? 'bg-amber-500' : 'border border-slate-300'}`} />
+                      <span className="text-xs">Amender Mistake</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Direct Amender Verification Checklist */}
+              <div className="space-y-2 bg-slate-50 p-3.5 rounded-lg border border-slate-200">
+                <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px] block">
+                  Direct Amender Quality Verification
+                </span>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={deliverChecklist.dimensions_verified}
+                    onChange={(e) =>
+                      setDeliverChecklist({ ...deliverChecklist, dimensions_verified: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>Dimensions & measurements accuracy confirmed</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={deliverChecklist.text_and_labels_corrected}
+                    onChange={(e) =>
+                      setDeliverChecklist({ ...deliverChecklist, text_and_labels_corrected: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>All labels and text checked</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={deliverChecklist.symbols_and_doors_checked}
+                    onChange={(e) =>
+                      setDeliverChecklist({ ...deliverChecklist, symbols_and_doors_checked: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>Doors, fixtures, and symbols inspected</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={deliverChecklist.client_notes_addressed}
+                    onChange={(e) =>
+                      setDeliverChecklist({ ...deliverChecklist, client_notes_addressed: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>All amend requirements verified resolved</span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer text-slate-700 hover:text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={deliverChecklist.visual_quality_cleared}
+                    onChange={(e) =>
+                      setDeliverChecklist({ ...deliverChecklist, visual_quality_cleared: e.target.checked })
+                    }
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-4 h-4"
+                  />
+                  <span>Final delivery output ready for client</span>
+                </label>
+              </div>
+
+              {/* Reviewer Comments */}
+              <div>
+                <label className="block font-semibold text-slate-800 mb-1">
+                  Direct Amender / Uploader Remarks (Saved in JSON & CSV):
+                </label>
+                <textarea
+                  rows={3}
+                  value={reviewerComments}
+                  onChange={(e) => setReviewerComments(e.target.value)}
+                  placeholder="Enter any quality remarks or delivery notes..."
+                  className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                <span className="text-[11px] text-slate-500">
+                  Uploader: <span className="font-semibold text-emerald-700">{user?.name}</span> ({user?.role})
+                </span>
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={() => setDeliverModalOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button variant="primary" type="submit" disabled={submittingDeliver}>
+                    {submittingDeliver ? 'Delivering...' : 'Confirm Delivery'}
+                  </Button>
+                </div>
+              </div>
+            </form>
+          )}
+        </Modal>
+
+        {/* MODAL 3: View Full Notes */}
+        <Modal
+          open={notesModalOpen}
+          onClose={() => setNotesModalOpen(false)}
+          title={`Amend Notes - Order #${orderForNotes?.order_id}`}
+        >
+          {orderForNotes && (
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-lg text-amber-900 whitespace-pre-wrap font-mono leading-relaxed">
+                {orderForNotes.amend_notes || 'No notes available'}
+              </div>
+              <div className="flex justify-end">
+                <Button variant="secondary" onClick={() => setNotesModalOpen(false)}>
+                  Close
+                </Button>
               </div>
             </div>
-          </motion.div>
-        </div>
-      )}
-    </div>
+          )}
+        </Modal>
+
+        {/* MODAL 4: View JSON Points Data */}
+        <Modal
+          open={pointsModalOpen}
+          onClose={() => setPointsModalOpen(false)}
+          title={`Saved Quality Points (JSON) - Order #${orderForPoints?.order_id}`}
+        >
+          {orderForPoints && (
+            <div className="space-y-3 text-xs">
+              {(() => {
+                let parsed: any = null;
+                try {
+                  parsed =
+                    typeof orderForPoints.points_data === 'string'
+                      ? JSON.parse(orderForPoints.points_data)
+                      : orderForPoints.points_data;
+                } catch (e) {
+                  parsed = null;
+                }
+
+                const cat = orderForPoints.amend_category || parsed?.amend_category;
+
+                return (
+                  <div className="space-y-3">
+                    {/* Selected Category Highlight */}
+                    {cat && (
+                      <div className="flex items-center justify-between p-3 rounded-lg border bg-slate-50">
+                        <span className="font-bold text-slate-700">Amend Classification:</span>
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase border ${
+                            cat === 'Team Mistake'
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : cat === 'Amender Mistake'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-blue-50 text-blue-700 border-blue-200'
+                          }`}
+                        >
+                          {cat}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Amender Checklist */}
+                    {(parsed?.amender_checklist || parsed?.checklist) && (
+                      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1.5">
+                        <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px] block">
+                          Verified Checklist Items
+                        </span>
+                        {Object.entries(parsed.amender_checklist || parsed.checklist).map(([k, v]) => (
+                          <div key={k} className="flex items-center gap-2 text-slate-700">
+                            <span className={v ? 'text-emerald-600 font-bold' : 'text-rose-500 font-bold'}>
+                              {v ? '✓' : '✗'}
+                            </span>
+                            <span className="capitalize">{k.replace(/_/g, ' ')}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Amender Content */}
+                    {parsed?.amender_content && (
+                      <div className="p-3 bg-purple-50/60 rounded-lg border border-purple-200">
+                        <span className="font-bold text-purple-900 block mb-1">Amender Remarks:</span>
+                        <p className="text-purple-800 italic">{parsed.amender_content}</p>
+                      </div>
+                    )}
+
+                    {/* Reviewer Comments */}
+                    {parsed?.reviewer_comments && (
+                      <div className="p-3 bg-emerald-50/60 rounded-lg border border-emerald-200">
+                        <span className="font-bold text-emerald-900 block mb-1">Direct Amender Remarks:</span>
+                        <p className="text-emerald-800 italic">{parsed.reviewer_comments}</p>
+                      </div>
+                    )}
+
+                    {/* Submitter & Delivery Info */}
+                    <div className="p-2.5 bg-slate-100 rounded-lg text-[11px] text-slate-600 space-y-1">
+                      {parsed?.completed_by_amender && (
+                        <div>
+                          Amender: <span className="font-semibold text-slate-800">{parsed.completed_by_amender}</span> (
+                          {parsed.completed_at ? new Date(parsed.completed_at).toLocaleString() : 'N/A'})
+                        </div>
+                      )}
+                      {parsed?.delivered_by && (
+                        <div>
+                          Delivered By: <span className="font-semibold text-emerald-700">{parsed.delivered_by}</span> (
+                          {parsed.delivered_at ? new Date(parsed.delivered_at).toLocaleString() : 'N/A'})
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="flex justify-end">
+                <Button variant="secondary" onClick={() => setPointsModalOpen(false)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
+        </Modal>
+      </div>
+    </AnimatedPage>
   );
 }

@@ -15,14 +15,13 @@ use Carbon\Carbon;
 class AmendController extends Controller
 {
     /**
-     * Ensure the project amends table exists on-demand (lazy creation).
+     * Ensure the project amends table exists on-demand (lazy creation)
+     * and schema columns are up to date.
      */
     private function ensureAmendTableReady(int $projectId): bool
     {
         try {
-            if (!ProjectOrderService::amendTableExists($projectId)) {
-                ProjectOrderService::createAmendTable($projectId);
-            }
+            ProjectOrderService::createAmendTable($projectId);
             return true;
         } catch (\Throwable $e) {
             return false;
@@ -44,7 +43,7 @@ class AmendController extends Controller
         $amendTable = ProjectOrderService::getAmendTableName($projectId);
         $hasAmendTable = Schema::hasTable($amendTable);
 
-        $status = $request->input('status', 'all'); // all, pending, in_progress, delivered
+        $status = $request->input('status', 'all'); // all, pending, in_progress, amender_done, delivered
         $search = trim((string) $request->input('search', ''));
         $perPage = max(1, min(100, (int) $request->input('per_page', 25)));
 
@@ -84,7 +83,15 @@ class AmendController extends Controller
                     'a.amender_name',
                     'a.assigned_at as amend_assigned_at',
                     'a.started_at as amend_started_at',
+                    'a.amender_done_at',
+                    'a.direct_amender_id',
+                    'a.direct_amender_name',
+                    'a.uploader_id',
+                    'a.uploader_name',
+                    'a.delivered_at as amend_delivered_at',
                     'a.completed_at as amend_completed_at',
+                    'a.amend_category',
+                    'a.points_data',
                     'a.created_at as amend_created_at',
                 ])
                 ->where(function ($w) {
@@ -121,7 +128,15 @@ class AmendController extends Controller
                 DB::raw("NULL as amender_name"),
                 DB::raw("NULL as amend_assigned_at"),
                 DB::raw("NULL as amend_started_at"),
+                DB::raw("NULL as amender_done_at"),
+                DB::raw("NULL as direct_amender_id"),
+                DB::raw("NULL as direct_amender_name"),
+                DB::raw("NULL as uploader_id"),
+                DB::raw("NULL as uploader_name"),
+                DB::raw("NULL as amend_delivered_at"),
                 DB::raw("NULL as amend_completed_at"),
+                DB::raw("NULL as amend_category"),
+                DB::raw("NULL as points_data"),
                 DB::raw("NULL as amend_created_at"),
             ])
             ->where('o.amend', 'yes');
@@ -132,6 +147,12 @@ class AmendController extends Controller
             if ($status === 'delivered' || $status === 'done') {
                 if ($hasAmendTable) {
                     $query->whereIn('a.amend_status', ['delivered', 'done']);
+                } else {
+                    $query->whereRaw('1 = 0');
+                }
+            } elseif ($status === 'amender_done') {
+                if ($hasAmendTable) {
+                    $query->where('a.amend_status', 'amender_done');
                 } else {
                     $query->whereRaw('1 = 0');
                 }
@@ -164,6 +185,8 @@ class AmendController extends Controller
 
                 if ($hasAmendTable) {
                     $sub->orWhere('a.amender_name', 'like', "%{$search}%")
+                        ->orWhere('a.direct_amender_name', 'like', "%{$search}%")
+                        ->orWhere('a.uploader_name', 'like', "%{$search}%")
                         ->orWhere('a.amend_notes', 'like', "%{$search}%");
                 }
             });
@@ -185,22 +208,25 @@ class AmendController extends Controller
                 COUNT(*) as total,
                 SUM(CASE WHEN a.amend_status = 'pending' OR a.amend_status IS NULL THEN 1 ELSE 0 END) as pending_count,
                 SUM(CASE WHEN a.amend_status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_count,
+                SUM(CASE WHEN a.amend_status = 'amender_done' THEN 1 ELSE 0 END) as amender_done_count,
                 SUM(CASE WHEN a.amend_status IN ('delivered', 'done') THEN 1 ELSE 0 END) as delivered_count
             ")->first();
 
             $counts = [
-                'total'       => (int) ($countsData->total ?? 0),
-                'pending'     => (int) ($countsData->pending_count ?? 0),
-                'in_progress' => (int) ($countsData->in_progress_count ?? 0),
-                'delivered'   => (int) ($countsData->delivered_count ?? 0),
+                'total'        => (int) ($countsData->total ?? 0),
+                'pending'      => (int) ($countsData->pending_count ?? 0),
+                'in_progress'  => (int) ($countsData->in_progress_count ?? 0),
+                'amender_done' => (int) ($countsData->amender_done_count ?? 0),
+                'delivered'    => (int) ($countsData->delivered_count ?? 0),
             ];
         } else {
             $totalCount = $countsQuery->where('o.amend', 'yes')->count();
             $counts = [
-                'total'       => $totalCount,
-                'pending'     => $totalCount,
-                'in_progress' => 0,
-                'delivered'   => 0,
+                'total'        => $totalCount,
+                'pending'      => $totalCount,
+                'in_progress'  => 0,
+                'amender_done' => 0,
+                'delivered'    => 0,
             ];
         }
 
@@ -218,14 +244,14 @@ class AmendController extends Controller
 
     /**
      * GET /api/amends/workers
-     * Returns list of users who can be assigned to amends (role='amender', drawer, checker, etc.)
+     * Returns list of users who can be assigned to amends (role='amender', 'direct_amender', drawer, checker, qa)
      */
     public function getAmenders(Request $request)
     {
         $users = User::where('is_active', true)
-            ->whereIn('role', ['amender', 'drawer', 'checker', 'qa'])
+            ->whereIn('role', ['amender', 'direct_amender', 'drawer', 'checker', 'qa', 'operations_manager', 'project_manager'])
             ->select(['id', 'name', 'role', 'email'])
-            ->orderByRaw("FIELD(role, 'amender', 'drawer', 'checker', 'qa')")
+            ->orderByRaw("FIELD(role, 'amender', 'direct_amender', 'operations_manager', 'project_manager', 'drawer', 'checker', 'qa')")
             ->orderBy('name')
             ->get();
 
@@ -234,7 +260,7 @@ class AmendController extends Controller
 
     /**
      * POST /api/amends/assign/{projectId}/{orderId}
-     * Assign an amender to this order.
+     * Assign a primary amender to work on this order.
      */
     public function assignOrder(Request $request, int $projectId, int $orderId)
     {
@@ -254,7 +280,6 @@ class AmendController extends Controller
         $amender = User::findOrFail($request->input('amender_id'));
         $now = now();
 
-        // Check if amend row exists
         $existing = DB::table($amendTable)->where('order_id', $orderId)->first();
 
         if ($existing) {
@@ -289,17 +314,66 @@ class AmendController extends Controller
         ]);
 
         return response()->json([
-            'message' => "Order assigned to {$amender->name} successfully",
+            'message'      => "Order assigned to {$amender->name} successfully",
             'amender_name' => $amender->name,
             'amend_status' => 'in_progress',
         ]);
     }
 
     /**
-     * POST /api/amends/complete/{projectId}/{orderId}
-     * Mark an amend order as completed/delivered by the amender.
+     * POST /api/amends/assign-direct/{projectId}/{orderId}
+     * Assign a direct amender (reviewer) to this order.
      */
-    public function completeOrder(Request $request, int $projectId, int $orderId)
+    public function assignDirectAmender(Request $request, int $projectId, int $orderId)
+    {
+        $request->validate([
+            'direct_amender_id' => 'required|exists:users,id',
+        ]);
+
+        $this->ensureAmendTableReady($projectId);
+        $orderTable = ProjectOrderService::getTableName($projectId);
+        $amendTable = ProjectOrderService::getAmendTableName($projectId);
+
+        $order = DB::table($orderTable)->where('id', $orderId)->first();
+        if (!$order) {
+            return response()->json(['error' => 'Order not found'], 404);
+        }
+
+        $directAmender = User::findOrFail($request->input('direct_amender_id'));
+        $now = now();
+
+        $existing = DB::table($amendTable)->where('order_id', $orderId)->first();
+
+        if ($existing) {
+            DB::table($amendTable)->where('id', $existing->id)->update([
+                'direct_amender_id'   => $directAmender->id,
+                'direct_amender_name' => $directAmender->name,
+                'updated_at'          => $now,
+            ]);
+        } else {
+            DB::table($amendTable)->insert([
+                'order_id'            => $order->id,
+                'order_number'        => $order->order_number,
+                'amend'               => 'yes',
+                'amend_status'        => 'pending',
+                'direct_amender_id'   => $directAmender->id,
+                'direct_amender_name' => $directAmender->name,
+                'created_at'          => $now,
+                'updated_at'          => $now,
+            ]);
+        }
+
+        return response()->json([
+            'message'             => "Direct amender {$directAmender->name} assigned successfully",
+            'direct_amender_name' => $directAmender->name,
+        ]);
+    }
+
+    /**
+     * POST /api/amends/amender-done/{projectId}/{orderId}
+     * Amender marks their work as done, moving it to 'amender_done' status for review & delivery.
+     */
+    public function amenderDone(Request $request, int $projectId, int $orderId)
     {
         $this->ensureAmendTableReady($projectId);
         $orderTable = ProjectOrderService::getTableName($projectId);
@@ -312,48 +386,189 @@ class AmendController extends Controller
 
         $now = now();
         $currentUser = Auth::user();
+        $existing = DB::table($amendTable)->where('order_id', $orderId)->first();
+
+        $pointsData = $request->input('points_data');
+        $amendCategory = $request->input('amend_category') ?? (is_array($pointsData) ? ($pointsData['amend_category'] ?? null) : null);
+        $pointsJson = is_array($pointsData) ? json_encode($pointsData) : (is_string($pointsData) ? $pointsData : null);
+
+        if ($existing) {
+            $updates = [
+                'amend_status'    => 'amender_done',
+                'amender_done_at' => $now,
+                'updated_at'      => $now,
+            ];
+
+            if ($amendCategory) {
+                $updates['amend_category'] = $amendCategory;
+            }
+
+            if ($pointsJson) {
+                $updates['points_data'] = $pointsJson;
+            }
+
+            if ($currentUser) {
+                $updates['amender_id']   = $currentUser->id;
+                $updates['amender_name'] = $currentUser->name;
+            }
+
+            DB::table($amendTable)->where('id', $existing->id)->update($updates);
+        } else {
+            DB::table($amendTable)->insert([
+                'order_id'        => $order->id,
+                'order_number'    => $order->order_number,
+                'amend'           => 'yes',
+                'amend_notes'     => $request->input('amend_notes') ?? null,
+                'amend_status'    => 'amender_done',
+                'amend_category'  => $amendCategory,
+                'amender_id'      => $currentUser?->id,
+                'amender_name'    => $currentUser?->name,
+                'assigned_at'     => $now,
+                'started_at'      => $now,
+                'amender_done_at' => $now,
+                'points_data'     => $pointsJson,
+                'created_at'      => $now,
+                'updated_at'      => $now,
+            ]);
+        }
+
+        return response()->json([
+            'message'      => 'Amend marked as done by amender. Ready for review & delivery.',
+            'amend_status' => 'amender_done',
+            'amender_done_at' => $now->toDateTimeString(),
+        ]);
+    }
+
+    /**
+     * POST /api/amends/deliver/{projectId}/{orderId} (or /complete)
+     * Direct Amender or Manager reviews, records points/checklist JSON, and marks as Delivered.
+     */
+    public function deliverOrder(Request $request, int $projectId, int $orderId)
+    {
+        $this->ensureAmendTableReady($projectId);
+        $orderTable = ProjectOrderService::getTableName($projectId);
+        $amendTable = ProjectOrderService::getAmendTableName($projectId);
+
+        $order = DB::table($orderTable)->where('id', $orderId)->first();
+        if (!$order) {
+            return response()->json(['error' => 'Order not found'], 404);
+        }
+
+        $now = now();
+        $currentUser = Auth::user();
+        $uploaderName = $request->input('uploader_name') ?: ($currentUser ? $currentUser->name : 'Manager');
+        $uploaderId = $currentUser ? $currentUser->id : null;
+
+        $pointsData = $request->input('points_data');
+        $amendCategory = $request->input('amend_category') ?? (is_array($pointsData) ? ($pointsData['amend_category'] ?? null) : null);
+        $pointsJson = is_array($pointsData) ? json_encode($pointsData) : (is_string($pointsData) ? $pointsData : null);
 
         $existing = DB::table($amendTable)->where('order_id', $orderId)->first();
 
         if ($existing) {
             $updates = [
                 'amend_status' => 'delivered',
+                'uploader_id'   => $uploaderId,
+                'uploader_name' => $uploaderName,
+                'delivered_at' => $now,
                 'completed_at' => $now,
                 'updated_at'   => $now,
             ];
-            // If no amender recorded yet, assign current user
-            if (empty($existing->amender_id) && $currentUser) {
-                $updates['amender_id']   = $currentUser->id;
-                $updates['amender_name'] = $currentUser->name;
+
+            if ($amendCategory) {
+                $updates['amend_category'] = $amendCategory;
             }
+
+            if ($pointsJson) {
+                $updates['points_data'] = $pointsJson;
+            }
+
+            // If direct amender name not set, record current user if direct amender
+            if (empty($existing->direct_amender_name) && $currentUser && $currentUser->role === 'direct_amender') {
+                $updates['direct_amender_id']   = $currentUser->id;
+                $updates['direct_amender_name'] = $currentUser->name;
+            }
+
             DB::table($amendTable)->where('id', $existing->id)->update($updates);
         } else {
             DB::table($amendTable)->insert([
-                'order_id'     => $order->id,
-                'order_number' => $order->order_number,
-                'amend'        => 'yes',
-                'amend_notes'  => $request->input('amend_notes') ?? null,
-                'amend_status' => 'delivered',
-                'amender_id'   => $currentUser?->id,
-                'amender_name' => $currentUser?->name,
-                'assigned_at'  => $now,
-                'started_at'   => $now,
-                'completed_at' => $now,
-                'created_at'   => $now,
-                'updated_at'   => $now,
+                'order_id'            => $order->id,
+                'order_number'        => $order->order_number,
+                'amend'               => 'yes',
+                'amend_notes'         => $request->input('amend_notes') ?? null,
+                'amend_status'        => 'delivered',
+                'amend_category'      => $amendCategory,
+                'amender_id'          => $currentUser?->id,
+                'amender_name'        => $currentUser?->name,
+                'direct_amender_id'   => ($currentUser && $currentUser->role === 'direct_amender') ? $currentUser->id : null,
+                'direct_amender_name' => ($currentUser && $currentUser->role === 'direct_amender') ? $currentUser->name : null,
+                'uploader_id'         => $uploaderId,
+                'uploader_name'       => $uploaderName,
+                'assigned_at'         => $now,
+                'started_at'          => $now,
+                'delivered_at'        => $now,
+                'completed_at'        => $now,
+                'points_data'         => $pointsJson,
+                'created_at'          => $now,
+                'updated_at'          => $now,
             ]);
         }
 
+        // Update base order delivered timestamp if needed
+        DB::table($orderTable)->where('id', $orderId)->update([
+            'delivered_at' => $now->format('Y-m-d H:i:s'),
+            'updated_at'   => $now->format('Y-m-d H:i:s'),
+        ]);
+
         return response()->json([
-            'message'      => 'Amend marked as delivered successfully',
-            'amend_status' => 'delivered',
-            'completed_at' => $now->toDateTimeString(),
+            'message'       => 'Amend marked as delivered successfully by ' . $uploaderName,
+            'amend_status'  => 'delivered',
+            'uploader_name' => $uploaderName,
+            'delivered_at'  => $now->toDateTimeString(),
+        ]);
+    }
+
+    /**
+     * Alias for deliverOrder to maintain backward compatibility.
+     */
+    public function completeOrder(Request $request, int $projectId, int $orderId)
+    {
+        return $this->deliverOrder($request, $projectId, $orderId);
+    }
+
+    /**
+     * POST /api/amends/points/{projectId}/{orderId}
+     * Save/update JSON checklist points or review content for an amend order.
+     */
+    public function savePointsData(Request $request, int $projectId, int $orderId)
+    {
+        $this->ensureAmendTableReady($projectId);
+        $amendTable = ProjectOrderService::getAmendTableName($projectId);
+
+        $pointsData = $request->input('points_data');
+        $pointsJson = is_array($pointsData) ? json_encode($pointsData) : (is_string($pointsData) ? $pointsData : null);
+
+        $now = now();
+        $existing = DB::table($amendTable)->where('order_id', $orderId)->first();
+
+        if ($existing) {
+            DB::table($amendTable)->where('id', $existing->id)->update([
+                'points_data' => $pointsJson,
+                'updated_at'  => $now,
+            ]);
+        } else {
+            return response()->json(['error' => 'Amend record not found'], 404);
+        }
+
+        return response()->json([
+            'message'     => 'Points and review content saved successfully',
+            'points_data' => $pointsData,
         ]);
     }
 
     /**
      * POST /api/amends/notes/{projectId}/{orderId}
-     * Update amend notes for an order.
+     * Update amend instructions/notes for an order.
      */
     public function updateNotes(Request $request, int $projectId, int $orderId)
     {
@@ -411,7 +626,7 @@ class AmendController extends Controller
     {
         $request->validate([
             'amend_notes'  => 'nullable|string',
-            'amend_status' => 'nullable|string|in:pending,in_progress,delivered,done',
+            'amend_status' => 'nullable|string|in:pending,in_progress,amender_done,delivered,done',
         ]);
 
         $this->ensureAmendTableReady($projectId);

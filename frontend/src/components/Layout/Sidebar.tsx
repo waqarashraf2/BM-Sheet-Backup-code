@@ -17,7 +17,7 @@ import BenchmarkLogo from '../ui/BenchmarkLogo';
 
 const NAV = [
 
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['ceo', 'director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer', 'accounts_manager', 'live_qa', 'hr', 'csr', 'it', 'amender'] },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['ceo', 'director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer', 'accounts_manager', 'live_qa', 'hr', 'csr', 'it', 'amender', 'direct_amender'] },
   { name: 'Projects', href: '/projects', icon: FolderKanban, roles: ['ceo', 'director', 'operations_manager', 'project_manager'] },
   { name: 'Users', href: '/users', icon: Users, roles: ['director', 'operations_manager', 'project_manager', 'hr'] },
   { name: 'HR Panel', href: '/hr-panel', icon: UsersRound, roles: ['ceo', 'director', 'hr'] },
@@ -35,7 +35,7 @@ const NAV = [
   { name: 'In Progress Orders', href: '/client-portal-in-progress', icon: UploadCloud, roles: ['operations_manager', 'project_manager', 'qa'], clientPortalProjectGate: true },
   { name: 'Live QA', href: '/live-qa', icon: ShieldCheck, roles: ['live_qa', 'director', 'ceo', 'checker', 'qa'] },
   { name: 'Internal QA', href: '/internal-qa', icon: ShieldAlert, roles: ['live_qa', 'ceo', 'director', 'operations_manager'] },
-  { name: 'Amend Orders', href: '/amends', icon: RotateCcw, roles: ['amender', 'director', 'operations_manager', 'project_manager', 'qa', 'ceo'] },
+  { name: 'Amend Orders', href: '/amends', icon: RotateCcw, roles: ['amender', 'direct_amender', 'director', 'operations_manager', 'project_manager', 'ceo'] },
   { name: 'Rejected', href: '/rejected', icon: AlertTriangle, roles: ['director', 'operations_manager', 'project_manager', 'drawer', 'checker', 'filler', 'qa', 'designer'] },
   { name: 'Work Queue', href: '/work', icon: ClipboardList, roles: ['drawer', 'checker', 'filler', 'qa', 'designer'] },
   { name: 'Batch Status', href: '/batch-status', icon: ClipboardList, roles: ['operations_manager', 'project_manager'] },

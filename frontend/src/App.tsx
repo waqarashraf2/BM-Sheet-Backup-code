@@ -134,6 +134,7 @@ function App() {
           </Suspense>
         );
       case 'amender':
+      case 'direct_amender':
         return (
           <Suspense fallback={<PageLoader />}>
             <AmendAssignmentDashboard />
@@ -400,7 +401,7 @@ function App() {
             <Route
               path="amends/*"
               element={
-                <ProtectedRoute allowedRoles={['amender', 'ceo', 'director', 'operations_manager', 'project_manager', 'qa']}>
+                <ProtectedRoute allowedRoles={['amender', 'direct_amender', 'ceo', 'director', 'operations_manager', 'project_manager']}>
                   <Suspense fallback={<PageLoader />}>
                     <AmendAssignmentDashboard />
                   </Suspense>

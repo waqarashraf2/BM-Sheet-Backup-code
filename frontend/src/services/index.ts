@@ -1451,12 +1451,20 @@ export interface AmendOrder {
   amend_id: number;
   amend: string;
   amend_notes?: string | null;
-  amend_status: 'pending' | 'in_progress' | 'delivered' | 'done';
+  amend_status: 'pending' | 'in_progress' | 'amender_done' | 'delivered' | 'done';
   amender_id?: number | null;
   amender_name?: string | null;
   amend_assigned_at?: string | null;
   amend_started_at?: string | null;
+  amender_done_at?: string | null;
+  direct_amender_id?: number | null;
+  direct_amender_name?: string | null;
+  uploader_id?: number | null;
+  uploader_name?: string | null;
+  amend_delivered_at?: string | null;
   amend_completed_at?: string | null;
+  amend_category?: 'Team Mistake' | 'Request' | 'Amender Mistake' | string | null;
+  points_data?: any;
   amend_created_at?: string | null;
 }
 
@@ -1466,6 +1474,7 @@ export interface AmendOrdersResponse {
     total: number;
     pending: number;
     in_progress: number;
+    amender_done: number;
     delivered: number;
   };
   pagination: {
@@ -1493,8 +1502,20 @@ export const amendService = {
   assign: (projectId: number, orderId: number, data: { amender_id: number; amend_notes?: string }) =>
     api.post<{ message: string; amender_name: string; amend_status: string }>(`/amends/assign/${projectId}/${orderId}`, data),
 
-  complete: (projectId: number, orderId: number, data?: { amend_notes?: string }) =>
-    api.post<{ message: string; amend_status: string; completed_at: string }>(`/amends/complete/${projectId}/${orderId}`, data),
+  assignDirect: (projectId: number, orderId: number, data: { direct_amender_id: number }) =>
+    api.post<{ message: string; direct_amender_name: string }>(`/amends/assign-direct/${projectId}/${orderId}`, data),
+
+  amenderDone: (projectId: number, orderId: number, data?: { points_data?: any; notes?: string; amend_category?: string }) =>
+    api.post<{ message: string; amend_status: string; amender_done_at: string }>(`/amends/amender-done/${projectId}/${orderId}`, data),
+
+  deliver: (projectId: number, orderId: number, data?: { points_data?: any; uploader_name?: string; amend_category?: string }) =>
+    api.post<{ message: string; amend_status: string; uploader_name: string; delivered_at: string }>(`/amends/deliver/${projectId}/${orderId}`, data),
+
+  complete: (projectId: number, orderId: number, data?: { points_data?: any; uploader_name?: string }) =>
+    api.post<{ message: string; amend_status: string; uploader_name?: string; completed_at: string }>(`/amends/complete/${projectId}/${orderId}`, data),
+
+  savePoints: (projectId: number, orderId: number, points_data: any) =>
+    api.post<{ message: string; points_data: any }>(`/amends/points/${projectId}/${orderId}`, { points_data }),
 
   updateNotes: (projectId: number, orderId: number, notes: string) =>
     api.post<{ message: string; amend_notes: string }>(`/amends/notes/${projectId}/${orderId}`, { amend_notes: notes }),
