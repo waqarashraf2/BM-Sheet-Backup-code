@@ -143,7 +143,7 @@ class UserController extends Controller
 
     /**
     /**
-     * Ensure users table role ENUM includes all valid roles safely.
+     * Ensure users table role column supports all valid roles safely.
      */
     public static function ensureUserRolesEnumReady(): void
     {
@@ -151,27 +151,31 @@ class UserController extends Controller
         if ($checked) return;
         $checked = true;
         try {
-            DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM(
-                'ceo',
-                'director',
-                'operations_manager',
-                'project_manager',
-                'drawer',
-                'checker',
-                'qa',
-                'designer',
-                'accounts_manager',
-                'live_qa',
-                'hr',
-                'filler',
-                'csr',
-                'it',
-                'client',
-                'amender',
-                'direct_amender'
-            ) NOT NULL");
+            DB::statement("ALTER TABLE users MODIFY COLUMN role VARCHAR(50) NOT NULL DEFAULT 'drawer'");
         } catch (\Throwable $e) {
-            // Log or ignore if already updated / permissions restricted
+            try {
+                DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM(
+                    'ceo',
+                    'director',
+                    'operations_manager',
+                    'project_manager',
+                    'drawer',
+                    'checker',
+                    'qa',
+                    'designer',
+                    'accounts_manager',
+                    'live_qa',
+                    'hr',
+                    'filler',
+                    'csr',
+                    'it',
+                    'client',
+                    'amender',
+                    'direct_amender'
+                ) NOT NULL DEFAULT 'drawer'");
+            } catch (\Throwable $e2) {
+                // Log or ignore if already updated / permissions restricted
+            }
         }
     }
 
