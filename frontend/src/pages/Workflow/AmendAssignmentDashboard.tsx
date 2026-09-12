@@ -5,6 +5,7 @@ import {
   amendService,
   projectService,
   type AmendOrder,
+  type AmenderWorker,
 } from '../../services';
 import type { Project } from '../../types';
 import {
@@ -44,9 +45,12 @@ export default function AmendAssignmentDashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | 'all'>('all');
   const [orders, setOrders] = useState<AmendOrder[]>([]);
+  const [workers, setWorkers] = useState<AmenderWorker[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [fetchingPortal, setFetchingPortal] = useState<boolean>(false);
+  const [assigningAmenderOrderId, setAssigningAmenderOrderId] = useState<number | null>(null);
+  const [assigningDirectOrderId, setAssigningDirectOrderId] = useState<number | null>(null);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -112,9 +116,10 @@ export default function AmendAssignmentDashboard() {
     selectedProjectId !== 'all' ? projects.find((p) => p.id === selectedProjectId) : null;
   const projectTz = selectedProjectData?.timezone || DEFAULT_PROJECT_TIMEZONE;
 
-  // Load Projects on initial mount
+  // Load Projects & Workers on initial mount
   useEffect(() => {
     loadProjects();
+    loadWorkers();
   }, []);
 
   // When project changes, fetch amend orders
@@ -135,6 +140,109 @@ export default function AmendAssignmentDashboard() {
         description: 'Failed to load projects list.',
         type: 'error',
       });
+    }
+  };
+
+  const loadWorkers = async () => {
+    try {
+      const res = await amendService.getWorkers();
+      const list = res.data?.data || [];
+      setWorkers(Array.isArray(list) ? list : []);
+    } catch (error) {
+      console.error('Failed to load workers for amends:', error);
+    }
+  };
+
+  const amenderWorkers = useMemo(() => {
+    return workers.filter((w) =>
+      ['amender', 'drawer', 'designer', 'checker', 'qa', 'operations_manager', 'project_manager'].includes(w.role)
+    );
+  }, [workers]);
+
+  const directAmenderWorkers = useMemo(() => {
+    return workers.filter((w) =>
+      ['direct_amender', 'operations_manager', 'project_manager', 'qa', 'checker'].includes(w.role)
+    );
+  }, [workers]);
+
+  // OM/Manager Assign Amender (Stage 1)
+  const handleAssignAmender = async (order: AmendOrder, amenderIdStr: string) => {
+    if (!amenderIdStr) return;
+    const amenderId = Number(amenderIdStr);
+    const targetProjectId = order.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
+    const selectedAmender = workers.find((w) => w.id === amenderId);
+
+    setAssigningAmenderOrderId(order.order_id);
+    try {
+      const res = await amendService.assign(targetProjectId, order.order_id, { amender_id: amenderId });
+      toast({
+        title: 'Amender Assigned',
+        description: res.data?.message || `Assigned order #${order.order_id} to ${selectedAmender?.name || 'Amender'}`,
+        type: 'success',
+      });
+
+      // Update local state smoothly
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.order_id === order.order_id && o.project_id === order.project_id
+            ? {
+                ...o,
+                amender_id: amenderId,
+                amender_name: selectedAmender?.name || o.amender_name,
+                amend_status: o.amend_status === 'pending' ? 'in_progress' : o.amend_status,
+              }
+            : o
+        )
+      );
+    } catch (error: any) {
+      console.error('Failed to assign amender:', error);
+      toast({
+        title: 'Assignment Failed',
+        description: error.response?.data?.message || 'Failed to assign amender.',
+        type: 'error',
+      });
+    } finally {
+      setAssigningAmenderOrderId(null);
+    }
+  };
+
+  // OM/Manager Assign Direct Amender (Stage 2)
+  const handleAssignDirectAmender = async (order: AmendOrder, directAmenderIdStr: string) => {
+    if (!directAmenderIdStr) return;
+    const directAmenderId = Number(directAmenderIdStr);
+    const targetProjectId = order.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
+    const selectedDirect = workers.find((w) => w.id === directAmenderId);
+
+    setAssigningDirectOrderId(order.order_id);
+    try {
+      const res = await amendService.assignDirect(targetProjectId, order.order_id, { direct_amender_id: directAmenderId });
+      toast({
+        title: 'Direct Amender Assigned',
+        description: res.data?.message || `Direct Amender ${selectedDirect?.name || ''} assigned to order #${order.order_id}`,
+        type: 'success',
+      });
+
+      // Update local state smoothly
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.order_id === order.order_id && o.project_id === order.project_id
+            ? {
+                ...o,
+                direct_amender_id: directAmenderId,
+                direct_amender_name: selectedDirect?.name || o.direct_amender_name,
+              }
+            : o
+        )
+      );
+    } catch (error: any) {
+      console.error('Failed to assign direct amender:', error);
+      toast({
+        title: 'Assignment Failed',
+        description: error.response?.data?.message || 'Failed to assign direct amender.',
+        type: 'error',
+      });
+    } finally {
+      setAssigningDirectOrderId(null);
     }
   };
 
@@ -464,7 +572,9 @@ export default function AmendAssignmentDashboard() {
                 <h1 className="text-lg font-bold text-slate-900 tracking-tight flex items-center gap-2">
                   Amend Orders Hub
                   <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200">
-                    {selectedProjectId === 'all' ? 'All Projects (Multi-Project)' : (selectedProjectData?.name || 'Project View')}
+                    {selectedProjectId === 'all'
+                      ? (user?.role === 'operations_manager' && !user?.can_access_amends ? 'My Assigned Projects' : 'All Projects (Multi-Project)')
+                      : (selectedProjectData?.name || 'Project View')}
                   </span>
                 </h1>
                 <p className="text-xs text-slate-500">
@@ -503,8 +613,16 @@ export default function AmendAssignmentDashboard() {
         <div className="bg-brand-50/60 border border-brand-100 rounded-xl p-3 flex items-start gap-3">
           <Info className="w-4 h-4 text-brand-600 mt-0.5 shrink-0" />
           <p className="text-xs text-brand-800">
-            <span className="font-semibold">Universal Amender Hub:</span> Amenders har project ki amends dekh aur complete kar saktay hain.
-            Aap dropdown se <span className="font-bold">"All Projects (Every Project)"</span> ya koi bhi specific project select kar saktay hain.
+            {user?.role === 'operations_manager' && !user?.can_access_amends ? (
+              <>
+                <span className="font-semibold">OM Amends Hub:</span> You can view, assign, and manage amends for your assigned projects.
+              </>
+            ) : (
+              <>
+                <span className="font-semibold">Universal Amender Hub:</span> Amenders har project ki amends dekh aur complete kar saktay hain.
+                Aap dropdown se <span className="font-bold">"All Projects (Every Project)"</span> ya koi bhi specific project select kar saktay hain.
+              </>
+            )}
           </p>
         </div>
 
@@ -520,7 +638,11 @@ export default function AmendAssignmentDashboard() {
             className="select text-xs min-w-[220px] font-semibold text-brand-700 bg-brand-50/40 border-brand-200"
             aria-label="Select Project"
           >
-            <option value="all">🌟 All Projects (Every Project Amends)</option>
+            <option value="all">
+              {user?.role === 'operations_manager' && !user?.can_access_amends
+                ? '🌟 My Assigned Projects'
+                : '🌟 All Projects (Every Project Amends)'}
+            </option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} ({p.department || 'Floorplan'} - {p.country || 'Global'})
@@ -750,8 +872,50 @@ export default function AmendAssignmentDashboard() {
                         </td>
 
                         {/* Amender (Stage 1) */}
-                        <td className="py-2.5 px-3.5">
-                          {order.amender_name ? (
+                        <td className="py-2 px-3">
+                          {isManagerOrDirector && !isDelivered ? (
+                            <div className="space-y-1 min-w-[155px]">
+                              <div className="relative flex items-center">
+                                <select
+                                  value={order.amender_id || ''}
+                                  onChange={(e) => handleAssignAmender(order, e.target.value)}
+                                  disabled={assigningAmenderOrderId === order.order_id}
+                                  className="w-full text-xs font-semibold text-slate-800 bg-slate-50 hover:bg-white border border-slate-200 hover:border-brand-400 rounded-lg py-1 pl-2 pr-6 transition-all appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
+                                  title="Select Amender to assign this order"
+                                >
+                                  <option value="">{order.amender_name ? `Assigned: ${order.amender_name}` : '⚡ Assign Amender...'}</option>
+                                  <optgroup label="Dedicated Amenders">
+                                    {amenderWorkers
+                                      .filter((w) => w.role === 'amender')
+                                      .map((w) => (
+                                        <option key={w.id} value={w.id}>
+                                          👤 {w.name} (Amender)
+                                        </option>
+                                      ))}
+                                  </optgroup>
+                                  <optgroup label="Other Production Staff">
+                                    {amenderWorkers
+                                      .filter((w) => w.role !== 'amender')
+                                      .map((w) => (
+                                        <option key={w.id} value={w.id}>
+                                          {w.name} ({w.role.replace('_', ' ')})
+                                        </option>
+                                      ))}
+                                  </optgroup>
+                                </select>
+                                {assigningAmenderOrderId === order.order_id ? (
+                                  <RefreshCw className="w-3 h-3 animate-spin text-brand-600 absolute right-2 pointer-events-none" />
+                                ) : (
+                                  <User className="w-3 h-3 text-slate-400 absolute right-2 pointer-events-none" />
+                                )}
+                              </div>
+                              {order.amender_done_at && (
+                                <div className="text-[10px] text-emerald-600 font-medium flex items-center gap-0.5">
+                                  <CheckCircle className="w-3 h-3" /> Done: {order.amender_done_at.slice(11, 16)}
+                                </div>
+                              )}
+                            </div>
+                          ) : order.amender_name ? (
                             <div>
                               <div className="font-semibold text-slate-800 flex items-center gap-1">
                                 <User className="w-3.5 h-3.5 text-brand-600" />
@@ -769,21 +933,68 @@ export default function AmendAssignmentDashboard() {
                         </td>
 
                         {/* Direct Amender / Uploader (Stage 2) */}
-                        <td className="py-2.5 px-3.5 space-y-0.5">
-                          {order.direct_amender_name && (
-                            <div className="text-indigo-700 font-medium flex items-center gap-1">
-                              <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
-                              <span>Direct: {order.direct_amender_name}</span>
+                        <td className="py-2 px-3">
+                          {isManagerOrDirector && !isDelivered ? (
+                            <div className="space-y-1 min-w-[165px]">
+                              <div className="relative flex items-center">
+                                <select
+                                  value={order.direct_amender_id || ''}
+                                  onChange={(e) => handleAssignDirectAmender(order, e.target.value)}
+                                  disabled={assigningDirectOrderId === order.order_id}
+                                  className="w-full text-xs font-semibold text-indigo-900 bg-indigo-50/40 hover:bg-white border border-indigo-200 hover:border-indigo-400 rounded-lg py-1 pl-2 pr-6 transition-all appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                                  title="Select Direct Amender (Reviewer) to assign this order"
+                                >
+                                  <option value="">{order.direct_amender_name ? `Direct: ${order.direct_amender_name}` : '🛡️ Assign Direct Amender...'}</option>
+                                  <optgroup label="Dedicated Direct Amenders">
+                                    {directAmenderWorkers
+                                      .filter((w) => w.role === 'direct_amender')
+                                      .map((w) => (
+                                        <option key={w.id} value={w.id}>
+                                          🛡️ {w.name} (Direct Amender)
+                                        </option>
+                                      ))}
+                                  </optgroup>
+                                  <optgroup label="Managers & QA">
+                                    {directAmenderWorkers
+                                      .filter((w) => w.role !== 'direct_amender')
+                                      .map((w) => (
+                                        <option key={w.id} value={w.id}>
+                                          {w.name} ({w.role.replace('_', ' ')})
+                                        </option>
+                                      ))}
+                                  </optgroup>
+                                </select>
+                                {assigningDirectOrderId === order.order_id ? (
+                                  <RefreshCw className="w-3 h-3 animate-spin text-indigo-600 absolute right-2 pointer-events-none" />
+                                ) : (
+                                  <ShieldCheck className="w-3 h-3 text-indigo-400 absolute right-2 pointer-events-none" />
+                                )}
+                              </div>
+                              {order.uploader_name && (
+                                <div className="text-[10px] text-emerald-700 font-medium flex items-center gap-1">
+                                  <CheckCircle className="w-3 h-3 text-emerald-500" />
+                                  <span>Uploader: {order.uploader_name}</span>
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {order.uploader_name && (
-                            <div className="text-emerald-700 font-medium flex items-center gap-1">
-                              <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
-                              <span>Uploader: {order.uploader_name}</span>
+                          ) : (
+                            <div className="space-y-0.5">
+                              {order.direct_amender_name && (
+                                <div className="text-indigo-700 font-medium flex items-center gap-1">
+                                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
+                                  <span>Direct: {order.direct_amender_name}</span>
+                                </div>
+                              )}
+                              {order.uploader_name && (
+                                <div className="text-emerald-700 font-medium flex items-center gap-1">
+                                  <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                                  <span>Uploader: {order.uploader_name}</span>
+                                </div>
+                              )}
+                              {!order.direct_amender_name && !order.uploader_name && (
+                                <span className="text-slate-400 italic">-</span>
+                              )}
                             </div>
-                          )}
-                          {!order.direct_amender_name && !order.uploader_name && (
-                            <span className="text-slate-400 italic">-</span>
                           )}
                         </td>
 

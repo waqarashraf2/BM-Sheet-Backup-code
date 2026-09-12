@@ -30,25 +30,35 @@ class UserController extends Controller
         } elseif ($authUser->role === 'hr') {
             $query->where('role', '!=', 'ceo');
         } elseif ($authUser->role === 'project_manager') {
-            // PM sees only workers in their team/projects — NOT other PMs or themselves
-            // Only OM can manage PM accounts
-            $query->where('id', '!=', $authUser->id);
-            $query->where('role', '!=', 'project_manager');
-            if ($authUser->team_id) {
-                $query->where('team_id', $authUser->team_id);
-            } else {
-                $managedIds = $authUser->getManagedProjectIds();
-                $query->whereIn('project_id', $managedIds);
-            }
+            // PM sees workers in their team/projects + THEMSELVES (so they can manage/change their own password)
+            // PM does not see other PMs, OMs, Directors, CEOs
+            $query->where(function ($q) use ($authUser) {
+                $q->where('id', $authUser->id)
+                  ->orWhere(function ($sub) use ($authUser) {
+                      $sub->whereNotIn('role', ['project_manager', 'operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'client', 'amender', 'direct_amender']);
+                      if ($authUser->team_id) {
+                          $sub->where('team_id', $authUser->team_id);
+                      } else {
+                          $managedIds = $authUser->getManagedProjectIds();
+                          $sub->whereIn('project_id', $managedIds);
+                      }
+                  });
+            });
         } elseif ($authUser->role === 'operations_manager') {
             $managedIds = $authUser->getManagedProjectIds();
             $query->where(function ($q) use ($managedIds, $authUser) {
-                // OM sees workers in their projects + PMs assigned to their projects + self
-                $q->whereIn('project_id', $managedIds)
-                  ->orWhereHas('managedProjects', function ($sub) use ($managedIds) {
-                      $sub->whereIn('projects.id', $managedIds);
-                  })
-                  ->orWhere('id', $authUser->id);
+                // OM sees workers in their projects + PMs assigned to their projects + THEMSELVES
+                // OM does not see other OMs, Directors, CEOs, HR, Accounts
+                $q->where('id', $authUser->id)
+                  ->orWhere(function ($sub) use ($managedIds) {
+                      $sub->whereNotIn('role', ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'client', 'amender', 'direct_amender'])
+                          ->where(function ($wQ) use ($managedIds) {
+                              $wQ->whereIn('project_id', $managedIds)
+                                 ->orWhereHas('managedProjects', function ($pQ) use ($managedIds) {
+                                     $pQ->whereIn('projects.id', $managedIds);
+                                 });
+                          });
+                  });
             });
         }
 
@@ -274,12 +284,12 @@ class UserController extends Controller
         $isSelf = ((int)$user->id === (int)$authUser->id);
 
         if ($isSelf) {
-            // Self-update is strictly restricted to password changing to prevent privilege escalation.
+            // Self-update is strictly restricted to password changing and basic profile fields (prevent role/project escalation)
             $validated = $request->validated();
-            $data = array_intersect_key($validated, array_flip(['password', 'password_confirmation']));
+            $data = array_intersect_key($validated, array_flip(['name', 'machine_id', 'password', 'password_confirmation']));
             
-            if (empty($data['password'])) {
-                return response()->json(['message' => 'To update your own profile, you can only change your password.'], 400);
+            if (empty($data)) {
+                return response()->json(['message' => 'No valid fields provided for self profile update.'], 400);
             }
         } else {
             // Apply role-based access control when editing others

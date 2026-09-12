@@ -16,13 +16,45 @@ class AmendController extends Controller
 {
     /**
      * Authorize user access to amends hub.
-     * OM requires can_access_amends = true to access amends.
+     * - CEO, Director, Admin, Amender, Direct Amender have full access across all projects.
+     * - OM with can_access_amends = true has full access across all projects.
+     * - OM without can_access_amends (or PM) can access Amends Hub, but strictly scoped to their assigned projects.
      */
-    private function authorizeAmendAccess(Request $request): void
+    private function authorizeAmendAccess(Request $request, ?int $projectId = null): void
     {
         $user = $request->user();
-        if ($user && $user->role === 'operations_manager' && !$user->can_access_amends) {
-            abort(403, 'You do not have permission to access Amends Hub. Please contact Director for access.');
+        if (!$user) {
+            abort(401, 'Unauthenticated');
+        }
+
+        // Full access roles across all projects
+        if (in_array($user->role, ['ceo', 'director', 'admin', 'amender', 'direct_amender'])) {
+            return;
+        }
+
+        // Operations Manager
+        if ($user->role === 'operations_manager') {
+            if ($user->can_access_amends) {
+                return;
+            }
+            if ($projectId !== null) {
+                $omProjects = array_map('intval', $user->getManagedProjectIds());
+                if (!in_array((int)$projectId, $omProjects, true)) {
+                    abort(403, 'You do not have permission to access amends for this project.');
+                }
+            }
+            return;
+        }
+
+        // Project Manager
+        if ($user->role === 'project_manager') {
+            if ($projectId !== null) {
+                $pmProjects = array_map('intval', $user->getManagedProjectIds());
+                if (!in_array((int)$projectId, $pmProjects, true)) {
+                    abort(403, 'You do not have permission to access amends for this project.');
+                }
+            }
+            return;
         }
     }
 
@@ -46,12 +78,12 @@ class AmendController extends Controller
      */
     public function getOrders(Request $request, $projectId)
     {
-        $this->authorizeAmendAccess($request);
         if ($projectId === 'all' || (int)$projectId === 0) {
             return $this->getAllOrders($request);
         }
 
         $projectId = (int) $projectId;
+        $this->authorizeAmendAccess($request, $projectId);
         $orderTable = ProjectOrderService::getTableName($projectId);
         if (!Schema::hasTable($orderTable)) {
             return response()->json(['error' => 'Project table not found'], 404);
@@ -274,12 +306,21 @@ class AmendController extends Controller
     public function getAllOrders(Request $request)
     {
         $this->authorizeAmendAccess($request);
+        $user = $request->user();
         $status = $request->input('status', 'all');
         $search = trim((string) $request->input('search', ''));
         $perPage = max(1, min(100, (int) $request->input('per_page', 50)));
 
         try {
-            $projects = Project::all();
+            if ($user && $user->role === 'operations_manager' && !$user->can_access_amends) {
+                $managedIds = array_map('intval', $user->getManagedProjectIds());
+                $projects = Project::whereIn('id', $managedIds)->get();
+            } elseif ($user && $user->role === 'project_manager') {
+                $managedIds = array_map('intval', $user->getManagedProjectIds());
+                $projects = Project::whereIn('id', $managedIds)->get();
+            } else {
+                $projects = Project::all();
+            }
         } catch (\Throwable $e) {
             $projects = collect([]);
         }
@@ -521,6 +562,7 @@ class AmendController extends Controller
      */
     public function getAmenders(Request $request)
     {
+        $this->authorizeAmendAccess($request);
         $users = User::where('is_active', true)
             ->whereIn('role', ['amender', 'direct_amender', 'drawer', 'checker', 'qa', 'operations_manager', 'project_manager'])
             ->select(['id', 'name', 'role', 'email'])
@@ -537,6 +579,7 @@ class AmendController extends Controller
      */
     public function assignOrder(Request $request, int $projectId, int $orderId)
     {
+        $this->authorizeAmendAccess($request);
         $request->validate([
             'amender_id' => 'required|exists:users,id',
         ]);
@@ -599,6 +642,7 @@ class AmendController extends Controller
      */
     public function assignDirectAmender(Request $request, int $projectId, int $orderId)
     {
+        $this->authorizeAmendAccess($request);
         $request->validate([
             'direct_amender_id' => 'required|exists:users,id',
         ]);
@@ -648,6 +692,7 @@ class AmendController extends Controller
      */
     public function amenderDone(Request $request, int $projectId, int $orderId)
     {
+        $this->authorizeAmendAccess($request, $projectId);
         $this->ensureAmendTableReady($projectId);
         $orderTable = ProjectOrderService::getTableName($projectId);
         $amendTable = ProjectOrderService::getAmendTableName($projectId);
@@ -718,6 +763,7 @@ class AmendController extends Controller
      */
     public function deliverOrder(Request $request, int $projectId, int $orderId)
     {
+        $this->authorizeAmendAccess($request, $projectId);
         $this->ensureAmendTableReady($projectId);
         $orderTable = ProjectOrderService::getTableName($projectId);
         $amendTable = ProjectOrderService::getAmendTableName($projectId);
@@ -815,6 +861,7 @@ class AmendController extends Controller
      */
     public function savePointsData(Request $request, int $projectId, int $orderId)
     {
+        $this->authorizeAmendAccess($request, $projectId);
         $this->ensureAmendTableReady($projectId);
         $amendTable = ProjectOrderService::getAmendTableName($projectId);
 
@@ -845,6 +892,7 @@ class AmendController extends Controller
      */
     public function updateNotes(Request $request, int $projectId, int $orderId)
     {
+        $this->authorizeAmendAccess($request, $projectId);
         $request->validate([
             'amend_notes' => 'nullable|string',
         ]);
@@ -897,6 +945,7 @@ class AmendController extends Controller
      */
     public function markAsAmend(Request $request, int $projectId, int $orderId)
     {
+        $this->authorizeAmendAccess($request, $projectId);
         $request->validate([
             'amend_notes'  => 'nullable|string',
             'amend_status' => 'nullable|string|in:pending,in_progress,amender_done,delivered,done',
@@ -955,6 +1004,7 @@ class AmendController extends Controller
      */
     public function syncFromPortal(Request $request, int $projectId)
     {
+        $this->authorizeAmendAccess($request, $projectId);
         if ($projectId === 15) {
             $service = new \App\Services\Amends\RoomioAmendService();
             $result = $service->syncAmends($projectId);

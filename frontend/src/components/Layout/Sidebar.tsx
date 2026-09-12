@@ -99,10 +99,6 @@ export default function Sidebar() {
       return Number(user.project_id) === 16;
     }
 
-    if (item.href === '/amends' && user.role === 'operations_manager') {
-      return Boolean(user.can_access_amends);
-    }
-
     if ((item as any).clientPortalProjectGate) {
       return showClientPortalTab;
     }

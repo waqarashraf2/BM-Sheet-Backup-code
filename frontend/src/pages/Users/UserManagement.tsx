@@ -70,6 +70,7 @@ export default function UserManagement() {
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
   const canManage = ['ceo', 'director', 'operations_manager', 'project_manager', 'qa', 'hr'].includes(currentUser?.role || '');
+  const isEditingSelf = Boolean(editingUser && currentUser && Number(editingUser.id) === Number(currentUser.id));
 
   // Role options filtered by logged-in user's role
   const myRole = currentUser?.role || '';
@@ -266,22 +267,30 @@ export default function UserManagement() {
           data={users} loading={loading} pageSize={perPage}
           columns={[
             {
-              key: 'name', label: 'User', sortable: true, render: (u) => (
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <div className="w-9 h-9 rounded-lg bg-[#2AA7A0] flex items-center justify-center text-white font-bold text-sm">{u.name.charAt(0)}</div>
-                    <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${!u.is_active ? 'bg-slate-400' : u.is_online ? 'bg-green-500' : 'bg-amber-500'
-                      }`} title={!u.is_active ? 'Inactive' : u.is_online ? 'Online' : 'Offline'} />
-                  </div>
-                  <div>
-                    <div className="font-semibold text-slate-900 flex items-center gap-2">
-                      {u.name}
-                      {!u.is_active && <span className="text-[10px] text-rose-500 font-medium bg-rose-50 px-1.5 py-0.5 rounded">Inactive</span>}
+              key: 'name', label: 'User', sortable: true, render: (u) => {
+                const isSelf = Boolean(currentUser && Number(u.id) === Number(currentUser.id));
+                return (
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      <div className="w-9 h-9 rounded-lg bg-[#2AA7A0] flex items-center justify-center text-white font-bold text-sm">{u.name.charAt(0)}</div>
+                      <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${!u.is_active ? 'bg-slate-400' : u.is_online ? 'bg-green-500' : 'bg-amber-500'
+                        }`} title={!u.is_active ? 'Inactive' : u.is_online ? 'Online' : 'Offline'} />
                     </div>
-                    <div className="text-xs text-slate-400">{u.email}</div>
+                    <div>
+                      <div className="font-semibold text-slate-900 flex items-center gap-2">
+                        {u.name}
+                        {isSelf && (
+                          <span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded">
+                            You
+                          </span>
+                        )}
+                        {!u.is_active && <span className="text-[10px] text-rose-500 font-medium bg-rose-50 px-1.5 py-0.5 rounded">Inactive</span>}
+                      </div>
+                      <div className="text-xs text-slate-400">{u.email}</div>
+                    </div>
                   </div>
-                </div>
-              )
+                );
+              }
             },
             {
               key: 'role',
@@ -325,17 +334,29 @@ export default function UserManagement() {
               )
             },
             {
-              key: 'actions', label: '', render: (u) => canManage ? (
-                <div className="flex items-center gap-1 justify-end">
-                  <Button variant="ghost" size="xs" onClick={() => handleToggleActive(u)} title={u.is_active ? 'Deactivate' : 'Activate'}>
-                    {u.is_active ? <UserX className="w-3.5 h-3.5 text-amber-500" /> : <UserCheck className="w-3.5 h-3.5 text-brand-500" />}
-                  </Button>
-                  <Button variant="ghost" size="xs" onClick={() => openEdit(u)}><Edit className="w-3.5 h-3.5" /></Button>
-                  {currentUser?.role === 'ceo' && (
-                    <Button variant="ghost" size="xs" onClick={() => setDeleteConfirm(u.id)}><Trash2 className="w-3.5 h-3.5 text-rose-500" /></Button>
-                  )}
-                </div>
-              ) : null
+              key: 'actions', label: '', render: (u) => {
+                const isSelf = Boolean(currentUser && Number(u.id) === Number(currentUser.id));
+                return canManage || isSelf ? (
+                  <div className="flex items-center gap-1 justify-end">
+                    {!isSelf && canManage && (
+                      <Button variant="ghost" size="xs" onClick={() => handleToggleActive(u)} title={u.is_active ? 'Deactivate' : 'Activate'}>
+                        {u.is_active ? <UserX className="w-3.5 h-3.5 text-amber-500" /> : <UserCheck className="w-3.5 h-3.5 text-brand-500" />}
+                      </Button>
+                    )}
+                    <Button
+                      variant={isSelf ? "secondary" : "ghost"}
+                      size="xs"
+                      onClick={() => openEdit(u)}
+                      title={isSelf ? "Change My Password / Edit Profile" : "Edit User"}
+                    >
+                      <Edit className="w-3.5 h-3.5 text-teal-600" />
+                    </Button>
+                    {currentUser?.role === 'ceo' && !isSelf && (
+                      <Button variant="ghost" size="xs" onClick={() => setDeleteConfirm(u.id)}><Trash2 className="w-3.5 h-3.5 text-rose-500" /></Button>
+                    )}
+                  </div>
+                ) : null;
+              }
             },
           ]}
           emptyIcon={UsersIcon}
@@ -363,7 +384,24 @@ export default function UserManagement() {
       </div>
 
       {/* Create/Edit */}
-      <Modal open={showModal} onClose={() => setShowModal(false)} title={editingUser ? 'Edit User' : 'Add New User'} size="lg">
+      <Modal
+        open={showModal}
+        onClose={() => setShowModal(false)}
+        title={isEditingSelf ? 'My Account & Password' : (editingUser ? 'Edit User' : 'Add New User')}
+        size="lg"
+      >
+        {isEditingSelf && (
+          <div className="mb-5 flex items-center gap-3 p-3.5 bg-teal-50 border border-teal-200/80 rounded-xl">
+            <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-teal-100 flex items-center justify-center">
+              <Shield className="w-4 h-4 text-teal-700" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-teal-900">Personal Account Settings</p>
+              <p className="text-xs text-teal-700">You are editing your own login account. Enter a new password below to change your login password.</p>
+            </div>
+          </div>
+        )}
+
         {formError && (
           <div className="mb-5 flex items-center gap-3 p-3.5 bg-rose-50 border border-rose-200/60 rounded-xl">
             <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center">
@@ -488,10 +526,20 @@ export default function UserManagement() {
                 </div>
                 <select
                   value={formData.role}
+                  disabled={isEditingSelf}
                   onChange={e => setFormData({ ...formData, role: e.target.value })}
                   aria-label="User role"
-                  className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
+                  className={`w-full pl-10 pr-10 py-3 text-sm border rounded-xl text-slate-900 transition-all duration-200 appearance-none ${
+                    isEditingSelf
+                      ? 'bg-slate-100 border-slate-200 opacity-80 cursor-not-allowed'
+                      : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 cursor-pointer'
+                  }`}
                 >
+                  {!visibleRoleOptions.some(r => r.value === formData.role) && (
+                    <option value={formData.role}>
+                      {allRoleOptions.find(r => r.value === formData.role)?.label || formData.role}
+                    </option>
+                  )}
                   {visibleRoleOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
@@ -511,6 +559,7 @@ export default function UserManagement() {
                       <label key={p.id} className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-white rounded-lg transition-colors">
                         <input
                           type="checkbox"
+                          disabled={isEditingSelf}
                           checked={isChecked}
                           onChange={e => {
                             const currentIds = formData.project_ids || [];
@@ -546,9 +595,14 @@ export default function UserManagement() {
                   </div>
                   <select
                     value={formData.project_id}
+                    disabled={isEditingSelf}
                     onChange={e => { const v = e.target.value; setFormData({ ...formData, project_id: v, team_id: '' }); loadTeamsForProject(v); }}
                     aria-label="User project"
-                    className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
+                    className={`w-full pl-10 pr-10 py-3 text-sm border rounded-xl text-slate-900 transition-all duration-200 appearance-none ${
+                      isEditingSelf
+                        ? 'bg-slate-100 border-slate-200 opacity-80 cursor-not-allowed'
+                        : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 cursor-pointer'
+                    }`}
                   >
                     <option value="">Select Project</option>
                     {filterProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -573,7 +627,7 @@ export default function UserManagement() {
                   value={formData.team_id}
                   onChange={e => setFormData({ ...formData, team_id: e.target.value })}
                   aria-label="User team"
-                  disabled={loadingTeams}
+                  disabled={isEditingSelf || loadingTeams}
                   className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer disabled:opacity-50"
                 >
                   <option value="">{loadingTeams ? 'Loading teams...' : 'Select Team'}</option>
@@ -599,9 +653,14 @@ export default function UserManagement() {
                 </div>
                 <select
                   value={formData.department}
+                  disabled={isEditingSelf}
                   onChange={e => setFormData({ ...formData, department: e.target.value })}
                   aria-label="User department"
-                  className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
+                  className={`w-full pl-10 pr-10 py-3 text-sm border rounded-xl text-slate-900 transition-all duration-200 appearance-none ${
+                    isEditingSelf
+                      ? 'bg-slate-100 border-slate-200 opacity-80 cursor-not-allowed'
+                      : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 cursor-pointer'
+                  }`}
                 >
                   <option value="floor_plan">Floor Plan</option>
                   <option value="photos_enhancement">Photos Enhancement</option>
@@ -619,9 +678,14 @@ export default function UserManagement() {
                 </div>
                 <select
                   value={formData.layer}
+                  disabled={isEditingSelf}
                   onChange={e => setFormData({ ...formData, layer: e.target.value })}
                   aria-label="User layer"
-                  className="w-full pl-10 pr-10 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all duration-200 appearance-none cursor-pointer"
+                  className={`w-full pl-10 pr-10 py-3 text-sm border rounded-xl text-slate-900 transition-all duration-200 appearance-none ${
+                    isEditingSelf
+                      ? 'bg-slate-100 border-slate-200 opacity-80 cursor-not-allowed'
+                      : 'bg-slate-50 border-slate-200 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 cursor-pointer'
+                  }`}
                 >
                   <option value="">None</option>
                   <option value="drawer">Drawer</option>
