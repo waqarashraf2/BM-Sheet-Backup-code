@@ -20,7 +20,7 @@ class User extends Authenticatable
      */
     protected $fillable = [
         'name', 'email', 'machine_id', 'password', 'plain_password', 'role', 'country', 'department',
-        'project_id', 'team_id', 'old_system_id', 'layer', 'is_active',
+        'project_id', 'team_id', 'old_system_id', 'layer', 'is_active', 'can_access_amends',
         'blood_group', 'contact_number', 'bank_account_number', 'joining_salary', 'salary',
         'last_activity', 'inactive_days',
         'current_session_token', 'wip_count', 'wip_limit', 'today_completed',
@@ -70,6 +70,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'last_activity' => 'datetime',
             'is_active' => 'boolean',
+            'can_access_amends' => 'boolean',
             'is_absent' => 'boolean',
             'shift_start' => 'datetime:H:i',
             'shift_end' => 'datetime:H:i',

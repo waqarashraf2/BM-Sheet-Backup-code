@@ -36,6 +36,7 @@ class UpdateUserRequest extends FormRequest
             'team_id' => 'nullable|exists:teams,id',
             'layer' => 'nullable|in:drawer,checker,filler,qa,designer',
             'is_active' => 'sometimes|boolean',
+            'can_access_amends' => 'sometimes|boolean',
             'wip_limit' => 'sometimes|integer|min:1|max:50',
             'skills' => 'sometimes|nullable|array',
             'skills.*' => 'string|max:100',

@@ -97,6 +97,7 @@ export interface User {
   team_id: number | null;
   layer: string | null;
   is_active: boolean;
+  can_access_amends?: boolean;
   is_absent: boolean;
   is_online: boolean;
   last_activity: string | null;

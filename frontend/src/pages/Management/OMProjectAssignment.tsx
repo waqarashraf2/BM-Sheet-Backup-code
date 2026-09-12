@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { omService, projectService } from '../../services';
 import type { Project } from '../../types';
 import { AnimatedPage, PageHeader, Button } from '../../components/ui';
-import { Briefcase, Save, RefreshCw, Check, FolderKanban, Shield, ChevronDown, ChevronUp } from 'lucide-react';
+import { Briefcase, Save, RefreshCw, Check, FolderKanban, Shield, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
 import ClockDisplay from '../../components/ClockDisplay';
 
 interface OMUser {
@@ -11,6 +11,7 @@ interface OMUser {
   email: string;
   role: string;
   country: string;
+  can_access_amends?: boolean;
   om_projects: { id: number; code: string; name: string; country: string; department: string }[];
 }
 
@@ -18,6 +19,7 @@ export default function OMProjectAssignment() {
   const [oms, setOMs] = useState<OMUser[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [assignments, setAssignments] = useState<Record<number, number[]>>({});
+  const [amendsAccess, setAmendsAccess] = useState<Record<number, boolean>>({});
   const [saving, setSaving] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedOM, setExpandedOM] = useState<number | null>(null);
@@ -39,10 +41,13 @@ export default function OMProjectAssignment() {
       setProjects(projList);
 
       const map: Record<number, number[]> = {};
+      const accessMap: Record<number, boolean> = {};
       omList.forEach((om: OMUser) => {
         map[om.id] = (om.om_projects || []).map(p => p.id);
+        accessMap[om.id] = Boolean(om.can_access_amends);
       });
       setAssignments(map);
+      setAmendsAccess(accessMap);
 
       if (omList.length > 0 && !expandedOM) {
         setExpandedOM(omList[0].id);
@@ -67,11 +72,18 @@ export default function OMProjectAssignment() {
     });
   };
 
+  const toggleAmendsAccess = (omId: number) => {
+    setAmendsAccess(prev => ({
+      ...prev,
+      [omId]: !prev[omId],
+    }));
+  };
+
   const saveAssignment = async (omId: number) => {
     setSaving(omId);
     try {
-      await omService.assignProjects(omId, assignments[omId] || []);
-      setSuccessMsg(`Projects saved for ${oms.find(o => o.id === omId)?.name}`);
+      await omService.assignProjects(omId, assignments[omId] || [], amendsAccess[omId]);
+      setSuccessMsg(`Permissions and projects saved for ${oms.find(o => o.id === omId)?.name}`);
       setTimeout(() => setSuccessMsg(null), 3000);
       await loadData();
     } catch (e) {
@@ -84,10 +96,14 @@ export default function OMProjectAssignment() {
   const hasChanges = (omId: number) => {
     const om = oms.find(o => o.id === omId);
     if (!om) return false;
-    const original = (om.om_projects || []).map(p => p.id).sort();
-    const current = (assignments[omId] || []).sort();
-    if (original.length !== current.length) return true;
-    return original.some((id, i) => id !== current[i]);
+    const originalProjects = (om.om_projects || []).map(p => p.id).sort();
+    const currentProjects = (assignments[omId] || []).sort();
+    if (originalProjects.length !== currentProjects.length) return true;
+    if (originalProjects.some((id, i) => id !== currentProjects[i])) return true;
+
+    const originalAccess = Boolean(om.can_access_amends);
+    const currentAccess = Boolean(amendsAccess[omId]);
+    return originalAccess !== currentAccess;
   };
 
   if (loading) {
@@ -110,8 +126,8 @@ export default function OMProjectAssignment() {
     <AnimatedPage>
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-1">
         <PageHeader
-          title="OM Project Assignment"
-          subtitle="Assign projects to Operation Managers — each OM can manage multiple projects"
+          title="OM Project & Amends Assignment"
+          subtitle="Assign projects and grant all-project Amends Hub access to authorized Operation Managers"
           actions={
             <Button variant="secondary" icon={RefreshCw} onClick={loadData}>
               Refresh
@@ -131,13 +147,22 @@ export default function OMProjectAssignment() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <div className="bg-white rounded-xl border border-slate-200/60 p-4">
           <div className="flex items-center gap-2 mb-1">
             <Shield className="w-4 h-4 text-brand-500" />
             <span className="text-xs text-slate-500 font-medium">Operation Managers</span>
           </div>
           <div className="text-2xl font-bold text-slate-900">{oms.length}</div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200/60 p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <RotateCcw className="w-4 h-4 text-teal-600" />
+            <span className="text-xs text-slate-500 font-medium">Amends Permitted OMs</span>
+          </div>
+          <div className="text-2xl font-bold text-teal-600">
+            {oms.filter(o => o.can_access_amends).length}
+          </div>
         </div>
         <div className="bg-white rounded-xl border border-slate-200/60 p-4">
           <div className="flex items-center gap-2 mb-1">
@@ -162,7 +187,7 @@ export default function OMProjectAssignment() {
           <Shield className="w-12 h-12 text-slate-300 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-slate-900 mb-2">No Operation Managers</h3>
           <p className="text-sm text-slate-500 mb-4">
-            Create a user with the "Operation Manager" role first, then come back here to assign projects.
+            Create a user with the "Operation Manager" role first, then come back here to assign projects and amends access.
           </p>
           <Button variant="primary" onClick={() => window.location.href = '/users'}>
             Go to User Management
@@ -176,6 +201,7 @@ export default function OMProjectAssignment() {
           const isExpanded = expandedOM === om.id;
           const changed = hasChanges(om.id);
           const assignedCount = (assignments[om.id] || []).length;
+          const hasAmends = Boolean(amendsAccess[om.id]);
 
           return (
             <div
@@ -193,7 +219,18 @@ export default function OMProjectAssignment() {
                     {om.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">{om.name}</div>
+                    <div className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                      {om.name}
+                      {hasAmends ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700 flex items-center gap-1">
+                          <RotateCcw className="w-3 h-3" /> Amends Allowed
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500">
+                          Amends Restricted
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-500">{om.email} · {om.country}</div>
                   </div>
                 </div>
@@ -214,9 +251,38 @@ export default function OMProjectAssignment() {
 
               {isExpanded && (
                 <div className="px-5 pb-5 border-t border-slate-100">
-                  <div className="pt-4 mb-3">
+                  {/* Director Toggle: Amends Access */}
+                  <div className="pt-4 mb-4">
+                    <div className="p-4 rounded-xl bg-teal-50/50 border border-teal-200/70 flex items-center justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center shrink-0">
+                          <RotateCcw className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">
+                            Allow All-Projects Amends Hub Access
+                          </div>
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            Enable this to let <span className="font-semibold text-slate-800">{om.name}</span> view, supervise, and act on amend orders across all projects.
+                          </div>
+                        </div>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer ml-4 shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={hasAmends}
+                          onChange={() => toggleAmendsAccess(om.id)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Project Selection */}
+                  <div className="mb-3">
                     <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-                      Select projects to assign (multiple allowed)
+                      Select assigned projects (multiple allowed)
                     </h4>
                   </div>
 
@@ -290,7 +356,7 @@ export default function OMProjectAssignment() {
 
                   <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
                     <div className="text-xs text-slate-500">
-                      {assignedCount} of {projects.length} projects selected
+                      {assignedCount} of {projects.length} projects selected · Amends Access: {hasAmends ? 'Enabled' : 'Disabled'}
                     </div>
                     <Button
                       variant="primary"

@@ -426,12 +426,17 @@ Route::prefix('assignments')->group(function () {
                 \App\Models\User::where('role', 'operations_manager')
                     ->where('is_active', true)
                     ->with('omProjects:id,code,name,country,department')
-                    ->get(['id', 'name', 'email', 'role', 'country'])
+                    ->get(['id', 'name', 'email', 'role', 'country', 'can_access_amends'])
             );
         });
         Route::post('/operation-managers/{userId}/assign-projects', function (\Illuminate\Http\Request $request, $userId) {
             $om = \App\Models\User::where('role', 'operations_manager')->findOrFail($userId);
             $requestedProjectIds = $request->input('project_ids', []);
+
+            if ($request->has('can_access_amends')) {
+                $om->can_access_amends = (bool) $request->input('can_access_amends');
+                $om->save();
+            }
 
             // Enforce: each project can only belong to ONE OM at a time
             if (!empty($requestedProjectIds)) {
@@ -463,7 +468,20 @@ Route::prefix('assignments')->group(function () {
             \App\Services\AuditService::logOMProjectAssignment($om->id, $oldProjectIds, $requestedProjectIds);
             return response()->json([
                 'message' => 'Projects assigned to Operation Manager',
-                'projects' => $om->omProjects()->get(['projects.id', 'code', 'name', 'country'])
+                'projects' => $om->omProjects()->get(['projects.id', 'code', 'name', 'country']),
+                'can_access_amends' => (bool) $om->can_access_amends,
+            ]);
+        });
+
+        Route::post('/operation-managers/{userId}/toggle-amends-access', function (\Illuminate\Http\Request $request, $userId) {
+            $om = \App\Models\User::where('role', 'operations_manager')->findOrFail($userId);
+            $newVal = $request->has('can_access_amends') ? (bool) $request->input('can_access_amends') : !$om->can_access_amends;
+            $om->can_access_amends = $newVal;
+            $om->save();
+
+            return response()->json([
+                'message' => $newVal ? "Amends Hub access granted to {$om->name}" : "Amends Hub access revoked for {$om->name}",
+                'can_access_amends' => $om->can_access_amends,
             ]);
         });
     });

@@ -935,12 +935,17 @@ export const pmService = {
 };
 
 // ═══════════════════════════════════════════
-// OPERATION MANAGER ASSIGNMENT SERVICE
-// ═══════════════════════════════════════════
 export const omService = {
   list: () => api.get<any[]>('/operation-managers'),
-  assignProjects: (userId: number, projectIds: number[]) =>
-    api.post(`/operation-managers/${userId}/assign-projects`, { project_ids: projectIds }),
+  assignProjects: (userId: number, projectIds: number[], canAccessAmends?: boolean) =>
+    api.post(`/operation-managers/${userId}/assign-projects`, {
+      project_ids: projectIds,
+      ...(canAccessAmends !== undefined ? { can_access_amends: canAccessAmends } : {}),
+    }),
+  toggleAmendsAccess: (userId: number, canAccessAmends?: boolean) =>
+    api.post(`/operation-managers/${userId}/toggle-amends-access`, {
+      ...(canAccessAmends !== undefined ? { can_access_amends: canAccessAmends } : {}),
+    }),
 };
 
 // ═══════════════════════════════════════════

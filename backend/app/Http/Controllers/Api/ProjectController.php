@@ -24,12 +24,15 @@ class ProjectController extends Controller
         $query = Project::with(['teams:id,name,project_id,is_active'])
             ->withCount(['teams', 'users']);
 
-        // Scope projects by role: OM/PM only see their assigned projects
+        // Scope projects by role: OM/PM only see their assigned projects (unless granted amends access)
         $user = $request->user();
-        if ($user->role === 'operations_manager') {
+        $isAmendsScope = $request->input('scope') === 'amends' || $request->boolean('all') || $request->boolean('for_amends');
+        $omCanAccessAllAmends = $isAmendsScope && ($user->can_access_amends || in_array($user->role, ['ceo', 'director']));
+
+        if ($user->role === 'operations_manager' && !$omCanAccessAllAmends) {
             $omProjectIds = $user->getManagedProjectIds();
             $query->whereIn('id', $omProjectIds);
-        } elseif ($user->role === 'project_manager') {
+        } elseif ($user->role === 'project_manager' && !$isAmendsScope) {
             $pmProjectIds = $user->getManagedProjectIds();
             $query->whereIn('id', $pmProjectIds);
         } elseif ($user->role === 'client') {

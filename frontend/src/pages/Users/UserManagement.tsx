@@ -6,7 +6,7 @@ import type { User } from '../../types';
 import { AnimatedPage, PageHeader, StatusBadge, Modal, Button, DataTable, FilterBar } from '../../components/ui';
 import { Users as UsersIcon, Plus, Edit, Trash2, UserCheck, UserX, Shield, Activity, User as UserIcon, Mail, Lock, ChevronDown, ChevronLeft, ChevronRight, Globe, Building, Layers, UsersRound, Eye, EyeOff } from 'lucide-react';
 
-const emptyForm = { name: '', email: '', machine_id: '', password: '', password_confirmation: '', role: 'drawer', project_id: '', project_ids: [] as number[], team_id: '', department: 'floor_plan', layer: '' };
+const emptyForm = { name: '', email: '', machine_id: '', password: '', password_confirmation: '', role: 'drawer', project_id: '', project_ids: [] as number[], team_id: '', department: 'floor_plan', layer: '', can_access_amends: false };
 // FLAGS kept for future use: country flag emoji map
 // const FLAGS: Record<string, string> = { UK: '\u{1F1EC}\u{1F1E7}', Australia: '\u{1F1E6}\u{1F1FA}', Canada: '\u{1F1E8}\u{1F1E6}', USA: '\u{1F1FA}\u{1F1F8}', Vietnam: '\u{1F1FB}\u{1F1F3}' };
 
@@ -153,6 +153,7 @@ export default function UserManagement() {
       team_id: userToEdit.team_id ? String(userToEdit.team_id) : '',
       department: userToEdit.department || 'floor_plan',
       layer: userToEdit.layer || '',
+      can_access_amends: Boolean(userToEdit.can_access_amends),
     });
     setShowPassword(Boolean(storedPassword));
     setShowConfirmPassword(false);
@@ -282,8 +283,20 @@ export default function UserManagement() {
                 </div>
               )
             },
-            { key: 'machine_id', label: 'Machine ID', render: (u) => <span className="text-slate-500">{u.machine_id || '---'}</span> },
-            { key: 'role', label: 'Role', render: (u) => <StatusBadge status={u.role} /> },
+            {
+              key: 'role',
+              label: 'Role',
+              render: (u) => (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <StatusBadge status={u.role} />
+                  {u.role === 'operations_manager' && Boolean(u.can_access_amends) && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200" title="Has All-Projects Amends Hub Access">
+                      Amends Hub
+                    </span>
+                  )}
+                </div>
+              ),
+            },
             {
               key: 'project', label: 'Project', render: (u) => {
                 if (u.role === 'client') {
@@ -623,6 +636,29 @@ export default function UserManagement() {
               </div>
             </div>
           </div>
+
+          {/* OM Amends Hub Access Toggle (Director/CEO only) */}
+          {formData.role === 'operations_manager' && ['ceo', 'director'].includes(myRole) && (
+            <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-xl">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div>
+                  <div className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-[#2AA7A0]" />
+                    <span>All-Projects Amends Hub Access</span>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    Allow this Operations Manager to view, monitor, and manage amendments across all projects without altering their daily production dashboard.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(formData.can_access_amends)}
+                  onChange={e => setFormData({ ...formData, can_access_amends: e.target.checked })}
+                  className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500 border-slate-300 ml-4 cursor-pointer"
+                />
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="mt-7 flex gap-3 pt-5 border-t border-slate-100">

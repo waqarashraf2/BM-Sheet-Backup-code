@@ -124,7 +124,7 @@ export default function AmendAssignmentDashboard() {
 
   const loadProjects = async () => {
     try {
-      const res = await projectService.list();
+      const res = await projectService.list({ scope: 'amends', all: true } as any);
       const list = res.data?.data || res.data || [];
       const arrayList = Array.isArray(list) ? list : [];
       setProjects(arrayList);

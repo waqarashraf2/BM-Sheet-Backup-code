@@ -15,6 +15,18 @@ use Carbon\Carbon;
 class AmendController extends Controller
 {
     /**
+     * Authorize user access to amends hub.
+     * OM requires can_access_amends = true to access amends.
+     */
+    private function authorizeAmendAccess(Request $request): void
+    {
+        $user = $request->user();
+        if ($user && $user->role === 'operations_manager' && !$user->can_access_amends) {
+            abort(403, 'You do not have permission to access Amends Hub. Please contact Director for access.');
+        }
+    }
+
+    /**
      * Ensure the project amends table exists on-demand (lazy creation)
      * and schema columns are up to date.
      */
@@ -34,6 +46,7 @@ class AmendController extends Controller
      */
     public function getOrders(Request $request, $projectId)
     {
+        $this->authorizeAmendAccess($request);
         if ($projectId === 'all' || (int)$projectId === 0) {
             return $this->getAllOrders($request);
         }
@@ -260,6 +273,7 @@ class AmendController extends Controller
      */
     public function getAllOrders(Request $request)
     {
+        $this->authorizeAmendAccess($request);
         $status = $request->input('status', 'all');
         $search = trim((string) $request->input('search', ''));
         $perPage = max(1, min(100, (int) $request->input('per_page', 50)));
