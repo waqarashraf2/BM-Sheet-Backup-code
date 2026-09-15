@@ -32,6 +32,7 @@ import {
   X,
   Info,
   Building,
+  Paperclip,
 } from 'lucide-react';
 
 const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
@@ -96,11 +97,105 @@ export default function AmendAssignmentDashboard() {
   const [reviewerComments, setReviewerComments] = useState<string>('');
   const [submittingDeliver, setSubmittingDeliver] = useState<boolean>(false);
 
+  // Upload Attachment state (For Done/Deliver Modals)
+  const [attachment, setAttachment] = useState<{ name: string; type: string; base64: string } | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({ title: 'File too large', description: 'Max 5MB allowed', type: 'error' });
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setAttachment({
+          name: file.name,
+          type: file.type,
+          base64: event.target?.result as string,
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // View Notes Modal
   const [notesModalOpen, setNotesModalOpen] = useState<boolean>(false);
   const [orderForNotes, setOrderForNotes] = useState<AmendOrder | null>(null);
+  const [uploadingAttachment, setUploadingAttachment] = useState<boolean>(false);
+  const notesFileInputRef = React.useRef<HTMLInputElement>(null);
 
-  // View Points (JSON) Modal
+  const handleNotesAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && orderForNotes) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({ title: 'File too large', description: 'Max 5MB allowed', type: 'error' });
+        return;
+      }
+      setUploadingAttachment(true);
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const base64 = event.target?.result as string;
+        let parsedPoints: any = {};
+        try {
+          parsedPoints = typeof orderForNotes.points_data === 'string' ? JSON.parse(orderForNotes.points_data) : orderForNotes.points_data || {};
+        } catch (err) {}
+        
+        // Remove old attachments array if it exists
+        if (parsedPoints.attachments) {
+          delete parsedPoints.attachments;
+        }
+
+        parsedPoints.attachment = {
+          name: file.name,
+          type: file.type,
+          base64: base64
+        };
+        
+        try {
+          const targetProjectId = orderForNotes.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
+          await amendService.savePoints(targetProjectId as number, orderForNotes.order_id, parsedPoints);
+          setOrderForNotes({ ...orderForNotes, points_data: parsedPoints });
+          toast({ title: 'Attachment uploaded', type: 'success' });
+          loadOrders(selectedProjectId, true);
+        } catch (error) {
+          toast({ title: 'Upload failed', type: 'error' });
+        } finally {
+          setUploadingAttachment(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleRemoveAttachment = async () => {
+    if (!orderForNotes) return;
+    if (!window.confirm("Are you sure you want to completely remove this attachment?")) return;
+
+    setUploadingAttachment(true);
+    try {
+      let parsedPoints: any = {};
+      try {
+        parsedPoints = typeof orderForNotes.points_data === 'string' ? JSON.parse(orderForNotes.points_data) : orderForNotes.points_data || {};
+      } catch (err) {}
+      
+      if (parsedPoints.attachment) delete parsedPoints.attachment;
+      if (parsedPoints.attachments) delete parsedPoints.attachments;
+      
+      const targetProjectId = orderForNotes.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
+      await amendService.savePoints(targetProjectId as number, orderForNotes.order_id, parsedPoints);
+      
+      setOrderForNotes({ ...orderForNotes, points_data: parsedPoints });
+      toast({ title: 'Attachment removed', type: 'success' });
+      loadOrders(selectedProjectId, true);
+    } catch (error) {
+      toast({ title: 'Failed to remove attachment', type: 'error' });
+    } finally {
+      setUploadingAttachment(false);
+    }
+  };
+
+  // View JSON Points DataPoints (JSON) Modal
   const [pointsModalOpen, setPointsModalOpen] = useState<boolean>(false);
   const [orderForPoints, setOrderForPoints] = useState<AmendOrder | null>(null);
 
@@ -349,6 +444,7 @@ export default function AmendAssignmentDashboard() {
     setSelectedCategory(category);
     setAmenderChecklist(existingChecklist);
     setAmenderNotesContent(existingContent);
+    setAttachment(null);
     setAmenderDoneModalOpen(true);
   };
 
@@ -369,6 +465,7 @@ export default function AmendAssignmentDashboard() {
         completed_by_amender: user?.name,
         amender_role: user?.role,
         completed_at: new Date().toISOString(),
+        attachment: attachment || undefined,
       };
 
       await amendService.amenderDone(targetProjectId, orderForAmenderDone.order_id, {
@@ -429,6 +526,7 @@ export default function AmendAssignmentDashboard() {
     setSelectedCategory(category);
     setDeliverChecklist(existingChecklist);
     setReviewerComments(existingReview);
+    setAttachment(null);
     setDeliverModalOpen(true);
   };
 
@@ -451,6 +549,11 @@ export default function AmendAssignmentDashboard() {
         } catch (e) {}
       }
 
+      // Remove any old array if it exists
+      if (existingParsed.attachments) {
+        delete existingParsed.attachments;
+      }
+
       const pointsPayload = {
         ...existingParsed,
         amend_category: selectedCategory,
@@ -459,6 +562,7 @@ export default function AmendAssignmentDashboard() {
         delivered_by: user?.name,
         delivered_by_role: user?.role,
         delivered_at: new Date().toISOString(),
+        attachment: attachment || existingParsed.attachment,
       };
 
       await amendService.deliver(targetProjectId, orderForDeliver.order_id, {
@@ -560,7 +664,7 @@ export default function AmendAssignmentDashboard() {
 
   return (
     <AnimatedPage>
-      <div className="p-4 space-y-3 min-w-0">
+      <div className="px-1 py-3 space-y-3 w-full min-w-0">
         {/* Header Row */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm">
           <div>
@@ -739,16 +843,16 @@ export default function AmendAssignmentDashboard() {
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 font-semibold uppercase tracking-wider text-[11px]">
-                  <th className="py-3 px-3.5"># Order Number</th>
-                  <th className="py-3 px-3.5">Project & Client</th>
-                  <th className="py-3 px-3.5">Address & Plan</th>
-                  <th className="py-3 px-3.5">Classification</th>
-                  <th className="py-3 px-3.5">Amend Notes</th>
-                  <th className="py-3 px-3.5">Amender (Stage 1)</th>
-                  <th className="py-3 px-3.5">Direct Amender / Uploader</th>
-                  <th className="py-3 px-3.5 text-center">Quality Points (JSON)</th>
-                  <th className="py-3 px-3.5">Status</th>
-                  <th className="py-3 px-3.5 text-right">Actions</th>
+                  <th className="py-1.5 px-2"># Order Number</th>
+                  <th className="py-1.5 px-2">Project & Client</th>
+                  <th className="py-1.5 px-2">Address & Plan</th>
+                  <th className="py-1.5 px-2">Amend Notes</th>
+                  <th className="py-1.5 px-2">Amender (Stage 1)</th>
+                  <th className="py-1.5 px-2">Direct Amender / Uploader</th>
+                  <th className="py-1.5 px-2 text-center">Quality Points (JSON)</th>
+                  <th className="py-1.5 px-2">Status</th>
+                  <th className="py-1.5 px-2">Classification</th>
+                  <th className="py-1.5 px-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -780,7 +884,7 @@ export default function AmendAssignmentDashboard() {
                         className="hover:bg-slate-50/80 transition-colors duration-150"
                       >
                         {/* Order Number */}
-                        <td className="py-2.5 px-3.5 font-bold text-slate-900 whitespace-nowrap">
+                        <td className="py-1 px-2 font-bold text-slate-900 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <span className="text-brand-700 font-mono">#{order.order_id}</span>
                             {order.order_number && (
@@ -798,7 +902,7 @@ export default function AmendAssignmentDashboard() {
                         </td>
 
                         {/* Project & Client */}
-                        <td className="py-2.5 px-3.5 max-w-xs">
+                        <td className="py-1 px-2 max-w-[110px]">
                           {order.project_name && (
                             <div className="mb-0.5">
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 text-[10px] font-bold border border-slate-200">
@@ -813,7 +917,7 @@ export default function AmendAssignmentDashboard() {
                         </td>
 
                         {/* Address & Plan */}
-                        <td className="py-2.5 px-3.5 max-w-xs">
+                        <td className="py-1 px-2 max-w-[140px]">
                           <div
                             className="text-[11px] text-slate-700 font-medium truncate"
                             title={order.address || ''}
@@ -829,28 +933,8 @@ export default function AmendAssignmentDashboard() {
                             )}
                           </div>
                         </td>
-
-                        {/* Classification (Team Mistake, Request, Amender Mistake) */}
-                        <td className="py-2.5 px-3.5 whitespace-nowrap">
-                          {order.amend_category ? (
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
-                                order.amend_category === 'Team Mistake'
-                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                  : order.amend_category === 'Amender Mistake'
-                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                  : 'bg-blue-50 text-blue-700 border-blue-200'
-                              }`}
-                            >
-                              {order.amend_category}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 italic text-[11px]">-</span>
-                          )}
-                        </td>
-
-                        {/* Amend Notes */}
-                        <td className="py-2.5 px-3.5 max-w-xs">
+                           {/* Amend Notes */}
+                        <td className="py-1 px-2 max-w-[140px]">
                           {order.amend_notes ? (
                             <div
                               onClick={() => {
@@ -872,9 +956,9 @@ export default function AmendAssignmentDashboard() {
                         </td>
 
                         {/* Amender (Stage 1) */}
-                        <td className="py-2 px-3">
+                        <td className="py-1 px-2">
                           {isManagerOrDirector && !isDelivered ? (
-                            <div className="space-y-1 min-w-[155px]">
+                            <div className="space-y-1 min-w-[110px]">
                               <div className="relative flex items-center">
                                 <select
                                   value={order.amender_id || ''}
@@ -933,9 +1017,9 @@ export default function AmendAssignmentDashboard() {
                         </td>
 
                         {/* Direct Amender / Uploader (Stage 2) */}
-                        <td className="py-2 px-3">
+                        <td className="py-1 px-2">
                           {isManagerOrDirector && !isDelivered ? (
-                            <div className="space-y-1 min-w-[165px]">
+                            <div className="space-y-1 min-w-[120px]">
                               <div className="relative flex items-center">
                                 <select
                                   value={order.direct_amender_id || ''}
@@ -999,7 +1083,7 @@ export default function AmendAssignmentDashboard() {
                         </td>
 
                         {/* Quality Points (JSON) */}
-                        <td className="py-2.5 px-3.5 text-center">
+                        <td className="py-1 px-2 text-center">
                           {order.points_data ? (
                             <button
                               onClick={() => {
@@ -1018,7 +1102,7 @@ export default function AmendAssignmentDashboard() {
                         </td>
 
                         {/* Status Badge */}
-                        <td className="py-2.5 px-3.5">
+                        <td className="py-1 px-2">
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
                               order.amend_status === 'delivered'
@@ -1038,8 +1122,27 @@ export default function AmendAssignmentDashboard() {
                           </span>
                         </td>
 
+                          {/* Classification (Team Mistake, Request, Amender Mistake) */}
+                        <td className="py-1 px-2">
+                          {order.amend_category ? (
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
+                                order.amend_category === 'Team Mistake'
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                  : order.amend_category === 'Amender Mistake'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-blue-50 text-blue-700 border-blue-200'
+                              }`}
+                            >
+                              {order.amend_category}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 italic text-[11px]">-</span>
+                          )}
+                        </td>
+
                         {/* Actions */}
-                        <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
+                        <td className="py-1 px-2 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             {/* Amender Mark as Done Button */}
                             {(isPrimaryAmender || isManagerOrDirector) && !isDone && !isDelivered && (
@@ -1242,6 +1345,18 @@ export default function AmendAssignmentDashboard() {
                   placeholder="Enter details of changes made for the reviewer..."
                   className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
+                <div className="mt-2">
+                  <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileChange} accept="image/*,application/pdf" />
+                  <Button variant="secondary" type="button" onClick={() => fileInputRef.current?.click()} className="text-xs py-1 px-2 border-slate-300">
+                    <Paperclip className="w-3.5 h-3.5 mr-1" /> Attach File (Image/PDF)
+                  </Button>
+                  {attachment && (
+                    <div className="mt-1.5 text-xs text-brand-700 flex items-center gap-2">
+                      <span className="truncate max-w-[200px] font-medium">{attachment.name}</span>
+                      <button type="button" onClick={() => setAttachment(null)} className="text-rose-500 hover:text-rose-600 underline">Remove</button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center justify-between pt-2 border-t border-slate-200">
@@ -1423,6 +1538,18 @@ export default function AmendAssignmentDashboard() {
                   placeholder="Enter any quality remarks or delivery notes..."
                   className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
+                <div className="mt-2">
+                  <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileChange} accept="image/*,application/pdf" />
+                  <Button variant="secondary" type="button" onClick={() => fileInputRef.current?.click()} className="text-xs py-1 px-2 border-slate-300">
+                    <Paperclip className="w-3.5 h-3.5 mr-1" /> Attach File (Image/PDF)
+                  </Button>
+                  {attachment && (
+                    <div className="mt-1.5 text-xs text-brand-700 flex items-center gap-2">
+                      <span className="truncate max-w-[200px] font-medium">{attachment.name}</span>
+                      <button type="button" onClick={() => setAttachment(null)} className="text-rose-500 hover:text-rose-600 underline">Remove</button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center justify-between pt-2 border-t border-slate-200">
@@ -1453,7 +1580,76 @@ export default function AmendAssignmentDashboard() {
               <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-lg text-amber-900 whitespace-pre-wrap font-mono leading-relaxed">
                 {orderForNotes.amend_notes || 'No notes available'}
               </div>
-              <div className="flex justify-end">
+              
+              {/* Show Attachment if exists */}
+              {(() => {
+                let parsedPoints: any = {};
+                try {
+                  parsedPoints = typeof orderForNotes.points_data === 'string' ? JSON.parse(orderForNotes.points_data) : orderForNotes.points_data;
+                } catch (e) {}
+
+                // Safely grab the attachment, ignoring any left-over array
+                const att = parsedPoints?.attachment;
+
+                if (att?.base64) {
+                  return (
+                    <div className="mt-3 p-3 bg-brand-50 border border-brand-200 rounded-lg flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <Paperclip className="w-4 h-4 text-brand-600 flex-shrink-0" />
+                        <span className="text-brand-700 font-semibold truncate">
+                          Attachment: {att.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4 flex-shrink-0">
+                        <button
+                          onClick={() => {
+                            const newWindow = window.open();
+                            if (newWindow) {
+                              newWindow.document.write(`
+                                <html>
+                                  <head><title>${att.name}</title></head>
+                                  <body style="margin:0;display:flex;justify-content:center;align-items:center;background:#0f172a;height:100vh;">
+                                    <embed src="${att.base64}" width="100%" height="100%" style="max-width:100vw;max-height:100vh;object-fit:contain;" />
+                                  </body>
+                                </html>
+                              `);
+                              newWindow.document.close();
+                            }
+                          }}
+                          className="text-brand-600 hover:text-brand-800 hover:underline text-xs font-bold"
+                        >
+                          View
+                        </button>
+                        <a
+                          href={att.base64}
+                          download={att.name}
+                          className="text-brand-600 hover:text-brand-800 hover:underline text-xs font-bold"
+                        >
+                          Download
+                        </a>
+                        <div className="w-px h-4 bg-brand-200 mx-1"></div>
+                        <button
+                          onClick={handleRemoveAttachment}
+                          disabled={uploadingAttachment}
+                          title="Remove Attachment"
+                          className="p-1 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-50"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              <div className="flex items-center justify-between pt-2">
+                <div>
+                  <input type="file" className="hidden" ref={notesFileInputRef} onChange={handleNotesAttachment} accept="image/*,application/pdf" />
+                  <Button variant="secondary" onClick={() => notesFileInputRef.current?.click()} disabled={uploadingAttachment}>
+                    <Paperclip className="w-4 h-4 mr-1" /> {uploadingAttachment ? 'Uploading...' : 'Attach File'}
+                  </Button>
+                </div>
                 <Button variant="secondary" onClick={() => setNotesModalOpen(false)}>
                   Close
                 </Button>

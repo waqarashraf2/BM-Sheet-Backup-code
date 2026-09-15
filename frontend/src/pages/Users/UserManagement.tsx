@@ -95,8 +95,8 @@ export default function UserManagement() {
   ];
   const hiddenRoles: Record<string, string[]> = {
     ceo: ['ceo'],
-    operations_manager: ['ceo', 'director', 'operations_manager', 'accounts_manager', 'hr', 'csr', 'it', 'client', 'amender', 'direct_amender'],
-    project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr', 'csr', 'it', 'client', 'amender', 'direct_amender'],
+    operations_manager: ['ceo', 'director', 'operations_manager', 'accounts_manager', 'hr', 'csr', 'it', 'client'],
+    project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr', 'csr', 'it', 'client'],
     hr: ['ceo', 'hr', 'director', 'client'],
   };
   const rolesToHide = hiddenRoles[myRole] || (myRole === 'director' ? [] : [myRole]);
