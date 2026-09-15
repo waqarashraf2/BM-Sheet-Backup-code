@@ -3492,7 +3492,7 @@ export default function SupervisorAssignment() {
                           No client orders found
                         </div>
                       ) : (
-                        <div className="space-y-1.5">
+                       <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
                           {clientOrderSummary.map((client) => (
                             <div
                               key={client.name}
