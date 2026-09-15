@@ -24,6 +24,7 @@ import {
   EyeOff,
   ChevronDown,
   ChevronRight,
+  X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -626,6 +627,42 @@ export default function HRDashboard() {
     } catch (e) {
       console.error(e);
       setError('Download failed.');
+    }
+  };
+
+  const viewDocument = async (doc: UserDocument) => {
+    // Open new tab instantly to avoid click delay and popup blockers
+    const newWindow = window.open('about:blank', '_blank');
+    if (newWindow) {
+      newWindow.document.write('<div style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;color:#666;font-size:18px;">Loading Document...</div>');
+    }
+
+    try {
+      const res = await hrService.downloadDocument(doc.id);
+      
+      let mimeType = 'application/pdf';
+      const ext = doc.original_name.split('.').pop()?.toLowerCase();
+      if (ext === 'png') mimeType = 'image/png';
+      else if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
+      else if (ext === 'doc' || ext === 'docx') mimeType = 'application/msword';
+
+      const blob = new Blob([res.data], { type: mimeType });
+      const url = window.URL.createObjectURL(blob);
+      
+      if (newWindow) {
+        newWindow.location.href = url;
+      } else {
+        window.open(url, '_blank');
+      }
+      
+      // Revoke the object URL after 60 seconds to free up memory
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+      }, 60000);
+    } catch (e) {
+      console.error(e);
+      setError('View failed.');
+      if (newWindow) newWindow.close();
     }
   };
 
@@ -1973,6 +2010,9 @@ export default function HRDashboard() {
                       icon={<Trash2 className="h-4 w-4" />}
                     >
                       Delete
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => viewDocument(doc)} icon={<Eye className="h-4 w-4" />}>
+                      View
                     </Button>
                     <Button size="sm" variant="secondary" onClick={() => downloadDocument(doc)} icon={<Download className="h-4 w-4" />}>
                       Download
