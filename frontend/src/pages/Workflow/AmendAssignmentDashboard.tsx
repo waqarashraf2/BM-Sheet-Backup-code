@@ -1627,15 +1627,6 @@ export default function AmendAssignmentDashboard() {
                         >
                           Download
                         </a>
-                        <div className="w-px h-4 bg-brand-200 mx-1"></div>
-                        <button
-                          onClick={handleRemoveAttachment}
-                          disabled={uploadingAttachment}
-                          title="Remove Attachment"
-                          className="p-1 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-50"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
                       </div>
                     </div>
                   );
