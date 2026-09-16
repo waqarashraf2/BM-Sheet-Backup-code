@@ -168,32 +168,6 @@ export default function AmendAssignmentDashboard() {
     }
   };
 
-  const handleRemoveAttachment = async () => {
-    if (!orderForNotes) return;
-    if (!window.confirm("Are you sure you want to completely remove this attachment?")) return;
-
-    setUploadingAttachment(true);
-    try {
-      let parsedPoints: any = {};
-      try {
-        parsedPoints = typeof orderForNotes.points_data === 'string' ? JSON.parse(orderForNotes.points_data) : orderForNotes.points_data || {};
-      } catch (err) {}
-      
-      if (parsedPoints.attachment) delete parsedPoints.attachment;
-      if (parsedPoints.attachments) delete parsedPoints.attachments;
-      
-      const targetProjectId = orderForNotes.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
-      await amendService.savePoints(targetProjectId as number, orderForNotes.order_id, parsedPoints);
-      
-      setOrderForNotes({ ...orderForNotes, points_data: parsedPoints });
-      toast({ title: 'Attachment removed', type: 'success' });
-      loadOrders(selectedProjectId, true);
-    } catch (error) {
-      toast({ title: 'Failed to remove attachment', type: 'error' });
-    } finally {
-      setUploadingAttachment(false);
-    }
-  };
 
   // View JSON Points DataPoints (JSON) Modal
   const [pointsModalOpen, setPointsModalOpen] = useState<boolean>(false);
