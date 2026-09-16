@@ -222,6 +222,9 @@ export default function AmendAssignmentDashboard() {
   const [pointsModalOpen, setPointsModalOpen] = useState<boolean>(false);
   const [orderForPoints, setOrderForPoints] = useState<AmendOrder | null>(null);
 
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const itemsPerPage = 50;
+
   // Role permissions
   const isManagerOrDirector =
     user?.role &&
@@ -698,6 +701,19 @@ export default function AmendAssignmentDashboard() {
     });
   }, [orders, statusFilter, categoryFilter, searchQuery, startDate, endDate]);
 
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, categoryFilter, searchQuery, startDate, endDate, selectedProjectId]);
+
+  const paginatedOrders = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredOrders.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredOrders, currentPage]);
+
+  const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
+
+  // Click Outside Handlers for Custom Selects
   return (
     <AnimatedPage>
       <div className="px-1 py-3 space-y-3 w-full min-w-0">
@@ -1012,7 +1028,7 @@ export default function AmendAssignmentDashboard() {
                     </td>
                   </tr>
                 ) : (
-                  filteredOrders.map((order) => {
+                  paginatedOrders.map((order) => {
                     const isDone = order.amend_status === 'amender_done';
                     const isDelivered = order.amend_status === 'delivered';
 
@@ -1320,6 +1336,20 @@ export default function AmendAssignmentDashboard() {
               </tbody>
             </table>
           </div>
+          
+          {/* Pagination Controls */}
+          {filteredOrders.length > 0 && (
+            <div className="flex items-center justify-between bg-white px-4 py-3 text-sm border-t border-slate-200">
+              <span className="text-slate-500">
+                Showing {((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, filteredOrders.length)} of {filteredOrders.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="secondary" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>Prev</Button>
+                <span className="text-xs text-slate-600">Page {currentPage} of {totalPages || 1}</span>
+                <Button size="sm" variant="secondary" disabled={currentPage >= totalPages || totalPages === 0} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* MODAL 1: Amender Mark Done & Add Points */}
