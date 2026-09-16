@@ -674,7 +674,7 @@ export const dashboardService = {
 
 
 
-  batchStatus: (params?: { date?: string; start_date?: string; end_date?: string; project_id?: number }) =>
+  batchStatus: (params?: { date?: string; start_date?: string; end_date?: string; project_id?: number; plan_type?: string }) =>
     api.get<BatchStatusResponse>('/dashboard/batch-status', { params }),
 
   cubiQaReport: (params?: { date?: string; start_date?: string; end_date?: string; project_id?: number }) =>

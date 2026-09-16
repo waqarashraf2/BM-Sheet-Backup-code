@@ -47,16 +47,20 @@ class UserController extends Controller
         } elseif ($authUser->role === 'operations_manager') {
             $managedIds = $authUser->getManagedProjectIds();
             $query->where(function ($q) use ($managedIds, $authUser) {
-                // OM sees workers in their projects + PMs assigned to their projects + THEMSELVES
+                // OM sees workers in their projects + PMs assigned to their projects + Amenders in their projects (or all amenders if can_access_amends) + THEMSELVES
                 // OM does not see other OMs, Directors, CEOs, HR, Accounts
                 $q->where('id', $authUser->id)
-                  ->orWhere(function ($sub) use ($managedIds) {
-                      $sub->whereNotIn('role', ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'client', 'amender', 'direct_amender'])
-                          ->where(function ($wQ) use ($managedIds) {
+                  ->orWhere(function ($sub) use ($managedIds, $authUser) {
+                      $sub->whereNotIn('role', ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'client', 'csr', 'it'])
+                          ->where(function ($wQ) use ($managedIds, $authUser) {
                               $wQ->whereIn('project_id', $managedIds)
                                  ->orWhereHas('managedProjects', function ($pQ) use ($managedIds) {
                                      $pQ->whereIn('projects.id', $managedIds);
                                  });
+
+                              if ($authUser->can_access_amends) {
+                                  $wQ->orWhereIn('role', ['amender', 'direct_amender']);
+                              }
                           });
                   });
             });
@@ -206,8 +210,25 @@ class UserController extends Controller
             return response()->json(['message' => 'Only a Director can create or assign a Client account.'], 403);
         }
 
-        if (in_array($authUser->role, ['operations_manager', 'project_manager']) && in_array($data['role'] ?? '', ['csr', 'it', 'amender', 'direct_amender', 'hr', 'ceo', 'director', 'client', 'accounts_manager'])) {
-            return response()->json(['message' => 'You do not have permission to assign this role.'], 403);
+        $targetRole = $data['role'] ?? '';
+
+        if ($authUser->role === 'operations_manager') {
+            $omAllowedRoles = ['drawer', 'checker', 'qa', 'designer', 'filler', 'project_manager', 'live_qa', 'amender', 'direct_amender'];
+            if (!in_array($targetRole, $omAllowedRoles)) {
+                return response()->json(['message' => 'Operations Managers cannot assign this role.'], 403);
+            }
+
+            if (!empty($data['project_id'])) {
+                $omManagedIds = array_map('intval', $authUser->getManagedProjectIds());
+                if (!$authUser->can_access_amends && !in_array((int)$data['project_id'], $omManagedIds, true)) {
+                    return response()->json(['message' => 'You can only create users for your assigned projects.'], 403);
+                }
+            }
+        } elseif ($authUser->role === 'project_manager') {
+            $pmAllowedRoles = ['drawer', 'checker', 'qa', 'designer', 'filler'];
+            if (!in_array($targetRole, $pmAllowedRoles)) {
+                return response()->json(['message' => 'Project Managers cannot assign this role.'], 403);
+            }
         }
 
         if (!Schema::hasColumn('users', 'machine_id')) {
@@ -324,15 +345,17 @@ class UserController extends Controller
                     if (array_intersect($managedIds, $pmProjectIds)) {
                         $canEdit = true;
                     }
+                } elseif ($authUser->can_access_amends && in_array($user->role, ['amender', 'direct_amender'])) {
+                    $canEdit = true;
                 }
 
-                // OM cannot edit other OMs, Directors, CEOs, HR, Accounts, CSR, IT, Amenders, Clients
-                if (in_array($user->role, ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'csr', 'it', 'client', 'amender', 'direct_amender'])) {
+                // OM cannot edit other OMs, Directors, CEOs, HR, Accounts, CSR, IT, Clients
+                if (in_array($user->role, ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'csr', 'it', 'client'])) {
                     $canEdit = false;
                 }
 
                 if (!$canEdit) {
-                    return response()->json(['message' => 'You can only edit PMs and workers in your projects.'], 403);
+                    return response()->json(['message' => 'You can only edit PMs, amenders, and workers in your projects.'], 403);
                 }
             } elseif ($authUser->role === 'director' || $authUser->role === 'ceo' || $authUser->role === 'admin') {
                 // Directors, CEOs and Admins can edit any user's profile/password
@@ -351,8 +374,18 @@ class UserController extends Controller
                 return response()->json(['message' => 'Only a Director can assign the Client role.'], 403);
             }
 
-            if (isset($data['role']) && in_array($authUser->role, ['operations_manager', 'project_manager']) && in_array($data['role'], ['csr', 'it', 'amender', 'direct_amender', 'hr', 'ceo', 'director', 'client', 'accounts_manager'])) {
-                return response()->json(['message' => 'You do not have permission to assign this role.'], 403);
+            if (isset($data['role'])) {
+                if ($authUser->role === 'operations_manager') {
+                    $omAllowedRoles = ['drawer', 'checker', 'qa', 'designer', 'filler', 'project_manager', 'live_qa', 'amender', 'direct_amender'];
+                    if (!in_array($data['role'], $omAllowedRoles)) {
+                        return response()->json(['message' => 'You do not have permission to assign this role.'], 403);
+                    }
+                } elseif ($authUser->role === 'project_manager') {
+                    $pmAllowedRoles = ['drawer', 'checker', 'qa', 'designer', 'filler'];
+                    if (!in_array($data['role'], $pmAllowedRoles)) {
+                        return response()->json(['message' => 'You do not have permission to assign this role.'], 403);
+                    }
+                }
             }
         }
 
@@ -411,9 +444,8 @@ class UserController extends Controller
         $user = User::findOrFail($id);
         $authUser = auth()->user();
 
-        // Only CEO is allowed to delete users
-        if ($authUser->role !== 'ceo') {
-            return response()->json(['message' => 'Only CEO can delete users.'], 403);
+        if (!$authUser) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
         // Prevent self-deletion
@@ -421,13 +453,45 @@ class UserController extends Controller
             return response()->json(['message' => 'You cannot delete yourself.'], 403);
         }
 
-        // Role hierarchy check: prevent deleting users at same or higher level
-        $roleHierarchy = ['ceo' => 6, 'director' => 5, 'operations_manager' => 4, 'project_manager' => 3, 'accounts_manager' => 3, 'hr' => 3, 'qa' => 2, 'live_qa' => 2, 'drawer' => 1, 'checker' => 1, 'filler' => 1, 'designer' => 1, 'csr' => 1, 'it' => 1];
-        $authLevel = $roleHierarchy[$authUser->role] ?? 0;
-        $targetLevel = $roleHierarchy[$user->role] ?? 0;
+        // Role-based deletion permissions:
+        if ($authUser->role === 'ceo' || $authUser->role === 'director' || $authUser->role === 'admin') {
+            // Role hierarchy check: prevent deleting users at same or higher level
+            $roleHierarchy = [
+                'ceo' => 6,
+                'director' => 5,
+                'operations_manager' => 4,
+                'project_manager' => 3,
+                'accounts_manager' => 3,
+                'hr' => 3,
+                'qa' => 2,
+                'live_qa' => 2,
+                'drawer' => 1,
+                'checker' => 1,
+                'filler' => 1,
+                'designer' => 1,
+                'csr' => 1,
+                'it' => 1,
+                'amender' => 1,
+                'direct_amender' => 1,
+            ];
+            $authLevel = $roleHierarchy[$authUser->role] ?? 0;
+            $targetLevel = $roleHierarchy[$user->role] ?? 0;
 
-        if ($targetLevel >= $authLevel) {
-            return response()->json(['message' => 'You cannot delete a user with equal or higher role.'], 403);
+            if ($targetLevel >= $authLevel) {
+                return response()->json(['message' => 'You cannot delete a user with equal or higher role.'], 403);
+            }
+        } elseif ($authUser->role === 'operations_manager') {
+            // OM can delete amender and direct_amender accounts belonging to their assigned projects (or any amender if can_access_amends = true)
+            if (!in_array($user->role, ['amender', 'direct_amender'])) {
+                return response()->json(['message' => 'Operations Managers are only permitted to delete Amender accounts.'], 403);
+            }
+
+            $omManagedIds = array_map('intval', $authUser->getManagedProjectIds());
+            if (!$authUser->can_access_amends && !in_array((int)$user->project_id, $omManagedIds, true)) {
+                return response()->json(['message' => 'You can only delete amender accounts assigned to your projects.'], 403);
+            }
+        } else {
+            return response()->json(['message' => 'You do not have permission to delete users.'], 403);
         }
 
         $oldValues = $user->toArray();

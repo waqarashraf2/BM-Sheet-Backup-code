@@ -96,7 +96,7 @@ export default function UserManagement() {
   const hiddenRoles: Record<string, string[]> = {
     ceo: ['ceo'],
     operations_manager: ['ceo', 'director', 'operations_manager', 'accounts_manager', 'hr', 'csr', 'it', 'client'],
-    project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr', 'csr', 'it', 'client'],
+    project_manager: ['ceo', 'director', 'operations_manager', 'project_manager', 'accounts_manager', 'hr', 'csr', 'it', 'client', 'amender', 'direct_amender'],
     hr: ['ceo', 'hr', 'director', 'client'],
   };
   const rolesToHide = hiddenRoles[myRole] || (myRole === 'director' ? [] : [myRole]);
@@ -351,8 +351,10 @@ export default function UserManagement() {
                     >
                       <Edit className="w-3.5 h-3.5 text-teal-600" />
                     </Button>
-                    {currentUser?.role === 'ceo' && !isSelf && (
-                      <Button variant="ghost" size="xs" onClick={() => setDeleteConfirm(u.id)}><Trash2 className="w-3.5 h-3.5 text-rose-500" /></Button>
+                    {((currentUser?.role === 'ceo' || currentUser?.role === 'director') || (currentUser?.role === 'operations_manager' && ['amender', 'direct_amender'].includes(u.role))) && !isSelf && (
+                      <Button variant="ghost" size="xs" onClick={() => setDeleteConfirm(u.id)} title="Delete User">
+                        <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                      </Button>
                     )}
                   </div>
                 ) : null;

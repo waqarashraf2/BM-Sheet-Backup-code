@@ -66,6 +66,8 @@ public function batchStatusReport(Request $request)
     try {
 
         $projectId = $request->query('project_id');
+        $planType = trim((string) $request->query('plan_type', ''));
+        $isPlanTypeFiltered = $planType !== '' && !in_array(strtolower($planType), ['all', 'total']);
 
         $startDate = $request->query('start_date');
         $endDate = $request->query('end_date');
@@ -129,7 +131,7 @@ public function batchStatusReport(Request $request)
         $projectIds = $projects->pluck('id')->toArray();
 
         $selectCols = 'id, order_number, project_id, batch_number, received_at, workflow_state, assigned_to, drawer_id, completed_at, due_in';
-        $batchOptionalCols = ['rejection_type', 'fixing_started_at', 'fixing_completed_at', 'qa_name', 'final_upload', 'ausFinaldate'];
+        $batchOptionalCols = ['rejection_type', 'fixing_started_at', 'fixing_completed_at', 'qa_name', 'final_upload', 'ausFinaldate', 'plan_type'];
 
         // Match the Assignment dashboard's normalized deadline for project 16.
         // Its relative due_in values are stored two hours early during import.
@@ -147,7 +149,7 @@ public function batchStatusReport(Request $request)
         $untouchedRawUnion = $this->buildQueueUnionQuery(
             $projectIds,
             $selectCols,
-            ['checker_id']
+            ['checker_id', 'plan_type']
         );
 
         /*
@@ -175,6 +177,10 @@ public function batchStatusReport(Request $request)
             $query->where('project_id', $projectId);
         }
 
+        if ($isPlanTypeFiltered) {
+            $query->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]);
+        }
+
         $orders = $query->get();
 
         /*
@@ -188,6 +194,10 @@ public function batchStatusReport(Request $request)
 
         if ($projectId) {
             $statusWindowQuery->where('project_id', $projectId);
+        }
+
+        if ($isPlanTypeFiltered) {
+            $statusWindowQuery->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]);
         }
 
         $statusWindowOrders = $statusWindowQuery->get();
@@ -276,6 +286,7 @@ public function batchStatusReport(Request $request)
                 ->where('received_at', '>=', $shiftStartLocal)
                 ->where('received_at', '<', $shiftEndLocal)
                 ->when($projectId, fn($q) => $q->where('project_id', $projectId))
+                ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]))
                 ->where(function ($q) {
                     $q->whereNull('drawer_id')->orWhere('drawer_id', 0);
                 })
@@ -297,6 +308,7 @@ public function batchStatusReport(Request $request)
                 ->where('final_upload', 'yes')
                 ->where('received_at', '>=', $shiftStartLocal)
                 ->where('received_at', '<', $shiftEndLocal)
+                ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]))
                 ->selectRaw('qa_name as name, COUNT(*) as done_count')
                 ->groupBy('qa_name')
                 ->pluck('done_count', 'name');
@@ -310,6 +322,9 @@ public function batchStatusReport(Request $request)
                         ->orWhere('final_upload', '!=', 'yes');
                 })
                 ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
+                ->where('received_at', '>=', $shiftStartLocal)
+                ->where('received_at', '<', $shiftEndLocal)
+                ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]))
                 ->selectRaw('qa_name as name, COUNT(*) as wip_count')
                 ->groupBy('qa_name')
                 ->pluck('wip_count', 'name');
@@ -358,7 +373,8 @@ public function batchStatusReport(Request $request)
             ->where('received_at', '<', $shiftEndLocal)
             ->whereNotNull('due_in')
             ->whereRaw("{$batchDueInExpr} >= ?", [$batchNowPkt])
-            ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER']);
+            ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER'])
+            ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]));
 
         if ($projectId) {
             $plansRemainingQuery->where('project_id', $projectId);
@@ -392,6 +408,10 @@ public function batchStatusReport(Request $request)
                 ->when(
                     $projectId,
                     fn($q) => $q->where('project_id', $projectId)
+                )
+                ->when(
+                    $isPlanTypeFiltered,
+                    fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)])
                 )
                 ->get()
         );
@@ -441,6 +461,7 @@ public function batchStatusReport(Request $request)
             ->where('received_at', '>=', $shiftStartLocal)
             ->where('received_at', '<', $shiftEndLocal)
             ->when($projectId, fn($q) => $q->where('project_id', $projectId))
+            ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]))
             ->whereNotNull('due_in')
             ->whereRaw("{$batchDueInExpr} >= ?", [$batchNowPkt])
             ->where(function ($q) {

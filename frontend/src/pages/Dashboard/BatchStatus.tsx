@@ -95,22 +95,25 @@ export default function BatchStatus() {
 
   const [startDate, setStartDate] = useState<string>(getTodayInputValue());
   const [endDate, setEndDate] = useState<string>(getTodayInputValue());
+  const [planTypeFilter, setPlanTypeFilter] = useState<'TOTAL' | 'BASE' | 'PLUS'>('TOTAL');
   const [rawResponse, setRawResponse] = useState<BatchStatusResponse | null>(null);
   const [showCubiQaReport, setShowCubiQaReport] = useState(false);
 
   /* ---------------------- Fetch Data ---------------------- */
 
-  const fetchData = async (start?: string, end?: string) => {
+  const fetchData = async (start?: string, end?: string, planType?: 'TOTAL' | 'BASE' | 'PLUS') => {
     try {
       setLoading(true);
       const s = start ?? startDate;
       const e = end ?? endDate;
+      const pt = planType ?? planTypeFilter;
 
       const res = await dashboardService.batchStatus({
         project_id: 16,
         start_date: s,
         end_date: e,
         date: s,
+        plan_type: pt === 'TOTAL' ? undefined : pt,
       });
 
       const resp: BatchStatusResponse = res.data;
@@ -144,8 +147,13 @@ export default function BatchStatus() {
     }
   };
 
+  const handlePlanTypeChange = (type: 'TOTAL' | 'BASE' | 'PLUS') => {
+    setPlanTypeFilter(type);
+    fetchData(startDate, endDate, type);
+  };
+
   useEffect(() => {
-    fetchData(startDate, endDate);
+    fetchData(startDate, endDate, 'TOTAL');
   }, []);
 
   /* ---------------------- FORMAT REPORT ---------------------- */
@@ -170,7 +178,7 @@ export default function BatchStatus() {
 
     let text = '';
 
-    text += `Cubi 2D\n`;
+    text += `Cubi 2D${planTypeFilter !== 'TOTAL' ? ` (${planTypeFilter})` : ''}\n`;
     text += startDate === endDate ? `${formatDate(startDate)}\n\n` : `${formatDate(startDate)} to ${formatDate(endDate)}\n\n`;
 
     data.forEach((batch) => {
@@ -343,13 +351,14 @@ export default function BatchStatus() {
   };
 
   const todayVal = getTodayInputValue();
-  const isDateFiltered = startDate !== todayVal || endDate !== todayVal;
+  const isDateFiltered = startDate !== todayVal || endDate !== todayVal || planTypeFilter !== 'TOTAL';
 
   const handleClearFilter = () => {
     const today = getTodayInputValue();
     setStartDate(today);
     setEndDate(today);
-    fetchData(today, today);
+    setPlanTypeFilter('TOTAL');
+    fetchData(today, today, 'TOTAL');
   };
 
   return (
@@ -363,7 +372,14 @@ export default function BatchStatus() {
         >
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
             <div className="shrink-0">
-              <h1 className="text-sm font-bold text-slate-950">Cubi 2D Status</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm font-bold text-slate-950">Cubi 2D Status</h1>
+                {planTypeFilter !== 'TOTAL' && (
+                  <span className="rounded-md bg-[#2AA7A0]/10 px-2 py-0.5 text-xs font-bold text-[#0f766e] ring-1 ring-[#2AA7A0]/20">
+                    {planTypeFilter}
+                  </span>
+                )}
+              </div>
               <p className="mt-0.5 text-[11px] font-medium text-slate-500">
                 Batch status for {displayDate}
               </p>
@@ -424,7 +440,7 @@ export default function BatchStatus() {
                     type="button"
                     onClick={handleClearFilter}
                     className="h-8 rounded-lg bg-rose-50 border border-rose-200 px-2.5 text-xs font-semibold text-rose-700 shadow-sm transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-400/25 flex items-center gap-1"
-                    title="Reset to today's date"
+                    title="Reset date and plan type filters"
                   >
                     <X className="h-3.5 w-3.5" />
                     <span>Clear Filter</span>
@@ -494,6 +510,28 @@ export default function BatchStatus() {
                   <RotateCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
                   <span>Refresh</span>
                 </button>
+              </div>
+
+              {/* Plan Type Selector (Total, BASE, PLUS) */}
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100/90 p-1 shadow-inner">
+                {(['TOTAL', 'BASE', 'PLUS'] as const).map((type) => {
+                  const isActive = planTypeFilter === type;
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => handlePlanTypeChange(type)}
+                      disabled={loading}
+                      className={`h-7 px-3.5 text-xs font-bold uppercase tracking-wider rounded-md transition-all ${
+                        isActive
+                          ? 'bg-[#2AA7A0] text-white shadow-sm ring-1 ring-[#2AA7A0]'
+                          : 'bg-white/70 text-slate-600 hover:text-slate-900 hover:bg-white'
+                      } disabled:opacity-50`}
+                    >
+                      {type === 'TOTAL' ? 'Total' : type}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>

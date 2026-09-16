@@ -1727,8 +1727,9 @@ export default function SupervisorAssignment() {
       return [
         { key: '__display_date', label: 'Date', width: '7%' },
         { key: '__received_time', label: 'Rec Time', width: '8%' },
-        { key: 'order_number', label: 'Order ID', width: '20%' },
+        { key: 'order_number', label: 'Order ID', width: '18%' },
         { key: '__batch_number', label: 'Batch', width: '6%' },
+        { key: 'plan_type', label: 'Plan Type', width: '8%' },
         { key: '__remaining', label: 'Remaining', width: '10%' },
       ];
     }
