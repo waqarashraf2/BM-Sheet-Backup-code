@@ -156,7 +156,7 @@ export default function HRDashboard() {
   });
   const [users, setUsers] = useState<HrUserRow[]>([]);
   const [page, setPage] = useState(1);
-  const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, per_page: 25, total: 0 });
+  const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, per_page: 100, total: 0 });
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
   const [role, setRole] = useState('all');
@@ -342,7 +342,7 @@ export default function HRDashboard() {
       setLoadingUsers(true);
       const res = await hrService.users({
         page,
-        per_page: 25,
+        per_page: 100,
         search,
         status,
         role,
@@ -355,7 +355,7 @@ export default function HRDashboard() {
       setPagination({
         current_page: res.data.current_page || 1,
         last_page: res.data.last_page || 1,
-        per_page: res.data.per_page || 25,
+        per_page: res.data.per_page || 100,
         total: res.data.total || 0,
       });
       setDocumentsReady(res.data.documents_ready);
