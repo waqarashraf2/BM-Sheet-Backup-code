@@ -33,6 +33,7 @@ import {
   Info,
   Building,
   Paperclip,
+  ChevronDown,
 } from 'lucide-react';
 
 const DEFAULT_PROJECT_TIMEZONE = 'Asia/Karachi';
@@ -44,7 +45,7 @@ export default function AmendAssignmentDashboard() {
   const { toast } = useToast();
 
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<number | 'all'>('all');
+  const [selectedProjectId, setSelectedProjectId] = useState<number | 'all' | ''>('');
   const [orders, setOrders] = useState<AmendOrder[]>([]);
   const [workers, setWorkers] = useState<AmenderWorker[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -59,6 +60,30 @@ export default function AmendAssignmentDashboard() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+
+  // Custom Dropdown State
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState<boolean>(false);
+  const [projectSearch, setProjectSearch] = useState<string>('');
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
+
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState<boolean>(false);
+  const [categorySearch, setCategorySearch] = useState<string>('');
+  const categoryDropdownRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setProjectDropdownOpen(false);
+      }
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(event.target as Node)) {
+        setCategoryDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const [counts, setCounts] = useState({
     total: 0,
@@ -153,7 +178,7 @@ export default function AmendAssignmentDashboard() {
         };
         
         try {
-          const targetProjectId = orderForNotes.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
+          const targetProjectId = orderForNotes.project_id || (typeof selectedProjectId === 'number' ? selectedProjectId : 15);
           await amendService.savePoints(targetProjectId as number, orderForNotes.order_id, parsedPoints);
           setOrderForNotes({ ...orderForNotes, points_data: parsedPoints });
           toast({ title: 'Attachment uploaded', type: 'success' });
@@ -168,8 +193,32 @@ export default function AmendAssignmentDashboard() {
     }
   };
 
+  const handleRemoveAttachment = async () => {
+    if (!orderForNotes) return;
+    if (!window.confirm("Are you sure you want to completely remove this attachment?")) return;
 
-  // View JSON Points DataPoints (JSON) Modal
+    setUploadingAttachment(true);
+    try {
+      let parsedPoints: any = {};
+      try {
+        parsedPoints = typeof orderForNotes.points_data === 'string' ? JSON.parse(orderForNotes.points_data) : orderForNotes.points_data || {};
+      } catch (err) {}
+      
+      if (parsedPoints.attachment) delete parsedPoints.attachment;
+      if (parsedPoints.attachments) delete parsedPoints.attachments;
+      
+      const targetProjectId = orderForNotes.project_id || (typeof selectedProjectId === 'number' ? selectedProjectId : 15);
+      await amendService.savePoints(targetProjectId as number, orderForNotes.order_id, parsedPoints);
+      
+      setOrderForNotes({ ...orderForNotes, points_data: parsedPoints });
+      toast({ title: 'Attachment removed', type: 'success' });
+      loadOrders(selectedProjectId, true);
+    } catch (error) {
+      toast({ title: 'Failed to remove attachment', type: 'error' });
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }; // View JSON Points DataPoints (JSON) Modal
   const [pointsModalOpen, setPointsModalOpen] = useState<boolean>(false);
   const [orderForPoints, setOrderForPoints] = useState<AmendOrder | null>(null);
 
@@ -182,7 +231,7 @@ export default function AmendAssignmentDashboard() {
 
   // Selected project data
   const selectedProjectData =
-    selectedProjectId !== 'all' ? projects.find((p) => p.id === selectedProjectId) : null;
+    typeof selectedProjectId === 'number' ? projects.find((p) => p.id === selectedProjectId) : null;
   const projectTz = selectedProjectData?.timezone || DEFAULT_PROJECT_TIMEZONE;
 
   // Load Projects & Workers on initial mount
@@ -193,7 +242,12 @@ export default function AmendAssignmentDashboard() {
 
   // When project changes, fetch amend orders
   useEffect(() => {
-    loadOrders(selectedProjectId);
+    if (selectedProjectId !== '') {
+      loadOrders(selectedProjectId);
+    } else {
+      setOrders([]);
+      setCounts({ total: 0, pending: 0, in_progress: 0, amender_done: 0, delivered: 0 });
+    }
   }, [selectedProjectId]);
 
   const loadProjects = async () => {
@@ -238,7 +292,7 @@ export default function AmendAssignmentDashboard() {
   const handleAssignAmender = async (order: AmendOrder, amenderIdStr: string) => {
     if (!amenderIdStr) return;
     const amenderId = Number(amenderIdStr);
-    const targetProjectId = order.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
+    const targetProjectId = order.project_id || (typeof selectedProjectId === 'number' ? selectedProjectId : 15);
     const selectedAmender = workers.find((w) => w.id === amenderId);
 
     setAssigningAmenderOrderId(order.order_id);
@@ -279,7 +333,7 @@ export default function AmendAssignmentDashboard() {
   const handleAssignDirectAmender = async (order: AmendOrder, directAmenderIdStr: string) => {
     if (!directAmenderIdStr) return;
     const directAmenderId = Number(directAmenderIdStr);
-    const targetProjectId = order.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
+    const targetProjectId = order.project_id || (typeof selectedProjectId === 'number' ? selectedProjectId : 15);
     const selectedDirect = workers.find((w) => w.id === directAmenderId);
 
     setAssigningDirectOrderId(order.order_id);
@@ -315,7 +369,15 @@ export default function AmendAssignmentDashboard() {
     }
   };
 
-  const loadOrders = async (projectId: number | 'all', isSilent = false) => {
+  const loadOrders = async (projectId: number | 'all' | '', isSilent = false) => {
+    if (projectId === '') {
+      setOrders([]);
+      setCounts({ total: 0, pending: 0, in_progress: 0, amender_done: 0, delivered: 0 });
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
     if (!isSilent) setLoading(true);
     else setRefreshing(true);
 
@@ -323,7 +385,7 @@ export default function AmendAssignmentDashboard() {
       const res =
         projectId === 'all'
           ? await amendService.getAllOrders()
-          : await amendService.getOrders(projectId);
+          : await amendService.getOrders(projectId as number);
 
       if (res.data) {
         setOrders(res.data.data || []);
@@ -347,7 +409,7 @@ export default function AmendAssignmentDashboard() {
   // Explicit sync from client portal
   const handleFetchClientPortal = async () => {
     let syncProjectId: number | null = null;
-    if (selectedProjectId !== 'all') {
+    if (typeof selectedProjectId === 'number') {
       syncProjectId = selectedProjectId;
     } else {
       // Find default floorplan project (e.g., project 15 or first project)
@@ -428,7 +490,7 @@ export default function AmendAssignmentDashboard() {
     if (!orderForAmenderDone) return;
 
     const targetProjectId =
-      orderForAmenderDone.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
+      orderForAmenderDone.project_id || (typeof selectedProjectId === 'number' ? selectedProjectId : 15);
 
     setSubmittingDone(true);
     try {
@@ -510,7 +572,7 @@ export default function AmendAssignmentDashboard() {
     if (!orderForDeliver) return;
 
     const targetProjectId =
-      orderForDeliver.project_id || (selectedProjectId !== 'all' ? selectedProjectId : 15);
+      orderForDeliver.project_id || (typeof selectedProjectId === 'number' ? selectedProjectId : 15);
 
     setSubmittingDeliver(true);
     try {
@@ -687,46 +749,80 @@ export default function AmendAssignmentDashboard() {
           </div>
         </div>
 
-        {/* Info Banner */}
-        <div className="bg-brand-50/60 border border-brand-100 rounded-xl p-3 flex items-start gap-3">
-          <Info className="w-4 h-4 text-brand-600 mt-0.5 shrink-0" />
-          <p className="text-xs text-brand-800">
-            {user?.role === 'operations_manager' && !user?.can_access_amends ? (
-              <>
-                <span className="font-semibold">OM Amends Hub:</span> You can view, assign, and manage amends for your assigned projects.
-              </>
-            ) : (
-              <>
-                <span className="font-semibold">Universal Amender Hub:</span> Amenders har project ki amends dekh aur complete kar saktay hain.
-                Aap dropdown se <span className="font-bold">"All Projects (Every Project)"</span> ya koi bhi specific project select kar saktay hain.
-              </>
-            )}
-          </p>
-        </div>
 
         {/* Project Selector & Filter Bar */}
         <div className="flex flex-wrap items-center gap-2 bg-white p-3 rounded-xl border border-slate-200/80 shadow-sm">
-          {/* Project Select */}
-          <select
-            value={selectedProjectId}
-            onChange={(e) => {
-              const val = e.target.value;
-              setSelectedProjectId(val === 'all' ? 'all' : Number(val));
-            }}
-            className="select text-xs min-w-[220px] font-semibold text-brand-700 bg-brand-50/40 border-brand-200"
-            aria-label="Select Project"
-          >
-            <option value="all">
-              {user?.role === 'operations_manager' && !user?.can_access_amends
-                ? '🌟 My Assigned Projects'
-                : '🌟 All Projects (Every Project Amends)'}
-            </option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.department || 'Floorplan'} - {p.country || 'Global'})
-              </option>
-            ))}
-          </select>
+          {/* Custom Project Select with Search */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+              className="flex items-center justify-between text-xs min-w-[220px] max-w-[280px] px-3 py-1.5 font-semibold text-brand-700 bg-brand-50/40 border border-brand-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors hover:bg-brand-50"
+            >
+              <span className="truncate">
+                {selectedProjectId === ''
+                  ? 'Select a Project...'
+                  : selectedProjectData
+                  ? `${selectedProjectData.name} (${selectedProjectData.department || 'Floorplan'} - ${selectedProjectData.country || 'Global'})`
+                  : 'Select a Project...'}
+              </span>
+              <ChevronDown className={`w-3.5 h-3.5 ml-2 text-brand-500 flex-shrink-0 transition-transform ${projectDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {projectDropdownOpen && (
+              <div className="absolute z-50 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Search project by name or country..."
+                      value={projectSearch}
+                      onChange={(e) => setProjectSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm"
+                    />
+                  </div>
+                </div>
+                <div className="overflow-y-auto p-1 flex-1">
+                  {projects.filter(p => 
+                    p.name.toLowerCase().includes(projectSearch.toLowerCase()) || 
+                    (p.department || '').toLowerCase().includes(projectSearch.toLowerCase()) ||
+                    (p.country || '').toLowerCase().includes(projectSearch.toLowerCase())
+                  ).length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                      <Search className="w-5 h-5 text-slate-300" />
+                      <span>No projects found matching "{projectSearch}"</span>
+                    </div>
+                  ) : (
+                    projects.filter(p => 
+                      p.name.toLowerCase().includes(projectSearch.toLowerCase()) || 
+                      (p.department || '').toLowerCase().includes(projectSearch.toLowerCase()) ||
+                      (p.country || '').toLowerCase().includes(projectSearch.toLowerCase())
+                    ).map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          setSelectedProjectId(p.id);
+                          setProjectDropdownOpen(false);
+                          setProjectSearch('');
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs rounded-md transition-colors flex items-center justify-between group ${
+                          selectedProjectId === p.id
+                            ? 'bg-brand-50 text-brand-700 font-bold'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate pr-2">
+                          {p.name} <span className="text-[10px] text-slate-400 font-normal ml-1 group-hover:text-slate-500">({p.department || 'Floorplan'} - {p.country || 'Global'})</span>
+                        </span>
+                        {selectedProjectId === p.id && <CheckCircle className="w-3.5 h-3.5 text-brand-600 flex-shrink-0" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Status Filter Tabs */}
           <div className="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
@@ -745,18 +841,72 @@ export default function AmendAssignmentDashboard() {
             ))}
           </div>
 
-          {/* Category Filter */}
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="select text-xs min-w-[140px]"
-            aria-label="Filter by Category"
-          >
-            <option value="all">All Categories</option>
-            <option value="Team Mistake">Team Mistake</option>
-            <option value="Request">Request</option>
-            <option value="Amender Mistake">Amender Mistake</option>
-          </select>
+          {/* Custom Category Select with Search */}
+          <div className="relative" ref={categoryDropdownRef}>
+            <button
+              onClick={() => setCategoryDropdownOpen(!categoryDropdownOpen)}
+              className="flex items-center justify-between text-xs min-w-[160px] px-3 py-1.5 font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors hover:bg-slate-50"
+            >
+              <span className="truncate">
+                {categoryFilter === 'all' ? 'All Categories' : categoryFilter}
+              </span>
+              <ChevronDown className={`w-3.5 h-3.5 ml-2 text-slate-400 flex-shrink-0 transition-transform ${categoryDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {categoryDropdownOpen && (
+              <div className="absolute z-50 mt-1 w-[220px] bg-white border border-slate-200 rounded-xl shadow-lg flex flex-col">
+                <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Search category..."
+                      value={categorySearch}
+                      onChange={(e) => setCategorySearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm"
+                    />
+                  </div>
+                </div>
+                <div className="overflow-y-auto p-1 max-h-[250px]">
+                  {[
+                    { value: 'all', label: 'All Categories' },
+                    { value: 'Team Mistake', label: 'Team Mistake' },
+                    { value: 'Request', label: 'Request' },
+                    { value: 'Amender Mistake', label: 'Amender Mistake' }
+                  ].filter(c => c.label.toLowerCase().includes(categorySearch.toLowerCase())).length === 0 ? (
+                    <div className="p-3 text-center text-xs text-slate-500">
+                      No categories found
+                    </div>
+                  ) : (
+                    [
+                      { value: 'all', label: 'All Categories' },
+                      { value: 'Team Mistake', label: 'Team Mistake' },
+                      { value: 'Request', label: 'Request' },
+                      { value: 'Amender Mistake', label: 'Amender Mistake' }
+                    ].filter(c => c.label.toLowerCase().includes(categorySearch.toLowerCase())).map((c) => (
+                      <button
+                        key={c.value}
+                        onClick={() => {
+                          setCategoryFilter(c.value);
+                          setCategoryDropdownOpen(false);
+                          setCategorySearch('');
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs rounded-md transition-colors flex items-center justify-between group ${
+                          categoryFilter === c.value
+                            ? 'bg-brand-50 text-brand-700 font-bold'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate">{c.label}</span>
+                        {categoryFilter === c.value && <CheckCircle className="w-3.5 h-3.5 text-brand-600 flex-shrink-0" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Search Box */}
           <div className="relative flex-1 min-w-[180px] max-w-xs">
@@ -779,21 +929,27 @@ export default function AmendAssignmentDashboard() {
           </div>
 
           {/* Date Filters */}
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="input text-xs h-8 w-36"
-            title="Start Date"
-          />
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">From</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="input text-xs h-8 w-[130px] px-2"
+              title="Start Date"
+            />
+          </div>
 
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="input text-xs h-8 w-36"
-            title="End Date"
-          />
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">To</label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="input text-xs h-8 w-[130px] px-2"
+              title="End Date"
+            />
+          </div>
 
           {(startDate || endDate || searchQuery || statusFilter !== 'all' || categoryFilter !== 'all') && (
             <button
@@ -830,7 +986,15 @@ export default function AmendAssignmentDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {loading ? (
+                {selectedProjectId === '' ? (
+                  <tr>
+                    <td colSpan={10} className="py-12 text-center text-slate-400">
+                      <Layers className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                      <p className="text-sm font-medium text-slate-600">No project selected</p>
+                      <p className="text-xs text-slate-400 mt-0.5">Please select a project from the dropdown to view amends</p>
+                    </td>
+                  </tr>
+                ) : loading ? (
                   <tr>
                     <td colSpan={10} className="py-12 text-center text-slate-400">
                       <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-brand-600" />

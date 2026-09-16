@@ -35,7 +35,7 @@ class UserController extends Controller
             $query->where(function ($q) use ($authUser) {
                 $q->where('id', $authUser->id)
                   ->orWhere(function ($sub) use ($authUser) {
-                      $sub->whereNotIn('role', ['project_manager', 'operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'client', 'amender', 'direct_amender']);
+                      $sub->whereNotIn('role', ['project_manager', 'operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'client']);
                       if ($authUser->team_id) {
                           $sub->where('team_id', $authUser->team_id);
                       } else {
@@ -51,7 +51,7 @@ class UserController extends Controller
                 // OM does not see other OMs, Directors, CEOs, HR, Accounts
                 $q->where('id', $authUser->id)
                   ->orWhere(function ($sub) use ($managedIds) {
-                      $sub->whereNotIn('role', ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'client', 'amender', 'direct_amender'])
+                      $sub->whereNotIn('role', ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'client'])
                           ->where(function ($wQ) use ($managedIds) {
                               $wQ->whereIn('project_id', $managedIds)
                                  ->orWhereHas('managedProjects', function ($pQ) use ($managedIds) {
@@ -206,7 +206,7 @@ class UserController extends Controller
             return response()->json(['message' => 'Only a Director can create or assign a Client account.'], 403);
         }
 
-        if (in_array($authUser->role, ['operations_manager', 'project_manager']) && in_array($data['role'] ?? '', ['csr', 'it', 'amender', 'direct_amender', 'hr', 'ceo', 'director', 'client', 'accounts_manager'])) {
+        if (in_array($authUser->role, ['operations_manager', 'project_manager']) && in_array($data['role'] ?? '', ['csr', 'it', 'hr', 'ceo', 'director', 'client', 'accounts_manager'])) {
             return response()->json(['message' => 'You do not have permission to assign this role.'], 403);
         }
 
@@ -304,8 +304,8 @@ class UserController extends Controller
                     }
                 }
 
-                // PM cannot edit PMs, OMs, Directors, CEOs, HR, Accounts, CSR, IT, Amenders, Clients
-                if (in_array($user->role, ['project_manager', 'operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'csr', 'it', 'client', 'amender', 'direct_amender'])) {
+                // PM cannot edit PMs, OMs, Directors, CEOs, HR, Accounts, CSR, IT, Clients
+                if (in_array($user->role, ['project_manager', 'operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'csr', 'it', 'client'])) {
                     $canEdit = false;
                 }
 
@@ -326,8 +326,8 @@ class UserController extends Controller
                     }
                 }
 
-                // OM cannot edit other OMs, Directors, CEOs, HR, Accounts, CSR, IT, Amenders, Clients
-                if (in_array($user->role, ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'csr', 'it', 'client', 'amender', 'direct_amender'])) {
+                // OM cannot edit other OMs, Directors, CEOs, HR, Accounts, CSR, IT, Clients
+                if (in_array($user->role, ['operations_manager', 'director', 'ceo', 'hr', 'accounts_manager', 'csr', 'it', 'client'])) {
                     $canEdit = false;
                 }
 
@@ -351,7 +351,7 @@ class UserController extends Controller
                 return response()->json(['message' => 'Only a Director can assign the Client role.'], 403);
             }
 
-            if (isset($data['role']) && in_array($authUser->role, ['operations_manager', 'project_manager']) && in_array($data['role'], ['csr', 'it', 'amender', 'direct_amender', 'hr', 'ceo', 'director', 'client', 'accounts_manager'])) {
+            if (isset($data['role']) && in_array($authUser->role, ['operations_manager', 'project_manager']) && in_array($data['role'], ['csr', 'it', 'hr', 'ceo', 'director', 'client', 'accounts_manager'])) {
                 return response()->json(['message' => 'You do not have permission to assign this role.'], 403);
             }
         }
