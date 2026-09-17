@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../../store/store';
 import { columnService, pmService, workflowService, projectService, userService } from '../../services';
@@ -6,7 +6,7 @@ import { useSmartPolling } from '../../hooks/useSmartPolling';
 import { useNewOrderHighlight } from '../../hooks/useNewOrderHighlight';
 import type { Order, ProjectColumn, User } from '../../types';
 import { AnimatedPage, StatusBadge, Button, useToast } from '../../components/ui';
-import { UserCheck, RefreshCw, Users, AlertTriangle, Search, X, Loader2, Eye, Clock } from 'lucide-react';
+import { UserCheck, RefreshCw, Users, AlertTriangle, Search, X, Loader2, Eye, Clock, ChevronDown, CheckCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ClockDisplay from '../../components/ClockDisplay';
 
@@ -32,6 +32,21 @@ export default function PMAssignment() {
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
   const [projectColumns, setProjectColumns] = useState<ProjectColumn[]>([]);
+
+  /* ── Searchable Dropdown State ── */
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState('');
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setProjectDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   /* ── Inline assign dropdown state ── */
   const [assignDropdown, setAssignDropdown] = useState<{ orderId: number; anchorRect?: DOMRect } | null>(null);
@@ -358,14 +373,70 @@ export default function PMAssignment() {
 
         {/* Project selector */}
         {projects.length > 1 && (
-          <select
-            value={selectedProject || ''}
-            onChange={e => setSelectedProject(Number(e.target.value))}
-            className="select text-sm"
-            aria-label="Select project"
-          >
-            {projects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <div className="relative" ref={dropdownRef}>
+            <button
+              onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+              className="flex items-center justify-between text-sm min-w-[280px] max-w-[320px] px-3 py-2 font-semibold bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors"
+            >
+              <span className="truncate">
+                {selectedProject
+                  ? projects.find(p => p.id === selectedProject) 
+                    ? projects.find(p => p.id === selectedProject)?.name
+                    : 'Select a project'
+                  : 'Select a project'}
+              </span>
+              <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${projectDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {projectDropdownOpen && (
+              <div className="absolute z-50 mt-1 w-[400px] bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Search project by name..."
+                      value={projectSearch}
+                      onChange={(e) => setProjectSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm"
+                    />
+                  </div>
+                </div>
+                <div className="overflow-y-auto p-1 flex-1">
+                  {projects.filter(p => 
+                    p.name.toLowerCase().includes(projectSearch.toLowerCase())
+                  ).length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                      <Search className="w-5 h-5 text-slate-300" />
+                      <span>No projects found</span>
+                    </div>
+                  ) : (
+                    projects.filter(p => 
+                      p.name.toLowerCase().includes(projectSearch.toLowerCase())
+                    ).map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          setSelectedProject(p.id);
+                          setProjectDropdownOpen(false);
+                          setProjectSearch('');
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                          selectedProject === p.id
+                            ? 'bg-brand-50 text-brand-700 font-bold'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate pr-2">{p.name}</span>
+                        {selectedProject === p.id && <CheckCircle className="w-4 h-4 text-brand-600 flex-shrink-0" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* ══════ ORDERS TABLE (LiveQA-style) ══════ */}

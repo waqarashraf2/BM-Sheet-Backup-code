@@ -9,7 +9,7 @@ import {
     ShieldCheck, Search, AlertTriangle, CheckCircle, BarChart3,
     Loader2, FileSearch, ClipboardList, RefreshCw, X, Calendar,
     TrendingUp, FolderKanban, Eye, Clock, Filter, FileText, Settings2,
-    Camera, Download,
+    Camera, Download, ChevronDown,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toJpeg } from 'html-to-image';
@@ -175,6 +175,28 @@ export default function InternalQADashboard() {
     const [detailLoading, setDetailLoading] = useState(false);
     const [screenshotLoading, setScreenshotLoading] = useState(false);
     const detailReportCardRef = useRef<HTMLDivElement>(null);
+
+    /* -- Searchable Dropdowns State -- */
+    const ordersDropdownRef = useRef<HTMLDivElement>(null);
+    const [ordersDropdownOpen, setOrdersDropdownOpen] = useState(false);
+    const [ordersProjectSearch, setOrdersProjectSearch] = useState('');
+
+    const detailDropdownRef = useRef<HTMLDivElement>(null);
+    const [detailDropdownOpen, setDetailDropdownOpen] = useState(false);
+    const [detailProjectSearch, setDetailProjectSearch] = useState('');
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (ordersDropdownRef.current && !ordersDropdownRef.current.contains(event.target as Node)) {
+                setOrdersDropdownOpen(false);
+            }
+            if (detailDropdownRef.current && !detailDropdownRef.current.contains(event.target as Node)) {
+                setDetailDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const captureDetailJpg = async () => {
         const element = detailReportCardRef.current;
@@ -674,16 +696,74 @@ export default function InternalQADashboard() {
 
                     {/* Project selector + status filters */}
                     <div className="flex flex-wrap items-center gap-2">
-                        <select
-                            value={String(selectedProject)}
-                            onChange={e => setSelectedProject(Number(e.target.value))}
-                            className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400 min-w-[200px]"
-                        >
-                            <option value="0">Select Project</option>
-                            {projects.map(p => (
-                                <option key={p.id} value={p.id}>{p.name}</option>
-                            ))}
-                        </select>
+                        <div className="relative" ref={ordersDropdownRef}>
+                            <button
+                                onClick={() => setOrdersDropdownOpen(!ordersDropdownOpen)}
+                                className="flex items-center justify-between text-sm min-w-[200px] max-w-[240px] px-3 py-2 font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors hover:bg-slate-50"
+                            >
+                                <span className="truncate">
+                                    {selectedProject
+                                        ? projects.find(p => p.id === selectedProject)?.name || 'Select Project'
+                                        : 'Select Project'}
+                                </span>
+                                <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${ordersDropdownOpen ? 'rotate-180' : ''}`} />
+                            </button>
+
+                            {ordersDropdownOpen && (
+                                <div className="absolute z-50 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                                    <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                                        <div className="relative">
+                                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                                            <input
+                                                type="text"
+                                                autoFocus
+                                                placeholder="Search project by name..."
+                                                value={ordersProjectSearch}
+                                                onChange={(e) => setOrdersProjectSearch(e.target.value)}
+                                                className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="overflow-y-auto p-1 flex-1">
+                                        <button
+                                            onClick={() => {
+                                                setSelectedProject(0);
+                                                setOrdersDropdownOpen(false);
+                                                setOrdersProjectSearch('');
+                                            }}
+                                            className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${selectedProject === 0 ? 'bg-brand-50 text-brand-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
+                                        >
+                                            Select Project
+                                        </button>
+                                        {projects.filter(p =>
+                                            p.name.toLowerCase().includes(ordersProjectSearch.toLowerCase())
+                                        ).length === 0 ? (
+                                            <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                                                <Search className="w-5 h-5 text-slate-300" />
+                                                <span>No projects found</span>
+                                            </div>
+                                        ) : (
+                                            projects.filter(p =>
+                                                p.name.toLowerCase().includes(ordersProjectSearch.toLowerCase())
+                                            ).map((p) => (
+                                                <button
+                                                    key={p.id}
+                                                    onClick={() => {
+                                                        setSelectedProject(p.id);
+                                                        setOrdersDropdownOpen(false);
+                                                        setOrdersProjectSearch('');
+                                                    }}
+                                                    className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${selectedProject === p.id ? 'bg-brand-50 text-brand-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
+                                                >
+                                                    <span className="truncate pr-2">{p.name}</span>
+                                                    {selectedProject === p.id && <CheckCircle className="w-4 h-4 text-brand-600 flex-shrink-0" />}
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
 
                         <div className="h-5 w-px bg-slate-200" />
 
@@ -949,11 +1029,74 @@ export default function InternalQADashboard() {
                     <div className="bg-white rounded-xl ring-1 ring-black/[0.04] shadow-sm overflow-hidden">
                         {/* Filters */}
                         <div className="flex flex-wrap items-center gap-2 p-4 border-b border-slate-100">
-                            <select value={String(detailProject)} onChange={e => setDetailProject(Number(e.target.value))}
-                                className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400 min-w-[200px]">
-                                <option value="0">Select Project</option>
-                                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                            </select>
+                            <div className="relative" ref={detailDropdownRef}>
+                                <button
+                                    onClick={() => setDetailDropdownOpen(!detailDropdownOpen)}
+                                    className="flex items-center justify-between text-sm min-w-[200px] max-w-[240px] px-3 py-2 font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors hover:bg-slate-50"
+                                >
+                                    <span className="truncate">
+                                        {detailProject
+                                            ? projects.find(p => p.id === detailProject)?.name || 'Select Project'
+                                            : 'Select Project'}
+                                    </span>
+                                    <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${detailDropdownOpen ? 'rotate-180' : ''}`} />
+                                </button>
+
+                                {detailDropdownOpen && (
+                                    <div className="absolute z-50 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                                        <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                                            <div className="relative">
+                                                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                                                <input
+                                                    type="text"
+                                                    autoFocus
+                                                    placeholder="Search project by name..."
+                                                    value={detailProjectSearch}
+                                                    onChange={(e) => setDetailProjectSearch(e.target.value)}
+                                                    className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="overflow-y-auto p-1 flex-1">
+                                            <button
+                                                onClick={() => {
+                                                    setDetailProject(0);
+                                                    setDetailDropdownOpen(false);
+                                                    setDetailProjectSearch('');
+                                                }}
+                                                className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${detailProject === 0 ? 'bg-brand-50 text-brand-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
+                                            >
+                                                Select Project
+                                            </button>
+                                            {projects.filter(p =>
+                                                p.name.toLowerCase().includes(detailProjectSearch.toLowerCase())
+                                            ).length === 0 ? (
+                                                <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                                                    <Search className="w-5 h-5 text-slate-300" />
+                                                    <span>No projects found</span>
+                                                </div>
+                                            ) : (
+                                                projects.filter(p =>
+                                                    p.name.toLowerCase().includes(detailProjectSearch.toLowerCase())
+                                                ).map((p) => (
+                                                    <button
+                                                        key={p.id}
+                                                        onClick={() => {
+                                                            setDetailProject(p.id);
+                                                            setDetailDropdownOpen(false);
+                                                            setDetailProjectSearch('');
+                                                        }}
+                                                        className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${detailProject === p.id ? 'bg-brand-50 text-brand-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
+                                                    >
+                                                        <span className="truncate pr-2">{p.name}</span>
+                                                        {detailProject === p.id && <CheckCircle className="w-4 h-4 text-brand-600 flex-shrink-0" />}
+                                                    </button>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                             <div className="flex items-center gap-1">
                                 <Calendar className="h-4 w-4 text-slate-400 shrink-0" />
                                 <input type="date" value={detailDateFrom} onChange={e => setDetailDateFrom(e.target.value)}

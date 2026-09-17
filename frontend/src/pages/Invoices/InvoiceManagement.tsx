@@ -4,7 +4,7 @@ import type { RootState } from '../../store/store';
 import { invoiceService, projectService } from '../../services';
 import type { Invoice, InvoiceItem, InvoiceStatus, InvoiceMonthlyQuantity } from '../../types';
 import { AnimatedPage, PageHeader, StatusBadge, Modal, Button, DataTable, FilterBar } from '../../components/ui';
-import { FileText, Plus, Eye, ChevronRight, DollarSign, TrendingUp, Printer, Pencil, Trash2, Lock, RefreshCw, Calendar, BarChart3, Zap, CheckCircle2 } from 'lucide-react';
+import { FileText, Plus, Eye, ChevronRight, DollarSign, TrendingUp, Printer, Pencil, Trash2, Lock, RefreshCw, Calendar, BarChart3, Zap, CheckCircle2, Search, ChevronDown, CheckCircle } from 'lucide-react';
 
 // ─── Static BM Studios constants ────────────────────────────────────
 const BM = {
@@ -295,6 +295,21 @@ export default function InvoiceManagement() {
   );
   const [qtyProjectId, setQtyProjectId] = useState('');
   const [qtyYear, setQtyYear] = useState(String(now.getFullYear()));
+
+  /* ── Searchable Dropdown State ── */
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState('');
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setProjectDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   const [monthlyData, setMonthlyData] = useState<InvoiceMonthlyQuantity[]>([]);
   const [qtyLoading, setQtyLoading] = useState(false);
   const [savingMonths, setSavingMonths] = useState<Set<number>>(new Set());
@@ -707,13 +722,82 @@ export default function InvoiceManagement() {
           {/* Project + Year selectors */}
           <div className="bg-white rounded-xl border border-slate-200/60 p-4">
             <div className="flex items-end gap-4 flex-wrap">
-              <div className="flex flex-col gap-1.5 min-w-60">
+              <div className="flex flex-col gap-1.5 min-w-[280px]">
                 <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Project</label>
-                <select value={qtyProjectId} onChange={e => setQtyProjectId(e.target.value)}
-                  className="px-3 py-2.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500">
-                  <option value="">Select project...</option>
-                  {projects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+                    className="flex w-full items-center justify-between px-3 py-2.5 text-sm border border-slate-200 rounded-lg bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-colors"
+                  >
+                    <span className="truncate">
+                      {qtyProjectId
+                        ? projects.find((p: any) => String(p.id) === qtyProjectId)?.name || 'Select project...'
+                        : 'Select project...'}
+                    </span>
+                    <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${projectDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {projectDropdownOpen && (
+                    <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                      <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                          <input
+                            type="text"
+                            autoFocus
+                            placeholder="Search project..."
+                            value={projectSearch}
+                            onChange={(e) => setProjectSearch(e.target.value)}
+                            className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-sm"
+                          />
+                        </div>
+                      </div>
+                      <div className="overflow-y-auto p-1 flex-1">
+                        <button
+                          onClick={() => {
+                            setQtyProjectId('');
+                            setProjectDropdownOpen(false);
+                            setProjectSearch('');
+                          }}
+                          className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
+                            qtyProjectId === '' ? 'bg-teal-50 text-teal-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          Select project...
+                        </button>
+                        {projects.filter(p => 
+                          p.name.toLowerCase().includes(projectSearch.toLowerCase())
+                        ).length === 0 ? (
+                          <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                            <Search className="w-5 h-5 text-slate-300" />
+                            <span>No projects found</span>
+                          </div>
+                        ) : (
+                          projects.filter(p => 
+                            p.name.toLowerCase().includes(projectSearch.toLowerCase())
+                          ).map((p) => (
+                            <button
+                              key={p.id}
+                              onClick={() => {
+                                setQtyProjectId(String(p.id));
+                                setProjectDropdownOpen(false);
+                                setProjectSearch('');
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                                qtyProjectId === String(p.id)
+                                  ? 'bg-teal-50 text-teal-700 font-bold'
+                                  : 'text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span className="truncate pr-2">{p.name}</span>
+                              {qtyProjectId === String(p.id) && <CheckCircle className="w-4 h-4 text-teal-600 flex-shrink-0" />}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Year</label>

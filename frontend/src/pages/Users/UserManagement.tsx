@@ -4,7 +4,7 @@ import type { RootState } from '../../store/store';
 import { userService, projectService } from '../../services';
 import type { User } from '../../types';
 import { AnimatedPage, PageHeader, StatusBadge, Modal, Button, DataTable, FilterBar } from '../../components/ui';
-import { Users as UsersIcon, Plus, Edit, Trash2, UserCheck, UserX, Shield, Activity, User as UserIcon, Mail, Lock, ChevronDown, ChevronLeft, ChevronRight, Globe, Building, Layers, UsersRound, Eye, EyeOff } from 'lucide-react';
+import { Users as UsersIcon, Plus, Edit, Trash2, UserCheck, UserX, Shield, Activity, User as UserIcon, Mail, Lock, ChevronDown, ChevronLeft, ChevronRight, Globe, Building, Layers, UsersRound, Eye, EyeOff, Search, Check } from 'lucide-react';
 
 const emptyForm = { name: '', email: '', machine_id: '', password: '', password_confirmation: '', role: 'drawer', project_id: '', project_ids: [] as number[], team_id: '', department: 'floor_plan', layer: '', can_access_amends: false };
 // FLAGS kept for future use: country flag emoji map
@@ -36,6 +36,28 @@ export default function UserManagement() {
 
   const searchRef = useRef(searchTerm);
   searchRef.current = searchTerm;
+
+  /* ── Custom Dropdown State for Filters ── */
+  const dropdownRefRole = useRef<HTMLDivElement>(null);
+  const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
+  const [roleSearch, setRoleSearch] = useState('');
+  
+  const dropdownRefProject = useRef<HTMLDivElement>(null);
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState('');
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRefRole.current && !dropdownRefRole.current.contains(event.target as Node)) {
+        setRoleDropdownOpen(false);
+      }
+      if (dropdownRefProject.current && !dropdownRefProject.current.contains(event.target as Node)) {
+        setProjectDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Load projects for filter dropdown
   useEffect(() => {
@@ -244,14 +266,146 @@ export default function UserManagement() {
       {/* Filters */}
       <FilterBar searchValue={searchTerm} onSearchChange={setSearchTerm} onSearchSubmit={handleSearch} searchPlaceholder="Search users..."
         filters={<>
-          <select value={selectedRole} onChange={e => handleRoleChange(e.target.value)} aria-label="Filter by role" className="px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all appearance-none cursor-pointer pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}>
-            <option value="all">All Roles</option>
-            {visibleRoleOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
-          <select value={selectedProjectId} onChange={e => handleProjectChange(e.target.value)} aria-label="Filter by project" className="px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all appearance-none cursor-pointer pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}>
-            <option value="all">All Projects</option>
-            {filterProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <div className="relative min-w-[160px]" ref={dropdownRefRole}>
+            <button
+              onClick={() => setRoleDropdownOpen(!roleDropdownOpen)}
+              className="flex w-full items-center justify-between px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all cursor-pointer"
+            >
+              <span className="truncate">
+                {selectedRole === 'all' ? 'All Roles' : visibleRoleOptions.find(r => r.value === selectedRole)?.label || 'All Roles'}
+              </span>
+              <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${roleDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {roleDropdownOpen && (
+              <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Search role..."
+                      value={roleSearch}
+                      onChange={(e) => setRoleSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-sm"
+                    />
+                  </div>
+                </div>
+                <div className="overflow-y-auto p-1 flex-1">
+                  <button
+                    onClick={() => {
+                      handleRoleChange('all');
+                      setRoleDropdownOpen(false);
+                      setRoleSearch('');
+                    }}
+                    className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
+                      selectedRole === 'all' ? 'bg-teal-50 text-teal-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    All Roles
+                  </button>
+                  {visibleRoleOptions.filter(r => r.label.toLowerCase().includes(roleSearch.toLowerCase()))
+                   .length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                      <Search className="w-5 h-5 text-slate-300" />
+                      <span>No roles found</span>
+                    </div>
+                  ) : (
+                    visibleRoleOptions.filter(r => r.label.toLowerCase().includes(roleSearch.toLowerCase()))
+                     .map((r) => (
+                      <button
+                        key={r.value}
+                        onClick={() => {
+                          handleRoleChange(r.value);
+                          setRoleDropdownOpen(false);
+                          setRoleSearch('');
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                          selectedRole === r.value
+                            ? 'bg-teal-50 text-teal-700 font-bold'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate pr-2">{r.label}</span>
+                        {selectedRole === r.value && <Check className="w-4 h-4 text-teal-600 flex-shrink-0" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="relative min-w-[160px]" ref={dropdownRefProject}>
+            <button
+              onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+              className="flex w-full items-center justify-between px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all cursor-pointer"
+            >
+              <span className="truncate">
+                {selectedProjectId === 'all' ? 'All Projects' : filterProjects.find(p => String(p.id) === selectedProjectId)?.name || 'All Projects'}
+              </span>
+              <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${projectDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {projectDropdownOpen && (
+              <div className="absolute z-50 mt-1 w-full min-w-[200px] bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col right-0 sm:right-auto sm:left-0">
+                <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Search project..."
+                      value={projectSearch}
+                      onChange={(e) => setProjectSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-sm"
+                    />
+                  </div>
+                </div>
+                <div className="overflow-y-auto p-1 flex-1">
+                  <button
+                    onClick={() => {
+                      handleProjectChange('all');
+                      setProjectDropdownOpen(false);
+                      setProjectSearch('');
+                    }}
+                    className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
+                      selectedProjectId === 'all' ? 'bg-teal-50 text-teal-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    All Projects
+                  </button>
+                  {filterProjects.filter(p => p.name.toLowerCase().includes(projectSearch.toLowerCase()) || (p as any).code?.toLowerCase().includes(projectSearch.toLowerCase()))
+                   .length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                      <Search className="w-5 h-5 text-slate-300" />
+                      <span>No projects found</span>
+                    </div>
+                  ) : (
+                    filterProjects.filter(p => p.name.toLowerCase().includes(projectSearch.toLowerCase()) || (p as any).code?.toLowerCase().includes(projectSearch.toLowerCase()))
+                     .map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          handleProjectChange(String(p.id));
+                          setProjectDropdownOpen(false);
+                          setProjectSearch('');
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                          selectedProjectId === String(p.id)
+                            ? 'bg-teal-50 text-teal-700 font-bold'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate pr-2">{p.name}{(p as any).code ? ` (${(p as any).code})` : ''}</span>
+                        {selectedProjectId === String(p.id) && <Check className="w-4 h-4 text-teal-600 flex-shrink-0" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <select value={perPage} onChange={e => { setPerPage(Number(e.target.value)); setCurrentPage(1); }} aria-label="Rows per page" className="px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 hover:border-slate-300 focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all">
             <option value={25}>25 / page</option>
             <option value={50}>50 / page</option>
