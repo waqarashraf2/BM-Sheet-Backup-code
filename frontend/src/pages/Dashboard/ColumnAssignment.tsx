@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import {
   ArrowDown,
@@ -11,6 +11,8 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
+  ChevronDown,
+  CheckCircle,
 } from 'lucide-react';
 import { AnimatedPage, Button, Input, PageHeader, useToast } from '../../components/ui';
 import { columnService, pmService, projectService } from '../../services';
@@ -44,6 +46,21 @@ export default function ColumnAssignment() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<ColumnFilter>('all');
   const [showOnlyChanged, setShowOnlyChanged] = useState(false);
+
+  /* ── Searchable Dropdown State ── */
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState('');
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setProjectDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const normalizeColumns = (cols: ProjectColumn[]) =>
     [...cols]
@@ -313,22 +330,76 @@ export default function ColumnAssignment() {
             </div>
 
             <div className="mt-5 space-y-4">
-              <div>
+              <div className="relative" ref={dropdownRef}>
                 <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                   Select Project
                 </label>
-                <select
-                  value={selectedProjectId || ''}
-                  onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-brand-400 focus:ring-4 focus:ring-brand-100"
+                <button
+                  onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+                  className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-brand-400 focus:ring-4 focus:ring-brand-100 hover:bg-slate-50"
                 >
-                  <option value="">Choose a project</option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.code ? `${project.code} - ` : ''}{project.name || `Project ${project.id}`}
-                    </option>
-                  ))}
-                </select>
+                  <span className="truncate">
+                    {selectedProjectId
+                      ? (projects.find(p => p.id === selectedProjectId)
+                          ? `${projects.find(p => p.id === selectedProjectId)?.code ? projects.find(p => p.id === selectedProjectId)?.code + ' - ' : ''}${projects.find(p => p.id === selectedProjectId)?.name || 'Project ' + selectedProjectId}`
+                          : 'Choose a project')
+                      : 'Choose a project'}
+                  </span>
+                  <ChevronDown className={`h-4 w-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${projectDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {projectDropdownOpen && (
+                  <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                    <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <input
+                          type="text"
+                          autoFocus
+                          placeholder="Search project by name..."
+                          value={projectSearch}
+                          onChange={(e) => setProjectSearch(e.target.value)}
+                          className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="overflow-y-auto p-1 flex-1 max-h-[250px]">
+                      {projects.filter(p => 
+                        (p.name || '').toLowerCase().includes(projectSearch.toLowerCase()) || 
+                        (p.code || '').toLowerCase().includes(projectSearch.toLowerCase())
+                      ).length === 0 ? (
+                        <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                          <Search className="h-5 w-5 text-slate-300" />
+                          <span>No projects found</span>
+                        </div>
+                      ) : (
+                        projects.filter(p => 
+                          (p.name || '').toLowerCase().includes(projectSearch.toLowerCase()) || 
+                          (p.code || '').toLowerCase().includes(projectSearch.toLowerCase())
+                        ).map((project) => (
+                          <button
+                            key={project.id}
+                            onClick={() => {
+                              setSelectedProjectId(project.id);
+                              setProjectDropdownOpen(false);
+                              setProjectSearch('');
+                            }}
+                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm text-left transition-colors ${
+                              selectedProjectId === project.id
+                                ? 'bg-brand-50 text-brand-700 font-bold'
+                                : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="truncate pr-2">
+                              {project.code ? `${project.code} - ` : ''}{project.name || `Project ${project.id}`}
+                            </span>
+                            {selectedProjectId === project.id && <CheckCircle className="h-4 w-4 text-brand-600 flex-shrink-0" />}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {selectedProject ? (

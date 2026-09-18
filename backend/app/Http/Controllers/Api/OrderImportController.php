@@ -420,9 +420,28 @@ class OrderImportController extends Controller
         // Also auto-map any CSV header that exactly matches a known column
         $knownCols = ['order_number','client_reference','client_name','address','priority','received_at',
             'due_in','due_date','order_type','complexity_weight','estimated_minutes',
-            'total_raw_files','hdr_images_count','single_images_count','final_images_count','vf_count'];
+            'total_raw_files','hdr_images_count','single_images_count','final_images_count','edited_images_count','vf_count'];
+        
+        $aliasMap = [
+            'images' => 'total_raw_files',
+            'total_images' => 'total_raw_files',
+            'general_qa_image' => 'hdr_images_count',
+            'human_edit' => 'single_images_count',
+            'gdpr' => 'final_images_count',
+            'edited_imag' => 'edited_images_count',
+            'edited_images' => 'edited_images_count',
+        ];
+
         foreach ($headers as $h) {
-            $lh = strtolower(trim($h));
+            $lh = strtolower(str_replace([' ', '-'], '_', trim($h)));
+            
+            // Map alias if exists
+            if (isset($aliasMap[$lh]) && !isset($mapping[$lh])) {
+                $mapping[$aliasMap[$lh]] = $h;
+                continue;
+            }
+            
+            // Or exact match
             if (in_array($lh, $knownCols) && !isset($mapping[$lh])) {
                 $mapping[$lh] = $h;
             }
@@ -860,7 +879,17 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                 'hdr_images_count'    => 'hdr_images_count',
                 'single_images_count' => 'single_images_count',
                 'final_images_count'  => 'final_images_count',
+                'edited_images_count' => 'edited_images_count',
                 'vf_count'            => 'vf_count',
+                
+                // Aliases for Client Portal Headers
+                'images'              => 'total_raw_files',
+                'total_images'        => 'total_raw_files',
+                'general_qa_image'    => 'hdr_images_count',
+                'human_edit'          => 'single_images_count',
+                'gdpr'                => 'final_images_count',
+                'edited_imag'         => 'edited_images_count',
+                'edited_images'       => 'edited_images_count',
 
             ];
 
@@ -887,7 +916,7 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                         continue;
                     }
 
-                    if (in_array($dbColumn, ['hdr_images_count', 'single_images_count', 'final_images_count'], true)) {
+                    if (in_array($dbColumn, ['hdr_images_count', 'single_images_count', 'final_images_count', 'edited_images_count'], true)) {
                         // Only write the key when a real value is provided.
                         // Omitting it lets MySQL use the column DEFAULT (avoids NULL into NOT NULL columns).
                         if ($rawValue !== '' && $rawValue !== null) {
@@ -936,7 +965,7 @@ private function processCsvString(string $csvText, Project $project, OrderImport
                 return (int) preg_replace('/[^0-9\-]/', '', $raw);
             };
 
-            foreach (['total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count', 'vf_count'] as $imgCol) {
+            foreach (['total_raw_files', 'hdr_images_count', 'single_images_count', 'final_images_count', 'edited_images_count', 'vf_count'] as $imgCol) {
                 if (!in_array($imgCol, $columns, true)) {
                     continue;
                 }

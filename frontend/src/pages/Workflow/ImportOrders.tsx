@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 
 import { orderImportService, projectService } from '../../services';
 import { AnimatedPage, PageHeader, StatusBadge, Button, DataTable, Modal, useToast } from '../../components/ui';
-import { Upload, FileSpreadsheet, Server, RefreshCw, CheckCircle, XCircle, Save, Trash2, Pencil, Search, AlertTriangle } from 'lucide-react';
+import { Upload, FileSpreadsheet, Server, RefreshCw, CheckCircle, XCircle, Save, Trash2, Pencil, Search, AlertTriangle, ChevronDown } from 'lucide-react';
 import type { RootState } from '../../store/store';
 
 type ImportedOrder = {
@@ -60,6 +60,9 @@ export default function ImportOrders() {
   const [importResult, setImportResult] = useState<any>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState('');
   const [csvText, setCsvText] = useState('');
   const [defaultCsvHeader, setDefaultCsvHeader] = useState('');
   const [headerDraft, setHeaderDraft] = useState('');
@@ -86,6 +89,16 @@ export default function ImportOrders() {
   const [savingImportedOrder, setSavingImportedOrder] = useState(false);
   const [deletingImportedOrderId, setDeletingImportedOrderId] = useState<number | null>(null);
   const [deleteOrderTarget, setDeleteOrderTarget] = useState<ImportedOrder | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setProjectDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     projectService.list().then(res => {
@@ -412,11 +425,68 @@ export default function ImportOrders() {
 
       {/* Project selector */}
       {projects.length > 1 && (
-        <div className="mb-6">
+        <div className="mb-6 relative" ref={dropdownRef}>
           <label htmlFor="project-select" className="sr-only">Select Project</label>
-          <select id="project-select" value={selectedProject || ''} onChange={e => setSelectedProject(Number(e.target.value))} className="select text-sm" title="Select project for import">
-            {projects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <button
+            onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+            className="flex items-center justify-between text-sm min-w-[220px] max-w-sm px-3 py-2 font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors hover:bg-slate-50"
+          >
+            <span className="truncate">
+              {selectedProject
+                ? projects.find(p => p.id === selectedProject)?.name || 'Select a Project...'
+                : 'Select a Project...'}
+            </span>
+            <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${projectDropdownOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          {projectDropdownOpen && (
+            <div className="absolute z-50 mt-1 w-[320px] bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+              <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Search project by name..."
+                    value={projectSearch}
+                    onChange={(e) => setProjectSearch(e.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm"
+                  />
+                </div>
+              </div>
+              <div className="overflow-y-auto p-1 flex-1">
+                {projects.filter(p => 
+                  p.name.toLowerCase().includes(projectSearch.toLowerCase())
+                ).length === 0 ? (
+                  <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                    <Search className="w-5 h-5 text-slate-300" />
+                    <span>No projects found</span>
+                  </div>
+                ) : (
+                  projects.filter(p => 
+                    p.name.toLowerCase().includes(projectSearch.toLowerCase())
+                  ).map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedProject(p.id);
+                        setProjectDropdownOpen(false);
+                        setProjectSearch('');
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                        selectedProject === p.id
+                          ? 'bg-brand-50 text-brand-700 font-bold'
+                          : 'text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="truncate pr-2">{p.name}</span>
+                      {selectedProject === p.id && <CheckCircle className="w-4 h-4 text-brand-600 flex-shrink-0" />}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

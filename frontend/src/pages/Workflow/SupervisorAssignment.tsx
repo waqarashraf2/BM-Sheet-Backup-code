@@ -12,7 +12,7 @@ import ChecklistModal from '../../components/ChecklistModal';
 import {
   Users, User, RefreshCw, Info, Search, Clock, AlertTriangle,
   Loader2, X, BarChart3, PanelLeftClose, PanelLeftOpen,
-  Pencil, CheckSquare, Eye, ShieldCheck, ChevronDown, ChevronUp, Play, Download,
+  Pencil, CheckSquare, Eye, ShieldCheck, ChevronDown, ChevronUp, Play, Download, CheckCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ClockDisplay from '../../components/ClockDisplay';
@@ -196,6 +196,22 @@ export default function SupervisorAssignment() {
     top: number;
     width: number;
   } | null>(null);
+
+  /* ── Searchable Dropdown State ── */
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [queueDropdownOpen, setQueueDropdownOpen] = useState(false);
+  const [queueSearch, setQueueSearch] = useState('');
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setQueueDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectColumns, setProjectColumns] = useState<ProjectColumn[]>([]);
   const [projectTeams, setProjectTeams] = useState<Team[]>([]);
@@ -3656,10 +3672,73 @@ export default function SupervisorAssignment() {
 
             {/* Queue selector + controls */}
             <div className="flex flex-wrap items-center gap-2">
-              <select value={selectedQueue} onChange={e => { setSelectedQueue(e.target.value); }}
-                className="select text-sm min-w-[200px]" aria-label="Select queue">
-                {queues.map(q => <option key={q.queue_name} value={q.queue_name}>{q.queue_name} ({q.department} - {q.country})</option>)}
-              </select>
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setQueueDropdownOpen(!queueDropdownOpen)}
+                  className="flex items-center justify-between text-sm min-w-[280px] max-w-[320px] px-3 py-2 font-semibold bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors"
+                >
+                  <span className="truncate">
+                    {selectedQueue
+                      ? queues.find(q => q.queue_name === selectedQueue)
+                        ? (() => {
+                            const q = queues.find(q => q.queue_name === selectedQueue)!;
+                            return `${q.queue_name} (${q.department} - ${q.country})`;
+                          })()
+                        : 'Select a queue'
+                      : 'Select a queue'}
+                  </span>
+                  <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${queueDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {queueDropdownOpen && (
+                  <div className="absolute z-50 mt-1 w-[400px] bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                    <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                        <input
+                          type="text"
+                          autoFocus
+                          placeholder="Search queue by name..."
+                          value={queueSearch}
+                          onChange={(e) => setQueueSearch(e.target.value)}
+                          className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="overflow-y-auto p-1 flex-1">
+                      {queues.filter(q => 
+                        q.queue_name.toLowerCase().includes(queueSearch.toLowerCase())
+                      ).length === 0 ? (
+                        <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                          <Search className="w-5 h-5 text-slate-300" />
+                          <span>No queues found</span>
+                        </div>
+                      ) : (
+                        queues.filter(q => 
+                          q.queue_name.toLowerCase().includes(queueSearch.toLowerCase())
+                        ).map((q) => (
+                          <button
+                            key={q.queue_name}
+                            onClick={() => {
+                              setSelectedQueue(q.queue_name);
+                              setQueueDropdownOpen(false);
+                              setQueueSearch('');
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                              selectedQueue === q.queue_name
+                                ? 'bg-brand-50 text-brand-700 font-bold'
+                                : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="truncate pr-2">{q.queue_name} ({q.department} - {q.country})</span>
+                            {selectedQueue === q.queue_name && <CheckCircle className="w-4 h-4 text-brand-600 flex-shrink-0" />}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Status filter buttons */}
               <div className="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">

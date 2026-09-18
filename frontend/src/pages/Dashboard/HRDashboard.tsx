@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -165,6 +165,42 @@ export default function HRDashboard() {
   const [isPartialExpanded, setIsPartialExpanded] = useState(false);
   const [projectId, setProjectId] = useState<string>('all');
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+
+  /* ── Searchable Dropdown State for Top Project Filter ── */
+  const dropdownRefTop = useRef<HTMLDivElement>(null);
+  const [projectDropdownTopOpen, setProjectDropdownTopOpen] = useState(false);
+  const [projectSearchTop, setProjectSearchTop] = useState('');
+
+  /* ── Searchable Dropdown State for Table Project Filter ── */
+  const dropdownRefTable = useRef<HTMLDivElement>(null);
+  const [projectDropdownTableOpen, setProjectDropdownTableOpen] = useState(false);
+  const [projectSearchTable, setProjectSearchTable] = useState('');
+
+  /* ── Custom Dropdown State for Role & Status Filters ── */
+  const dropdownRefRole = useRef<HTMLDivElement>(null);
+  const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
+  
+  const dropdownRefStatus = useRef<HTMLDivElement>(null);
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRefTop.current && !dropdownRefTop.current.contains(event.target as Node)) {
+        setProjectDropdownTopOpen(false);
+      }
+      if (dropdownRefTable.current && !dropdownRefTable.current.contains(event.target as Node)) {
+        setProjectDropdownTableOpen(false);
+      }
+      if (dropdownRefRole.current && !dropdownRefRole.current.contains(event.target as Node)) {
+        setRoleDropdownOpen(false);
+      }
+      if (dropdownRefStatus.current && !dropdownRefStatus.current.contains(event.target as Node)) {
+        setStatusDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   const [userMonth, setUserMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [loadingUsers, setLoadingUsers] = useState(true);
@@ -949,18 +985,84 @@ export default function HRDashboard() {
             Employee Data
           </button>
         </div>
-        <select
-          value={projectId}
-          onChange={e => { setProjectId(e.target.value); setPage(1); }}
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none lg:w-72"
-        >
-          <option value="all">All Projects</option>
-          {projectOptions.map(project => (
-            <option key={project.id} value={project.id}>
-              {project.name}{project.code ? ` (${project.code})` : ''}
-            </option>
-          ))}
-        </select>
+        <div className="relative w-full lg:w-72" ref={dropdownRefTop}>
+          <button
+            onClick={() => setProjectDropdownTopOpen(!projectDropdownTopOpen)}
+            className="flex w-full items-center justify-between px-3 py-2.5 text-sm border border-slate-200 rounded-lg bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-colors"
+          >
+            <span className="truncate">
+              {projectId === 'all'
+                ? 'All Projects'
+                : projectOptions.find(p => String(p.id) === projectId)?.name || 'All Projects'}
+            </span>
+            <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${projectDropdownTopOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          {projectDropdownTopOpen && (
+            <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+              <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Search project..."
+                    value={projectSearchTop}
+                    onChange={(e) => setProjectSearchTop(e.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-sm"
+                  />
+                </div>
+              </div>
+              <div className="overflow-y-auto p-1 flex-1">
+                <button
+                  onClick={() => {
+                    setProjectId('all');
+                    setPage(1);
+                    setProjectDropdownTopOpen(false);
+                    setProjectSearchTop('');
+                  }}
+                  className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
+                    projectId === 'all' ? 'bg-teal-50 text-teal-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  All Projects
+                </button>
+                {projectOptions.filter(p => 
+                  p.name.toLowerCase().includes(projectSearchTop.toLowerCase()) || 
+                  (p.code && p.code.toLowerCase().includes(projectSearchTop.toLowerCase()))
+                ).length === 0 ? (
+                  <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                    <Search className="w-5 h-5 text-slate-300" />
+                    <span>No projects found</span>
+                  </div>
+                ) : (
+                  projectOptions.filter(p => 
+                    p.name.toLowerCase().includes(projectSearchTop.toLowerCase()) || 
+                    (p.code && p.code.toLowerCase().includes(projectSearchTop.toLowerCase()))
+                  ).map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setProjectId(String(p.id));
+                        setPage(1);
+                        setProjectDropdownTopOpen(false);
+                        setProjectSearchTop('');
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                        projectId === String(p.id)
+                          ? 'bg-teal-50 text-teal-700 font-bold'
+                          : 'text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="truncate pr-2">{p.name}{p.code ? ` (${p.code})` : ''}</span>
+                      {projectId === String(p.id) && <Check className="w-4 h-4 text-teal-600 flex-shrink-0" />}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {activeTab === 'dashboard' ? (
@@ -1400,49 +1502,196 @@ export default function HRDashboard() {
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
               />
             </div>
-            <select
-              value={role}
-              onChange={e => { setRole(e.target.value); setPage(1); }}
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
-            >
-              <option value="all">All Roles</option>
-              <option value="drawer">Drawer</option>
-              <option value="checker">Checker</option>
-              <option value="filler">Filler</option>
-              <option value="qa">QA</option>
-              <option value="designer">Designer</option>
-              <option value="csr">CSR</option>
-              <option value="it">IT</option>
-              <option value="project_manager">Project Manager</option>
-              <option value="operations_manager">Ops Manager</option>
-              <option value="director">Director</option>
-              <option value="accounts_manager">Accounts</option>
-              <option value="hr">HR</option>
-            </select>
-            <select
-              value={projectId}
-              onChange={e => { setProjectId(e.target.value); setPage(1); }}
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
-            >
-              <option value="all">All Projects</option>
-              {projectOptions.map(project => (
-                <option key={project.id} value={project.id}>
-                  {project.name}{project.code ? ` (${project.code})` : ''}
-                </option>
-              ))}
-            </select>
-            <select
-              value={status}
-              onChange={e => { setStatus(e.target.value); setPage(1); }}
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-teal-500 focus:bg-white focus:outline-none"
-            >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="present">Present</option>
-              <option value="absent">Absent</option>
-              <option value="absent_15_plus">Absent 15+ Days</option>
-            </select>
+            <div className="relative min-w-[160px]" ref={dropdownRefRole}>
+              <button
+                onClick={() => setRoleDropdownOpen(!roleDropdownOpen)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-sm border border-slate-200 rounded-lg bg-slate-50 hover:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-colors"
+              >
+                <span className="truncate">
+                  {role === 'all' ? 'All Roles' : [
+                    { value: 'drawer', label: 'Drawer' },
+                    { value: 'checker', label: 'Checker' },
+                    { value: 'filler', label: 'Filler' },
+                    { value: 'qa', label: 'QA' },
+                    { value: 'designer', label: 'Designer' },
+                    { value: 'csr', label: 'CSR' },
+                    { value: 'it', label: 'IT' },
+                    { value: 'project_manager', label: 'Project Manager' },
+                    { value: 'operations_manager', label: 'Ops Manager' },
+                    { value: 'director', label: 'Director' },
+                    { value: 'accounts_manager', label: 'Accounts' },
+                    { value: 'hr', label: 'HR' }
+                  ].find(r => r.value === role)?.label || 'All Roles'}
+                </span>
+                <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${roleDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {roleDropdownOpen && (
+                <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                  <div className="overflow-y-auto p-1 flex-1">
+                    {[
+                      { value: 'all', label: 'All Roles' },
+                      { value: 'drawer', label: 'Drawer' },
+                      { value: 'checker', label: 'Checker' },
+                      { value: 'filler', label: 'Filler' },
+                      { value: 'qa', label: 'QA' },
+                      { value: 'designer', label: 'Designer' },
+                      { value: 'csr', label: 'CSR' },
+                      { value: 'it', label: 'IT' },
+                      { value: 'project_manager', label: 'Project Manager' },
+                      { value: 'operations_manager', label: 'Ops Manager' },
+                      { value: 'director', label: 'Director' },
+                      { value: 'accounts_manager', label: 'Accounts' },
+                      { value: 'hr', label: 'HR' }
+                    ].map((r) => (
+                      <button
+                        key={r.value}
+                        onClick={() => {
+                          setRole(r.value);
+                          setPage(1);
+                          setRoleDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                          role === r.value
+                            ? 'bg-teal-50 text-teal-700 font-bold'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate pr-2">{r.label}</span>
+                        {role === r.value && <Check className="w-4 h-4 text-teal-600 flex-shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="relative min-w-[200px]" ref={dropdownRefTable}>
+              <button
+                onClick={() => setProjectDropdownTableOpen(!projectDropdownTableOpen)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-sm border border-slate-200 rounded-lg bg-slate-50 hover:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-colors"
+              >
+                <span className="truncate">
+                  {projectId === 'all'
+                    ? 'All Projects'
+                    : projectOptions.find(p => String(p.id) === projectId)?.name || 'All Projects'}
+                </span>
+                <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${projectDropdownTableOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {projectDropdownTableOpen && (
+                <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                  <div className="p-2 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="Search project..."
+                        value={projectSearchTable}
+                        onChange={(e) => setProjectSearchTable(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="overflow-y-auto p-1 flex-1">
+                    <button
+                      onClick={() => {
+                        setProjectId('all');
+                        setPage(1);
+                        setProjectDropdownTableOpen(false);
+                        setProjectSearchTable('');
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
+                        projectId === 'all' ? 'bg-teal-50 text-teal-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      All Projects
+                    </button>
+                    {projectOptions.filter(p => 
+                      p.name.toLowerCase().includes(projectSearchTable.toLowerCase()) || 
+                      (p.code && p.code.toLowerCase().includes(projectSearchTable.toLowerCase()))
+                    ).length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                        <Search className="w-5 h-5 text-slate-300" />
+                        <span>No projects found</span>
+                      </div>
+                    ) : (
+                      projectOptions.filter(p => 
+                        p.name.toLowerCase().includes(projectSearchTable.toLowerCase()) || 
+                        (p.code && p.code.toLowerCase().includes(projectSearchTable.toLowerCase()))
+                      ).map((p) => (
+                        <button
+                          key={p.id}
+                          onClick={() => {
+                            setProjectId(String(p.id));
+                            setPage(1);
+                            setProjectDropdownTableOpen(false);
+                            setProjectSearchTable('');
+                          }}
+                          className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                            projectId === String(p.id)
+                              ? 'bg-teal-50 text-teal-700 font-bold'
+                              : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="truncate pr-2">{p.name}{p.code ? ` (${p.code})` : ''}</span>
+                          {projectId === String(p.id) && <Check className="w-4 h-4 text-teal-600 flex-shrink-0" />}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="relative min-w-[160px]" ref={dropdownRefStatus}>
+              <button
+                onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-sm border border-slate-200 rounded-lg bg-slate-50 hover:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-colors"
+              >
+                <span className="truncate">
+                  {status === 'all' ? 'All Status' : [
+                    { value: 'active', label: 'Active' },
+                    { value: 'inactive', label: 'Inactive' },
+                    { value: 'present', label: 'Present' },
+                    { value: 'absent', label: 'Absent' },
+                    { value: 'absent_15_plus', label: 'Absent 15+ Days' }
+                  ].find(s => s.value === status)?.label || 'All Status'}
+                </span>
+                <ChevronDown className={`w-4 h-4 ml-2 text-slate-400 flex-shrink-0 transition-transform ${statusDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {statusDropdownOpen && (
+                <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                  <div className="overflow-y-auto p-1 flex-1">
+                    {[
+                      { value: 'all', label: 'All Status' },
+                      { value: 'active', label: 'Active' },
+                      { value: 'inactive', label: 'Inactive' },
+                      { value: 'present', label: 'Present' },
+                      { value: 'absent', label: 'Absent' },
+                      { value: 'absent_15_plus', label: 'Absent 15+ Days' }
+                    ].map((s) => (
+                      <button
+                        key={s.value}
+                        onClick={() => {
+                          setStatus(s.value);
+                          setPage(1);
+                          setStatusDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group ${
+                          status === s.value
+                            ? 'bg-teal-50 text-teal-700 font-bold'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate pr-2">{s.label}</span>
+                        {status === s.value && <Check className="w-4 h-4 text-teal-600 flex-shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
               <Calendar className="h-4 w-4" />
               <input
