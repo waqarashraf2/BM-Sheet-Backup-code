@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import apiClient from '../../services/api';
-import { Package, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { Package, ChevronDown, ChevronUp, Loader2, Calendar } from 'lucide-react';
 
 /* ================= TYPES ================= */
 
@@ -869,51 +869,53 @@ const ProjectsView: React.FC = () => {
                 }
             `}</style>
 
-            {/* DATE FILTERS */}
-            <div className="mb-4 px-4 md:px-0">
-                <div className="bg-white rounded-xl ring-1 ring-black/[0.04] shadow-sm p-4">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        {/* Date Inputs */}
-                        <div className="flex flex-col md:flex-row gap-3">
-                            <>
-                                <div className="flex flex-col">
-                                    <label className="text-xs md:text-sm font-medium text-slate-700 mb-1">Start Date</label>
-                                    <input
-                                        type="date"
-                                        value={startDate || ''}
-                                        onChange={(e) => setStartDate(e.target.value)}
-                                        className="px-3 py-2 border border-slate-200 rounded-md text-sm"
-                                    />
-                                </div>
-                                <div className="flex flex-col">
-                                    <label className="text-xs md:text-sm font-medium text-slate-700 mb-1">End Date</label>
-                                    <input
-                                        type="date"
-                                        value={endDate}
-                                        onChange={(e) => setEndDate(e.target.value)}
-                                        className="px-3 py-2 border border-slate-200 rounded-md text-sm"
-                                    />
-                                </div>
-                            </>
-                        </div>
-                        <div className="w-full rounded-xl border border-violet-200 bg-violet-50 p-3 lg:w-64">
-                            <div className="flex items-center gap-2 mb-2">
-                                <Package className="h-4 w-4 text-violet-700" />
+            {/* DATE FILTERS & TOP WIDGETS */}
+            <div className="mb-3 px-4 md:px-0 relative">
+                {/* 1. Project Count (Country-wise) positioned at Top-Right in the upper empty header area */}
+                <div className="flex justify-end lg:absolute lg:right-0 lg:-top-[112px] mb-3 lg:mb-0 pointer-events-auto z-10">
+                    <div className="w-full lg:w-72 rounded-xl border border-violet-200/90 bg-violet-50/95 p-2.5 shadow-sm">
+                        <div className="flex items-center justify-between gap-2 mb-1.5 pb-1 border-b border-violet-200/60">
+                            <div className="flex items-center gap-1.5">
+                                <Package className="h-3.5 w-3.5 text-violet-700" />
                                 <h3 className="text-xs font-semibold text-violet-900">Project Count (Country-wise)</h3>
                             </div>
-                            <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
-                                {countries.length > 0 ? (
-                                    countries.map((item) => (
-                                        <div key={`received-${item.country}`} className="flex items-center justify-between gap-3 text-[11px]">
-                                            <span className="text-violet-900 truncate">{item.country}</span>
-                                            <span className="font-semibold text-violet-800">{item.projects_count ?? item.project_count ?? item.projects?.length ?? 0}</span>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="text-[11px] text-violet-700">No country data</div>
-                                )}
-                            </div>
                         </div>
+                        <div className="max-h-24 overflow-y-auto space-y-0.5 pr-1">
+                            {countries.length > 0 ? (
+                                countries.map((item) => (
+                                    <div key={`received-${item.country}`} className="flex items-center justify-between gap-3 text-[11px] py-0.5 px-1 rounded hover:bg-violet-100/50 transition-colors">
+                                        <span className="text-violet-900 truncate font-medium">{item.country}</span>
+                                        <span className="font-bold text-violet-800">{item.projects_count ?? item.project_count ?? item.projects?.length ?? 0}</span>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-[11px] text-violet-700 py-0.5">No country data</div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* 2. Compact Date Filters on Left */}
+                <div className="flex flex-wrap items-center gap-2.5 bg-white p-2 px-3.5 rounded-xl border border-slate-200/90 shadow-sm w-fit">
+                    <div className="flex items-center gap-2">
+                        <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                        <span className="text-xs font-semibold text-slate-600">Start Date:</span>
+                        <input
+                            type="date"
+                            value={startDate || ''}
+                            onChange={(e) => setStartDate(e.target.value)}
+                            className="px-2.5 py-1 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-teal-500 bg-slate-50/70"
+                        />
+                    </div>
+                    <div className="w-px h-4 bg-slate-200 hidden sm:block" />
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-600">End Date:</span>
+                        <input
+                            type="date"
+                            value={endDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                            className="px-2.5 py-1 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-teal-500 bg-slate-50/70"
+                        />
                     </div>
                 </div>
             </div>

@@ -153,6 +153,7 @@ export default function SupervisorAssignment() {
   const [selectedWorker, setSelectedWorker] = useState<number | null>(null);
   const [workerRoleFilter, setWorkerRoleFilter] = useState<string | null>(null);
   const [globalRoleSort, setGlobalRoleSort] = useState<'drawer' | 'checker' | 'filler' | 'qa' | null>(null);
+  const [planTypeSort, setPlanTypeSort] = useState<'asc' | 'desc' | null>(null);
   const [exportMonth, setExportMonth] = useState(new Date().toISOString().slice(0, 7));
   const [exportingType, setExportingType] = useState<'csv' | 'pdf' | null>(null);
 
@@ -320,6 +321,10 @@ export default function SupervisorAssignment() {
     if (endDate) params.end_date = endDate;
     if (selectedWorker) params.assigned_to = selectedWorker;
     if (globalRoleSort) params.role_sort_by = globalRoleSort;
+    if (planTypeSort) {
+      params.sort_by = 'plan_type';
+      params.sort_order = planTypeSort;
+    }
 
     const requestKey = JSON.stringify([selectedQueue, params]);
     if (activeDashboardRequestKeyRef.current === requestKey) return;
@@ -425,7 +430,7 @@ export default function SupervisorAssignment() {
         setRefreshing(false);
       }
     }
-  }, [selectedQueue, statusFilter, debouncedSearchQuery, startDate, endDate, selectedWorker, globalRoleSort]);
+  }, [selectedQueue, statusFilter, debouncedSearchQuery, startDate, endDate, selectedWorker, globalRoleSort, planTypeSort]);
 
   useEffect(() => {
     const filterKey = JSON.stringify([
@@ -436,6 +441,7 @@ export default function SupervisorAssignment() {
       endDate,
       selectedWorker,
       globalRoleSort,
+      planTypeSort,
     ]);
     const filtersChanged = dashboardFilterKeyRef.current !== filterKey;
     dashboardFilterKeyRef.current = filterKey;
@@ -452,6 +458,7 @@ export default function SupervisorAssignment() {
     endDate,
     globalRoleSort,
     loadData,
+    planTypeSort,
     selectedQueue,
     selectedWorker,
     startDate,
@@ -973,6 +980,18 @@ export default function SupervisorAssignment() {
     return null;
   }, [effectiveProjectId, projectTz]);
   const sortedOrders = useMemo(() => {
+    if (planTypeSort) {
+      return [...displayedOrders].sort((a, b) => {
+        const aVal = (a.plan_type || '').toString().trim().toLowerCase();
+        const bVal = (b.plan_type || '').toString().trim().toLowerCase();
+        if (!aVal && !bVal) return 0;
+        if (!aVal) return 1;
+        if (!bVal) return -1;
+        const cmp = aVal.localeCompare(bVal);
+        return planTypeSort === 'asc' ? cmp : -cmp;
+      });
+    }
+
     const shouldSortByRemainingTime = effectiveProjectId === 1 || effectiveProjectId === 2 || effectiveProjectId === 3;
 
     if (!shouldSortByRemainingTime) {
@@ -989,7 +1008,7 @@ export default function SupervisorAssignment() {
 
       return aMs - bMs;
     });
-  }, [displayedOrders, effectiveProjectId, parseDueIn]);
+  }, [displayedOrders, effectiveProjectId, parseDueIn, planTypeSort]);
   /** Render remaining time badge with colour coding */
   const RemainingBadge = ({ dueIn, receivedAt }: { dueIn: string | null; receivedAt?: string | null }) => {
     const ms = parseDueIn(dueIn, receivedAt);
@@ -3704,10 +3723,11 @@ export default function SupervisorAssignment() {
                 {exportingType === 'pdf' ? 'Exporting PDF...' : 'Month PDF'}
               </Button>
 
-              {((startDate || endDate) || selectedWorker) && (
+              {((startDate || endDate) || selectedWorker || planTypeSort !== null) && (
                 <button onClick={() => {
                   setStartDate('');
                   setEndDate(''); setSelectedWorker(null); setSearchQuery(''); setStatusFilter('all');
+                  setPlanTypeSort(null);
                 }}
                   className="text-xs text-brand-600 hover:underline">Clear filters</button>
               )}
@@ -3937,14 +3957,42 @@ export default function SupervisorAssignment() {
                             />
                           </th>
                         )}
-                        {dynamicPrimaryColumns.map((column) => (
-                          <th
-                            key={column.key}
-                            className={`px-3 py-2 font-semibold ${column.headerClassName || 'text-left'}`}
-                          >
-                            {column.label}
-                          </th>
-                        ))}
+                        {dynamicPrimaryColumns.map((column) => {
+                          const isPlanTypeCol = column.key === 'plan_type';
+                          const isActiveSort = isPlanTypeCol && planTypeSort !== null;
+
+                          return (
+                            <th
+                              key={column.key}
+                              className={`px-3 py-2 font-semibold ${column.headerClassName || 'text-left'} ${
+                                isPlanTypeCol ? 'cursor-pointer select-none hover:bg-brand-600 transition-colors' : ''
+                              } ${isActiveSort ? 'bg-brand-600 ring-2 ring-white/80' : ''}`}
+                              onClick={() => {
+                                if (isPlanTypeCol) {
+                                  setPlanTypeSort((prev) => (prev === 'asc' ? 'desc' : prev === 'desc' ? null : 'asc'));
+                                }
+                              }}
+                              title={
+                                isPlanTypeCol
+                                  ? planTypeSort === 'asc'
+                                    ? 'Plan Type: Sorted Ascending (Click for Descending)'
+                                    : planTypeSort === 'desc'
+                                    ? 'Plan Type: Sorted Descending (Click to Clear)'
+                                    : 'Click to sort by Plan Type'
+                                  : undefined
+                              }
+                            >
+                              <div className="inline-flex items-center gap-1">
+                                <span>{column.label}</span>
+                                {isPlanTypeCol && (
+                                  <span className="text-xs">
+                                    {planTypeSort === 'asc' ? '▲' : planTypeSort === 'desc' ? '▼' : '⇅'}
+                                  </span>
+                                )}
+                              </div>
+                            </th>
+                          );
+                        })}
 
                         {showTeamNameColumn && (
                           <th className="px-3 py-2 text-left font-semibold">

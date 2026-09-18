@@ -102,7 +102,7 @@ export default function CEODashboard() {
         }
       />
 
-      <div className="flex items-center gap-1 mb-6 p-1 bg-slate-100 rounded-xl w-fit">
+      <div className="flex items-center gap-1 mb-3.5 p-1 bg-slate-100 rounded-xl w-fit">
         {tabs.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${activeTab === tab.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>

@@ -68,6 +68,7 @@ public function batchStatusReport(Request $request)
         $projectId = $request->query('project_id');
         $planType = trim((string) $request->query('plan_type', ''));
         $isPlanTypeFiltered = $planType !== '' && !in_array(strtolower($planType), ['all', 'total']);
+        $planTypePattern = '%' . strtolower($planType) . '%';
 
         $startDate = $request->query('start_date');
         $endDate = $request->query('end_date');
@@ -178,7 +179,7 @@ public function batchStatusReport(Request $request)
         }
 
         if ($isPlanTypeFiltered) {
-            $query->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]);
+            $query->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) LIKE ?', [$planTypePattern]);
         }
 
         $orders = $query->get();
@@ -197,7 +198,7 @@ public function batchStatusReport(Request $request)
         }
 
         if ($isPlanTypeFiltered) {
-            $statusWindowQuery->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]);
+            $statusWindowQuery->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) LIKE ?', [$planTypePattern]);
         }
 
         $statusWindowOrders = $statusWindowQuery->get();
@@ -286,7 +287,7 @@ public function batchStatusReport(Request $request)
                 ->where('received_at', '>=', $shiftStartLocal)
                 ->where('received_at', '<', $shiftEndLocal)
                 ->when($projectId, fn($q) => $q->where('project_id', $projectId))
-                ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]))
+                ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) LIKE ?', [$planTypePattern]))
                 ->where(function ($q) {
                     $q->whereNull('drawer_id')->orWhere('drawer_id', 0);
                 })
@@ -308,7 +309,7 @@ public function batchStatusReport(Request $request)
                 ->where('final_upload', 'yes')
                 ->where('received_at', '>=', $shiftStartLocal)
                 ->where('received_at', '<', $shiftEndLocal)
-                ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]))
+                ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) LIKE ?', [$planTypePattern]))
                 ->selectRaw('qa_name as name, COUNT(*) as done_count')
                 ->groupBy('qa_name')
                 ->pluck('done_count', 'name');
@@ -324,7 +325,7 @@ public function batchStatusReport(Request $request)
                 ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED'])
                 ->where('received_at', '>=', $shiftStartLocal)
                 ->where('received_at', '<', $shiftEndLocal)
-                ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]))
+                ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) LIKE ?', [$planTypePattern]))
                 ->selectRaw('qa_name as name, COUNT(*) as wip_count')
                 ->groupBy('qa_name')
                 ->pluck('wip_count', 'name');
@@ -374,7 +375,7 @@ public function batchStatusReport(Request $request)
             ->whereNotNull('due_in')
             ->whereRaw("{$batchDueInExpr} >= ?", [$batchNowPkt])
             ->whereNotIn('workflow_state', ['DELIVERED', 'CANCELLED', 'PENDING_BY_DRAWER'])
-            ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]));
+            ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) LIKE ?', [$planTypePattern]));
 
         if ($projectId) {
             $plansRemainingQuery->where('project_id', $projectId);
@@ -411,7 +412,7 @@ public function batchStatusReport(Request $request)
                 )
                 ->when(
                     $isPlanTypeFiltered,
-                    fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)])
+                    fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) LIKE ?', [$planTypePattern])
                 )
                 ->get()
         );
@@ -461,7 +462,7 @@ public function batchStatusReport(Request $request)
             ->where('received_at', '>=', $shiftStartLocal)
             ->where('received_at', '<', $shiftEndLocal)
             ->when($projectId, fn($q) => $q->where('project_id', $projectId))
-            ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) = ?', [strtolower($planType)]))
+            ->when($isPlanTypeFiltered, fn($q) => $q->whereRaw('LOWER(TRIM(COALESCE(plan_type, ""))) LIKE ?', [$planTypePattern]))
             ->whereNotNull('due_in')
             ->whereRaw("{$batchDueInExpr} >= ?", [$batchNowPkt])
             ->where(function ($q) {
@@ -4992,6 +4993,7 @@ $endDate = $request->input('end_date');
             'file_uploader_name' => 'file_uploader_name',
             'qa' => 'qa_name',
             'qa_name' => 'qa_name',
+            'plan_type' => 'plan_type',
         ];
         $sortColumn = $sortableColumns[$sortByInput] ?? null;
         $roleSortableColumns = [
@@ -5443,20 +5445,24 @@ if ($statusFilter === 'client_issue' || $statusFilter === 'action') {
         }
 
         if ($statusFilter === 'completed') {
-            $orderedQuery->reorder();
-            $orderedQuery
-                ->orderByRaw("COALESCE(delivered_at, completed_at, received_at) DESC")
-                ->orderBy('id', 'desc');
+            if ($sortColumn === null) {
+                $orderedQuery->reorder();
+                $orderedQuery
+                    ->orderByRaw("COALESCE(delivered_at, completed_at, received_at) DESC")
+                    ->orderBy('id', 'desc');
+            }
         } elseif ($useDueInFirstOrdering) {
-    $orderedQuery->reorder();
+            if ($sortColumn === null) {
+                $orderedQuery->reorder();
 
-    $orderedQuery
-        ->orderByRaw("CASE WHEN due_in IS NULL THEN 1 ELSE 0 END ASC")
-        ->orderByRaw("CAST({$dueInOrderExpr} AS DATETIME) ASC")
-        ->orderByRaw("{$priorityOrderExpr} ASC")
-        ->orderBy('received_at', 'asc')
-        ->orderBy('id', 'asc');
-} else {
+                $orderedQuery
+                    ->orderByRaw("CASE WHEN due_in IS NULL THEN 1 ELSE 0 END ASC")
+                    ->orderByRaw("CAST({$dueInOrderExpr} AS DATETIME) ASC")
+                    ->orderByRaw("{$priorityOrderExpr} ASC")
+                    ->orderBy('received_at', 'asc')
+                    ->orderBy('id', 'asc');
+            }
+        } else {
             $orderedQuery
                 ->orderByRaw("{$priorityOrderExpr} ASC")
                 ->orderByRaw("CASE WHEN due_in IS NOT NULL THEN TIMESTAMPDIFF(SECOND, NOW(), {$dueInOrderExpr}) ELSE 999999999 END ASC")

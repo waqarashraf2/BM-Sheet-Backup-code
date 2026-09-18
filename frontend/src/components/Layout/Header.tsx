@@ -10,7 +10,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import NotificationBell from '../Notifications/NotificationBell';
 import { useNotificationPolling } from '../../hooks/useNotificationPolling';
 import type { RootState } from '../../store/store';
-import rabiUlAwalImg from '../../assets/rabi_ul_awal.png';
 
 const PAGES = [
   { name: 'Dashboard', path: '/dashboard', keywords: 'home overview stats' },
@@ -74,20 +73,20 @@ export default function Header() {
 
         {/* Right */}
         <div className="flex items-center gap-4">
-          {/* Rabi ul Awal Banner with Username */}
-          <div className="flex items-center gap-2.5 px-3 py-1 bg-emerald-50/70 rounded-xl border border-emerald-100/70 select-none">
-            <img 
-              src={rabiUlAwalImg}
-              alt="Rabi ul Awal Mubarak" 
-              className="w-9 h-9 object-contain drop-shadow-sm"
-            />
+          {/* User Profile */}
+          <div className="flex items-center gap-2.5 px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200/60 select-none">
+            <div className="w-7 h-7 rounded-lg bg-teal-50 text-teal-700 font-bold text-xs flex items-center justify-center border border-teal-200/50">
+              {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+            </div>
             <div className="flex flex-col text-left">
-              <span className="text-[10px] font-bold text-slate-700 leading-tight">
+              <span className="text-xs font-semibold text-slate-700 leading-tight">
                 {user?.name || 'User'}
               </span>
-              <span className="text-[9px] font-semibold text-emerald-600 leading-tight uppercase tracking-wider">
-                Rabi ul Awal Mubarak
-              </span>
+              {user?.role && (
+                <span className="text-[10px] text-slate-400 capitalize leading-tight">
+                  {user.role.replace(/_/g, ' ')}
+                </span>
+              )}
             </div>
           </div>
 

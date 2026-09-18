@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import { setCredentials, setLoading as setAuthLoading } from '../../store/slices/authSlice';
@@ -6,16 +6,6 @@ import { authService } from '../../services';
 import { motion } from 'framer-motion';
 import { LogIn, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import BenchmarkLogo from '../../components/ui/BenchmarkLogo';
-import rabiUlAwalImg from '../../assets/rabi_ul_awal.png';
-
-interface FlyingFlag {
-  id: number;
-  x: number;
-  size: number;
-  delay: number;
-  duration: number;
-  opacity: number;
-}
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -25,20 +15,6 @@ export default function Login() {
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const dispatch = useDispatch();
-  const [flags, setFlags] = useState<FlyingFlag[]>([]);
-
-  useEffect(() => {
-    // Safely generate flags after mount to avoid server-side or layout hydration mismatches
-    const generated: FlyingFlag[] = Array.from({ length: 12 }).map((_, i) => ({
-      id: i,
-      x: Math.random() * 90 + 5, // Keep within 5% to 95% of screen width
-      size: Math.random() * 20 + 20, // 20px to 40px
-      delay: Math.random() * 6,
-      duration: Math.random() * 8 + 8, // 8s to 16s
-      opacity: Math.random() * 0.25 + 0.1, // Soft opacity so it doesn't block inputs
-    }));
-    setFlags(generated);
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,39 +39,6 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex relative overflow-hidden" style={{ backgroundColor: '#0d1f1e' }}>
-
-      {/* Background Floating Elements */}
-      <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
-        {flags.map((flag) => (
-          <motion.div
-            key={flag.id}
-            initial={{ y: '115vh', x: `${flag.x}vw`, opacity: 0 }}
-            animate={{
-              y: '-20vh',
-              opacity: [0, flag.opacity, flag.opacity, 0],
-              x: [
-                `${flag.x}vw`,
-                `${flag.x + (Math.random() * 8 - 4)}vw`,
-                `${flag.x + (Math.random() * 12 - 6)}vw`
-              ]
-            }}
-            transition={{
-              duration: flag.duration,
-              repeat: Infinity,
-              delay: flag.delay,
-              ease: 'linear'
-            }}
-            className="absolute select-none pointer-events-none"
-            style={{ width: flag.size }}
-          >
-            <img
-              src={rabiUlAwalImg}
-              alt="Rabi ul Awal Mubarak"
-              style={{ width: '100%', height: 'auto', display: 'block' }}
-            />
-          </motion.div>
-        ))}
-      </div>
 
       {/* Left panel - brand showcase */}
       <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden z-10" style={{ backgroundColor: '#0d1f1e' }}>
@@ -153,22 +96,9 @@ export default function Login() {
             <BenchmarkLogo size="md" />
           </div>
 
-          <div className="flex justify-between items-end pt-8 mb-10">
-            <div>
-              <h2 className="text-3xl font-bold text-slate-900 tracking-tight">Welcome back</h2>
-              <p className="text-slate-500 mt-2">Sign in to continue to your dashboard.</p>
-            </div>
-            {/* Rabi ul Awal element */}
-            <div className="flex flex-col items-center shrink-0 ml-4">
-              <img
-                src={rabiUlAwalImg}
-                alt="Rabi ul Awal Mubarak"
-                className="w-20 h-20 object-contain drop-shadow-md"
-              />
-              <span className="text-[10px] font-bold text-emerald-600 mt-1 uppercase tracking-wider whitespace-nowrap">
-                Rabi ul Awal Mubarak
-              </span>
-            </div>
+          <div className="mb-10">
+            <h2 className="text-3xl font-bold text-slate-900 tracking-tight">Welcome back</h2>
+            <p className="text-slate-500 mt-2">Sign in to continue to your dashboard.</p>
           </div>
 
           {error && (
