@@ -289,6 +289,7 @@ class ClientIssueController extends Controller
         $projectId = $request->query('project_id');
         $search = $request->query('search');
         $status = $request->query('status', 'all'); // 'all', 'waiting', 'in_progress', 'finished'
+        $month = $request->query('month'); // 'YYYY-MM'
 
         $query = ClientIssue::query()->with('project:id,name,code');
 
@@ -301,6 +302,20 @@ class ClientIssueController extends Controller
             }
         } elseif ($projectId) {
             $query->where('project_id', (int) $projectId);
+        }
+
+        if ($month && preg_match('/^\d{4}-\d{2}$/', $month)) {
+            try {
+                $startOfMonth = Carbon::createFromFormat('Y-m', $month)->startOfMonth();
+                $endOfMonth = Carbon::createFromFormat('Y-m', $month)->endOfMonth();
+                $query->where(function ($q) use ($startOfMonth, $endOfMonth) {
+                    $q->whereBetween('comment_entered_at', [$startOfMonth, $endOfMonth])
+                      ->orWhereBetween('created_at', [$startOfMonth, $endOfMonth])
+                      ->orWhereBetween('resumed_at', [$startOfMonth, $endOfMonth]);
+                });
+            } catch (\Throwable $e) {
+                // fallback if parse fails
+            }
         }
 
         if ($search) {
@@ -339,6 +354,7 @@ class ClientIssueController extends Controller
                 'reason' => $issue->reason,
                 'comment_text' => $issue->comment_text,
                 'comment_entered_at' => $issue->comment_entered_at,
+                'paused_at' => $issue->comment_entered_at ?? $issue->created_at,
                 'client_reply_text' => $issue->client_reply_text,
                 'client_replied_at' => $issue->client_replied_at,
                 'comment_to_reply_diff_minutes' => $issue->comment_to_reply_diff_minutes,
@@ -354,6 +370,12 @@ class ClientIssueController extends Controller
                 'client_reference' => $order->client_reference ?? '-',
                 'address' => $order->address ?? '-',
                 'workflow_state' => $order->workflow_state ?? 'CLIENT_ISSUE',
+                'received_at' => $timeline['received_at'] ?? ($order->received_at ?? $order->date ?? null),
+                'due_in' => $timeline['due_in'] ?? ($order->due_in ?? $order->due_date ?? null),
+                'delivered_at' => $timeline['delivered_at'] ?? ($order->delivered_at ?? $order->completed_at ?? null),
+                'is_delivered' => $isFinished,
+                'is_pending' => !$isFinished,
+                'metrics' => $timeline['metrics'] ?? [],
                 'updated_at' => $issue->updated_at,
                 'timeline' => $timeline,
                 'computed_status' => $computedStatus,

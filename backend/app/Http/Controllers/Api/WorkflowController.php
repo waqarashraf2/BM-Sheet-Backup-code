@@ -1372,6 +1372,31 @@ public function cancelOrder(Request $request, int $id)
             $order->update(['pre_hold_state' => null]);
         });
 
+        // Safely record resumed timestamp & hold duration on client_issues if present
+        try {
+            if (Schema::hasTable('client_issues')) {
+                $issue = \App\Models\ClientIssue::where('project_id', $order->project_id)
+                    ->where('order_id', $order->id)
+                    ->latest('updated_at')
+                    ->first();
+
+                if ($issue && empty($issue->resumed_at)) {
+                    $pauseStart = $issue->comment_entered_at ?? $issue->created_at;
+                    $diff = $pauseStart ? (int) round(\Carbon\Carbon::parse($pauseStart)->diffInMinutes(now())) : null;
+                    $updateData = ['resumed_at' => now()];
+                    if (Schema::hasColumn('client_issues', 'resumed_by')) {
+                        $updateData['resumed_by'] = $user->id;
+                    }
+                    if (Schema::hasColumn('client_issues', 'pause_to_resume_diff_minutes')) {
+                        $updateData['pause_to_resume_diff_minutes'] = $diff;
+                    }
+                    $issue->update($updateData);
+                }
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("[WorkflowController] Resume client issue log update warning: " . $e->getMessage());
+        }
+
         NotificationService::orderResumed($order, $user);
 
         return response()->json([

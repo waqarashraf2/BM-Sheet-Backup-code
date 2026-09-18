@@ -4014,11 +4014,14 @@ export default function SupervisorAssignment() {
                           />
                         );
                       })}
-                      {showTeamNameColumn ? <col style={{ width: '10%' }} /> : null}
+                      {showTeamNameColumn ? <col style={{ width: '9%' }} /> : null}
                       {visibleRoleColumns.map((column) => (
                         <col key={column.key} style={column.width ? { width: column.width } : undefined} />
                       ))}
-                      <col style={{ width: '8%' }} />
+                      <col style={{ width: queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action ? '7%' : '8%' }} />
+                      {queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action && (
+                        <col style={{ width: '5.5%' }} />
+                      )}
                     </colgroup>
 
 
@@ -4096,10 +4099,8 @@ export default function SupervisorAssignment() {
                           );
                         })}
                         <th className="px-2 py-2 text-center font-semibold">Status</th>
-                        
-                        {/* Action Column Header */}
                         {queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action && (
-                          <th className="px-3 py-2 text-center font-semibold text-brand-100">
+                          <th className="px-2 py-2 text-center font-semibold text-brand-100">
                             Action
                           </th>
                         )}
@@ -4332,19 +4333,21 @@ export default function SupervisorAssignment() {
                               );
                             })}
                             {/* Status */}
-                            <td className="px-2 py-2 text-center">
+                            <td className="px-2 py-2 text-center whitespace-nowrap">
                               <div className="inline-flex items-center justify-center gap-1">
-                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
-                                  : o.workflow_state?.includes('CLIENT_ISSUE') ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                  o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
+                                  : o.workflow_state?.includes('CLIENT_ISSUE') ? 'bg-amber-100 text-amber-800 border border-amber-300 font-bold'
                                   : o.workflow_state?.includes('HOLD') ? 'bg-red-100 text-red-700'
                                     : o.workflow_state?.includes('REJECTED') ? 'bg-rose-100 text-rose-700'
                                       : o.workflow_state?.includes('CHECK') ? 'bg-blue-100 text-blue-700'
                                         : o.workflow_state?.includes('QA') ? 'bg-purple-100 text-purple-700'
                                           : o.workflow_state?.includes('DRAW') ? 'bg-brand-100 text-brand-700'
                                             : 'bg-slate-100 text-slate-600'
-                                  }`}>
+                                }`}>
                                   {getStatusLabel(o.workflow_state)}
                                 </span>
+
                                 {canOpenOrderAssetLinks(o) && (
                                   <button
                                     type="button"
@@ -4352,7 +4355,7 @@ export default function SupervisorAssignment() {
                                       event.stopPropagation();
                                       openCompletedAssetLinks(o);
                                     }}
-                                    className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-500 hover:text-brand-700 hover:bg-brand-50 transition-colors"
+                                    className="inline-flex items-center justify-center w-5 h-5 rounded text-slate-500 hover:text-brand-700 hover:bg-brand-50 transition-colors"
                                     title="View order images"
                                     aria-label="View order images"
                                   >
@@ -4364,7 +4367,7 @@ export default function SupervisorAssignment() {
                                 <button
                                   onClick={() => handleResume(o.id, o.project_id)}
                                   disabled={resumingOrderId === o.id}
-                                  className="mt-1 flex items-center gap-1 mx-auto px-2 py-1 rounded-md text-[10px] font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors disabled:opacity-50"
+                                  className="mt-1 flex items-center gap-1 mx-auto px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors disabled:opacity-50 shadow-xs"
                                   title="Resume this order back to workflow"
                                 >
                                   {resumingOrderId === o.id ? (
@@ -4377,12 +4380,17 @@ export default function SupervisorAssignment() {
                               )}
                             </td>
 
-                            {/* Action Column Cell */}
+                            {/* Separate Action Column */}
                             {queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action && (
-                              <td className="px-3 py-2 text-center">
+                              <td className="px-1.5 py-2 text-center whitespace-nowrap">
                                 <Link
-                                  to={`/project-action/${o.project_id}/${o.id}`}
-                                  className="inline-flex items-center justify-center px-2 py-1 bg-brand-50 hover:bg-brand-100 text-brand-600 hover:text-brand-700 text-xs font-semibold rounded transition-colors border border-brand-200"
+                                  to={`/project-action/${o.project_id || effectiveProjectId}/${o.id}`}
+                                  className={`inline-flex items-center justify-center px-2 py-1 text-[11px] font-semibold rounded border transition-colors shadow-xs ${
+                                    o.workflow_state === 'CLIENT_ISSUE'
+                                      ? 'bg-amber-100 hover:bg-amber-200 text-amber-800 border-amber-300 font-bold'
+                                      : 'bg-brand-50 hover:bg-brand-100 text-brand-700 border-brand-200'
+                                  }`}
+                                  title="Action / Pause Order Log"
                                 >
                                   Action
                                 </Link>
