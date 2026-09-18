@@ -9,7 +9,7 @@ import {
   type MistakeSummaryTeam,
   type ProductChecklistItem,
 } from '../../services';
-import { AnimatedPage, PageHeader, StatCard, Button, Select, Modal, LiveQATableSkeleton, LiveQAStatsSkeleton } from '../../components/ui';
+import { AnimatedPage, PageHeader, StatCard, Button, Modal, LiveQATableSkeleton, LiveQAStatsSkeleton } from '../../components/ui';
 import LiveQAChecklistModal from '../../components/LiveQAChecklistModal';
 import {
   ShieldCheck, Search, AlertTriangle, CheckCircle, BarChart3,
