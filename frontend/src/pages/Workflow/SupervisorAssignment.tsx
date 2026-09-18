@@ -3648,27 +3648,33 @@ export default function SupervisorAssignment() {
                   </div>
                 </button>
                 <div>
-                  <h1 className="text-lg font-bold text-slate-900">Assignment Dashboard</h1>
-                  <p className="text-xs text-slate-500">{projectLabel || 'Select a queue to view assignments'}</p>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-lg font-bold text-slate-900">Assignment Dashboard</h1>
+                    <div className="group relative flex items-center">
+                      <Info className="w-4 h-4 text-slate-400 cursor-help hover:text-brand-600 transition-colors" />
+                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-64 p-2.5 bg-slate-800 text-white text-xs rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pointer-events-none">
+                        Auto-assignment is active. Orders are assigned based on WIP capacity.
+                        {selectedWorker && <span className="font-bold block mt-1 text-brand-200">Filtered by selected worker.</span>}
+                        <div className="absolute left-1/2 -translate-x-1/2 -top-1.5 border-[6px] border-transparent border-b-slate-800"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">{projectLabel || 'Select a queue to view assignments'}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-4">
-                <div className="text-right">
-                  <ClockDisplay timezone={projectTz} className="text-sm font-semibold text-slate-800 font-mono" />
+              <div className="flex items-center gap-3 bg-white border border-brand-400 rounded-xl pl-4 pr-1.5 py-1.5 shadow-[0_2px_12px_-4px_rgba(42,167,160,0.2)]">
+                <div className="text-right border-r border-slate-200 pr-3 py-0.5">
+                  <ClockDisplay timezone={projectTz} className="text-[13px] font-bold text-slate-700 font-mono tracking-tight" />
                 </div>
-                <Button variant="secondary" icon={RefreshCw} onClick={() => loadData(currentPage, true)} disabled={refreshing}>
+                <button
+                  onClick={() => loadData(currentPage, true)}
+                  disabled={refreshing}
+                  className="flex items-center gap-1.5 text-sm font-bold text-brand-700 bg-brand-50 hover:bg-brand-100 hover:text-brand-800 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
                   {refreshing ? 'Refreshing...' : 'Refresh'}
-                </Button>
+                </button>
               </div>
-            </div>
-
-            {/* Info banner */}
-            <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex items-start gap-3">
-              <Info className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
-              <p className="text-xs text-blue-700">
-                Auto-assignment is active. Orders are assigned based on WIP capacity.
-                {selectedWorker && <span className="font-bold"> Filtered by selected worker.</span>}
-              </p>
             </div>
 
             {/* Queue selector + controls */}
@@ -3761,47 +3767,54 @@ export default function SupervisorAssignment() {
               </div>
 
               {/* Date filter */}
-              <input
-                type="date"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-                className="input text-xs h-8 w-36"
-              />
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-semibold text-slate-600">From</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="input text-xs h-8 w-36"
+                />
+              </div>
 
-              <input
-                type="date"
-                value={endDate}
-                onChange={e => setEndDate(e.target.value)}
-                className="input text-xs h-8 w-36"
-              />
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-semibold text-slate-600">To</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={e => setEndDate(e.target.value)}
+                  className="input text-xs h-8 w-36"
+                />
+              </div>
 
-              <input
-                type="month"
-                value={exportMonth}
-                onChange={e => setExportMonth(e.target.value)}
-                className="input text-xs h-8 w-36"
-                title="Select month to export"
-              />
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-semibold text-slate-600">Date</label>
+                <input
+                  type="month"
+                  value={exportMonth}
+                  onChange={e => setExportMonth(e.target.value)}
+                  className="input text-xs h-8 w-36"
+                  title="Select month to export"
+                />
+              </div>
 
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={Download}
+              <button
                 onClick={() => handleMonthExport('csv')}
                 disabled={exportingType !== null}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors disabled:opacity-50 cursor-pointer"
               >
-                {exportingType === 'csv' ? 'Exporting CSV...' : 'Month CSV'}
-              </Button>
+                <Download className="w-3.5 h-3.5" />
+                {exportingType === 'csv' ? 'Exporting...' : 'CSV'}
+              </button>
 
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={Download}
+              <button
                 onClick={() => handleMonthExport('pdf')}
                 disabled={exportingType !== null}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors disabled:opacity-50 cursor-pointer"
               >
-                {exportingType === 'pdf' ? 'Exporting PDF...' : 'Month PDF'}
-              </Button>
+                <Download className="w-3.5 h-3.5" />
+                {exportingType === 'pdf' ? 'Exporting...' : 'PDF'}
+              </button>
 
               {((startDate || endDate) || selectedWorker || planTypeSort !== null) && (
                 <button onClick={() => {
@@ -3919,7 +3932,7 @@ export default function SupervisorAssignment() {
               </AnimatePresence>
             </div>
 
-            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
               <Button
                 type="button"
                 variant={bulkMode ? 'secondary' : 'primary'}
@@ -4015,13 +4028,13 @@ export default function SupervisorAssignment() {
                           />
                         );
                       })}
-                      {showTeamNameColumn ? <col style={{ width: '9%' }} /> : null}
+                      {showTeamNameColumn ? <col style={{ width: '10%' }} /> : null}
                       {visibleRoleColumns.map((column) => (
                         <col key={column.key} style={column.width ? { width: column.width } : undefined} />
                       ))}
-                      <col style={{ width: queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action ? '7%' : '8%' }} />
+                      <col style={{ width: '8%' }} /> {/* Status Column */}
                       {queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action && (
-                        <col style={{ width: '5.5%' }} />
+                        <col style={{ width: '8%' }} /> /* Action Column */
                       )}
                     </colgroup>
 
@@ -4100,8 +4113,10 @@ export default function SupervisorAssignment() {
                           );
                         })}
                         <th className="px-2 py-2 text-center font-semibold">Status</th>
+                        
+                        {/* Action Column Header */}
                         {queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action && (
-                          <th className="px-2 py-2 text-center font-semibold text-brand-100">
+                          <th className="px-3 py-2 text-center font-semibold">
                             Action
                           </th>
                         )}
@@ -4334,21 +4349,19 @@ export default function SupervisorAssignment() {
                               );
                             })}
                             {/* Status */}
-                            <td className="px-2 py-2 text-center whitespace-nowrap">
+                            <td className="px-2 py-2 text-center">
                               <div className="inline-flex items-center justify-center gap-1">
-                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                                  o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
-                                  : o.workflow_state?.includes('CLIENT_ISSUE') ? 'bg-amber-100 text-amber-800 border border-amber-300 font-bold'
+                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${o.workflow_state?.includes('COMPLETE') || o.workflow_state?.includes('DELIVER') ? 'bg-green-100 text-green-700'
+                                  : o.workflow_state?.includes('CLIENT_ISSUE') ? 'bg-amber-100 text-amber-800 border border-amber-200'
                                   : o.workflow_state?.includes('HOLD') ? 'bg-red-100 text-red-700'
                                     : o.workflow_state?.includes('REJECTED') ? 'bg-rose-100 text-rose-700'
                                       : o.workflow_state?.includes('CHECK') ? 'bg-blue-100 text-blue-700'
                                         : o.workflow_state?.includes('QA') ? 'bg-purple-100 text-purple-700'
                                           : o.workflow_state?.includes('DRAW') ? 'bg-brand-100 text-brand-700'
                                             : 'bg-slate-100 text-slate-600'
-                                }`}>
+                                  }`}>
                                   {getStatusLabel(o.workflow_state)}
                                 </span>
-
                                 {canOpenOrderAssetLinks(o) && (
                                   <button
                                     type="button"
@@ -4356,7 +4369,7 @@ export default function SupervisorAssignment() {
                                       event.stopPropagation();
                                       openCompletedAssetLinks(o);
                                     }}
-                                    className="inline-flex items-center justify-center w-5 h-5 rounded text-slate-500 hover:text-brand-700 hover:bg-brand-50 transition-colors"
+                                    className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-500 hover:text-brand-700 hover:bg-brand-50 transition-colors"
                                     title="View order images"
                                     aria-label="View order images"
                                   >
@@ -4368,7 +4381,7 @@ export default function SupervisorAssignment() {
                                 <button
                                   onClick={() => handleResume(o.id, o.project_id)}
                                   disabled={resumingOrderId === o.id}
-                                  className="mt-1 flex items-center gap-1 mx-auto px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors disabled:opacity-50 shadow-xs"
+                                  className="mt-1 flex items-center gap-1 mx-auto px-2 py-1 rounded-md text-[10px] font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors disabled:opacity-50"
                                   title="Resume this order back to workflow"
                                 >
                                   {resumingOrderId === o.id ? (
@@ -4381,17 +4394,12 @@ export default function SupervisorAssignment() {
                               )}
                             </td>
 
-                            {/* Separate Action Column */}
+                            {/* Action Column Cell */}
                             {queues.flatMap(q => q.projects || []).find(p => p.id === effectiveProjectId)?.action && (
-                              <td className="px-1.5 py-2 text-center whitespace-nowrap">
+                              <td className="px-3 py-2 text-center">
                                 <Link
-                                  to={`/project-action/${o.project_id || effectiveProjectId}/${o.id}`}
-                                  className={`inline-flex items-center justify-center px-2 py-1 text-[11px] font-semibold rounded border transition-colors shadow-xs ${
-                                    o.workflow_state === 'CLIENT_ISSUE'
-                                      ? 'bg-amber-100 hover:bg-amber-200 text-amber-800 border-amber-300 font-bold'
-                                      : 'bg-brand-50 hover:bg-brand-100 text-brand-700 border-brand-200'
-                                  }`}
-                                  title="Action / Pause Order Log"
+                                  to={`/project-action/${o.project_id}/${o.id}`}
+                                  className="inline-flex items-center justify-center px-2 py-1 bg-brand-50 hover:bg-brand-100 text-brand-600 hover:text-brand-700 text-xs font-semibold rounded transition-colors border border-brand-200"
                                 >
                                   Action
                                 </Link>
