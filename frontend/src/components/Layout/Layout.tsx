@@ -12,7 +12,7 @@ export default function Layout() {
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <Header />
         <main className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50">
-          <div className="max-w-[1440px] mx-auto px-6 py-6">
+          <div className="max-w-[1440px] mx-auto px-1 py-3">
             <Outlet />
           </div>
         </main>
