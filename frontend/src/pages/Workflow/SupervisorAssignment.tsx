@@ -3478,11 +3478,11 @@ export default function SupervisorAssignment() {
         <AnimatePresence>
           {sidebarOpen && (
             <motion.aside
-              initial={{ width: 0, opacity: 0 }} animate={{ width: 300, opacity: 1 }} exit={{ width: 0, opacity: 0 }}
+              initial={{ width: 0, opacity: 0 }} animate={{ width: 260, opacity: 1 }} exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.25, ease: 'easeInOut' }}
               className="flex-shrink-0 overflow-hidden hidden lg:block"
             >
-              <div className="w-[300px] h-full bg-white rounded-xl ring-1 ring-black/[0.04] flex flex-col mr-4">
+              <div className="w-[260px] h-full bg-white rounded-xl ring-1 ring-black/[0.04] flex flex-col mr-2">
                 {/* Header */}
                 <div className="p-4 border-b border-slate-100">
                   <div className="flex items-center gap-2 mb-3">
@@ -3494,19 +3494,19 @@ export default function SupervisorAssignment() {
                   {/* Quick Stats Grid */}
                   <div className="grid grid-cols-4 gap-2 mb-3">
                     <div className="text-center p-2 bg-green-50 rounded-lg">
-                      <div className="text-lg font-bold text-green-600">{onlineCount}</div>
+                      <div className="text-base font-semibold text-green-600">{onlineCount}</div>
                       <div className="text-[10px] text-green-600">Online</div>
                     </div>
                     <div className="text-center p-2 bg-rose-50 rounded-lg">
-                      <div className="text-lg font-bold text-rose-600">{absentCount}</div>
+                      <div className="text-base font-semibold text-rose-600">{absentCount}</div>
                       <div className="text-[10px] text-rose-600">Absent</div>
                     </div>
                     <div className="text-center p-2 bg-amber-50 rounded-lg">
-                      <div className="text-lg font-bold text-amber-600">{wipCount}</div>
+                      <div className="text-base font-semibold text-amber-600">{wipCount}</div>
                       <div className="text-[10px] text-amber-600">WIP</div>
                     </div>
                     <div className="text-center p-2 bg-blue-50 rounded-lg">
-                      <div className="text-lg font-bold text-blue-600">{doneToday}</div>
+                      <div className="text-base font-semibold text-blue-600">{doneToday}</div>
                       <div className="text-[10px] text-blue-600">Done</div>
                     </div>
                   </div>
@@ -3633,23 +3633,24 @@ export default function SupervisorAssignment() {
           )}
         </AnimatePresence>
 
-        {/* Sidebar Toggle Button */}
-        <button onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="hidden lg:flex items-center justify-center w-6 flex-shrink-0 group"
-          title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}>
-          <div className="w-6 h-12 bg-white hover:bg-brand-50 border border-slate-200 rounded-md flex items-center justify-center transition-colors shadow-sm">
-            {sidebarOpen ? <PanelLeftClose className="w-3.5 h-3.5 text-slate-400 group-hover:text-brand-600" /> : <PanelLeftOpen className="w-3.5 h-3.5 text-slate-400 group-hover:text-brand-600" />}
-          </div>
-        </button>
 
         {/* Main content */}
         <div className="flex-1 min-w-0 overflow-y-auto">
           <div className="p-4 space-y-3">
             {/* Header row */}
             <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-lg font-bold text-slate-900">Assignment Dashboard</h1>
-                <p className="text-xs text-slate-500">{projectLabel || 'Select a queue to view assignments'}</p>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setSidebarOpen(!sidebarOpen)}
+                  className="hidden lg:flex items-center justify-center group"
+                  title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}>
+                  <div className="w-8 h-8 bg-white hover:bg-brand-50 border border-slate-200 rounded-lg flex items-center justify-center transition-colors shadow-sm">
+                    {sidebarOpen ? <PanelLeftClose className="w-4 h-4 text-slate-400 group-hover:text-brand-600" /> : <PanelLeftOpen className="w-4 h-4 text-slate-400 group-hover:text-brand-600" />}
+                  </div>
+                </button>
+                <div>
+                  <h1 className="text-lg font-bold text-slate-900">Assignment Dashboard</h1>
+                  <p className="text-xs text-slate-500">{projectLabel || 'Select a queue to view assignments'}</p>
+                </div>
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-right">
@@ -4115,7 +4116,7 @@ export default function SupervisorAssignment() {
                           <motion.tr key={o.id}
                             initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                             transition={{ delay: idx * 0.02 }}
-                            className={`border-b border-slate-100 hover:bg-brand-50/40 transition-colors relative hover:z-[999] ${o.is_on_hold ? 'bg-red-50/50' : ''} ${recentlyReassignedOrderIds.has(o.id) ? 'bg-amber-50/90 ring-1 ring-inset ring-amber-200' : ''} ${highlightedIds.has(o.id) ? 'new-order-highlight' : ''} ${urgentOrderIds.has(o.id) ? 'bg-red-100/80' : ''} ${blinkingUrgentOrderIds.has(o.id) ? 'animate-pulse' : ''}`}>
+                            className={`group border-b border-slate-100 hover:bg-brand-50/40 transition-colors relative hover:z-[999] ${o.is_on_hold ? 'bg-red-50/50' : ''} ${recentlyReassignedOrderIds.has(o.id) ? 'bg-amber-50/90 ring-1 ring-inset ring-amber-200' : ''} ${highlightedIds.has(o.id) ? 'new-order-highlight' : ''} ${urgentOrderIds.has(o.id) ? 'bg-red-100/80' : ''} ${blinkingUrgentOrderIds.has(o.id) ? 'animate-pulse' : ''}`}>
 
                             {bulkMode && (
                               <td className="px-2 py-2 text-center">

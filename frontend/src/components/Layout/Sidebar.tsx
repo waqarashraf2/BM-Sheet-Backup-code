@@ -108,7 +108,7 @@ export default function Sidebar() {
 
   return (
     <motion.aside
-      animate={{ width: collapsed ? 72 : 256 }}
+      animate={{ width: collapsed ? 72 : 220 }}
       transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
       className="h-screen bg-white flex flex-col shrink-0 relative z-20 shadow-[1px_0_0_0_rgba(0,0,0,0.04),4px_0_16px_-4px_rgba(0,0,0,0.04)]"
     >
